@@ -87,8 +87,7 @@ python3 get-platformio.py
 echo 'export PATH="$HOME/.platformio/penv/bin:$PATH"' >> ~/.bashrc
 ```
 
-Do not use `pip`. The SteamOS root filesystem is read-only, and
-`pip install --user` writes where the next system update erases it.
+Do not use `pip` for PlatformIO. A SteamOS update erases what it writes.
 
 ### Flash the firmware
 
@@ -131,9 +130,8 @@ A removal keeps your settings, and a second install reads them back.
 **[All the effects &rarr;](https://caed1994.github.io/SteamOS-Utility-Center/)**
 Twenty effects on a simulated strip, each with an explanation.
 
-Steam writes an effect number and its parameters, and the animation runs on the
-PC. Colour, brightness and effect come from **Settings > Personalization** in
-Game Mode. The download progress bar comes from there too.
+Colour, brightness and effect come from **Settings > Personalization** in Game
+Mode. The download progress bar comes from there too.
 
 | No. | Effect | What it does | |
 | --- | ------ | ------------ | --- |
@@ -148,8 +146,7 @@ Game Mode. The download progress bar comes from there too.
 
 ### The rainbow slot
 
-SteamOS permits no new entries in its LED menu, so `RAINBOW_SHOWS` selects what
-replaces the rainbow:
+`RAINBOW_SHOWS` replaces the rainbow entry of Steam's LED menu:
 
 | `RAINBOW_SHOWS` | What the bar shows | |
 | --------------- | ------------------ | --- |
@@ -159,9 +156,8 @@ replaces the rainbow:
 | `fire` | a flame that moves along the strip | ![fire](docs/previews/fire.png) |
 | `aurora` | slow green and violet curtains | ![aurora](docs/previews/aurora.png) |
 
-Set the option, then select **Rainbow** in Steam's LED menu. If your machine
-cannot show your selection, the service draws the rainbow and writes the reason
-to the log.
+Set the option, then select **Rainbow** in Steam's LED menu. A machine that
+cannot show your selection gets the rainbow, with the reason in the log.
 
 **Temperature.** The full strip takes one colour, green at `TEMPERATURE_MIN`
 and red at `TEMPERATURE_MAX`. `TEMPERATURE_SENSOR=auto` prefers the CPU or GPU
@@ -170,9 +166,8 @@ reports.
 
 **Load.** Two bars grow from the centre, the CPU to the left and the GPU to the
 right, in `LOAD_CPU_COLOR` and `LOAD_GPU_COLOR`. `LOAD_SWAP` exchanges the two
-sides. The GPU half needs a driver that publishes `gpu_busy_percent`, which
-amdgpu does. `steamos-utility-center --load` gives the counters of your
-machine.
+sides. The GPU half needs an amdgpu card.
+`steamos-utility-center --load` gives the counters of your machine.
 
 ### Desktop Mode
 
@@ -180,9 +175,8 @@ Steam sets the LEDs in Game Mode only. The panel's **Desktop mode** page gives
 the desktop a scene of its own: `steam`, `off`, `color`, `breath`, `patrol`,
 `rainbow`, `fire`, `aurora`, `temperature` or `load`.
 
-All the effects are available here, and not only the one in the rainbow slot.
-`RAINBOW_SHOWS` and `DESKTOP_SCENE` can name different effects, and each mode
-shows what it names.
+Every effect is available here, and not only the one in the rainbow slot. The
+two modes can show different effects.
 
 Game Mode stays Steam's. A download keeps the bar for its whole length and
 gives it back at the end, also when you leave Game Mode while one runs.
@@ -196,8 +190,8 @@ Steam at once. A [Desktop Mode](#desktop-mode) scene starts in place of it.
 
 ![the startup breath](docs/previews/startup.png)
 
-During suspend the ESP draws the standby light itself, because nothing runs on
-the PC. The **LED Strip > Effects** page has three settings:
+The strip stays lit during suspend. The **LED Strip > Effects** page has three
+settings:
 
 | | |
 | --- | --- |
@@ -211,7 +205,7 @@ the standby light.
 ![the standby breath](docs/previews/standby.png)
 
 The ESP must stay powered during suspend. The BIOS setting has the name *ErP*,
-*Wake on USB* or *USB power in S3*. `dot` also needs the firmware from this
+*Wake on USB* or *USB power in S3*. `dot` also needs the firmware of this
 version, and an older board breathes instead.
 
 To test the two effects without a suspend:
@@ -263,19 +257,18 @@ trigger is quiet for `NOTIFY_REPEAT_GAP` seconds.
 
 **Achievements, messages and friends.** The bar flashes gold when an
 achievement unlocks, purple for a Steam message and green when a friend comes
-online. This needs no API key, no internet connection and no public profile:
-the service asks the Steam client on your own machine. All three need a game
-that runs. `install.sh` installs the watcher as a user service.
+online. No API key, no internet connection and no public profile are necessary.
+All three need a game that runs.
 
 ```bash
 /var/lib/steamos-utility-center/steamos-utility-center --steam-check
 steamos-utility-center --probe-messages
 ```
 
-**High temperature warning.** The service flashes red when one sensor stays
-near **its own** critical point for one minute. The limits come from hwmon, so
-an APU at 95 °C is correct and an NVMe drive at 95 °C is not.
-`--temperature` lists each sensor with its limits.
+**High temperature warning.** The bar flashes red when one sensor stays near
+**its own** critical point for one minute. An APU at 95 °C is thus correct and
+an NVMe drive at 95 °C is not. `--temperature` lists each sensor with its
+limits.
 
 **Your phone.** The bar can flash for a WhatsApp message, or for anything else
 in the notification list of an Android phone. **KDE Connect** carries it. Pair
@@ -309,7 +302,7 @@ The **CPU & GPU power** page reads both settings from your machine:
 | **Governor** | what controls the clock |
 | **Energy preference** | a hint about the position in the range that the firmware must use |
 
-The cpufreq driver decides what is available, and AMD and Intel behave alike:
+What you get depends on the cpufreq driver, and AMD and Intel behave alike:
 
 | Driver | What you get |
 | ------ | ------------ |
@@ -317,13 +310,10 @@ The cpufreq driver decides what is available, and AMD and Intel behave alike:
 | `amd-pstate` / `intel_cpufreq`, passive | the classic governors, usually with no EPP |
 | `acpi-cpufreq` and older drivers | the classic governors, with no EPP |
 
-The preference row is on the page only when it is a setting. Under
-`performance` the kernel fixes it, and with no governor of ours the panel
-manages neither value. `steamos-utility-center-power --report` gives what your
-machine has.
+The preference row is on the page only when it is a setting.
+`steamos-utility-center-power --report` gives what your machine has.
 
-The panel applies a change at once and writes it to
-`/etc/steamos-utility-center-power.conf`. A unit sets it again at each boot.
+The panel applies a change at once and sets it again at each boot.
 
 ### The graphics card
 
@@ -340,27 +330,22 @@ person's daemon and nothing here installs it.
 | **Fan** | off, one fixed speed, or a curve that you move by its points |
 | **The card's own fan settings** | Zero RPM and its stop temperature, the target temperature, the acoustic limit and target, and the minimum fan speed. RDNA3 and newer cards only |
 
-The panel draws only the controls that your card reports, so a card with no
-clocks table gets a power control and nothing else. The clocks and the voltage
-need overdrive in the amdgpu driver, which is a modprobe option and a reboot.
-The LACT window has the switch, and the LACT wiki has the
+The panel draws only the controls that your card has. The clocks and the
+voltage need overdrive in the amdgpu driver, which is a modprobe option and a
+reboot. The LACT window has the switch, and the LACT wiki has the
 [page](https://github.com/ilya-zlobintsev/LACT/wiki/Overclocking-(AMD)).
 
-Apply asks whether to keep the change, and answers "put them back" when nobody
-presses a button in some seconds. **Cooling Boost** in the Game Mode plugin is
-one switch that holds the fan at full speed and gives it back when you switch
-it off.
+Apply asks whether to keep the change, and puts it back when nobody presses a
+button in some seconds. **Cooling Boost** in the Game Mode plugin is one switch
+that holds the fan at full speed and gives it back when you switch it off.
 
-No password is necessary. The LACT daemon gives its socket to the `wheel`
-group, and the SteamOS desktop user is in it.
+No password is necessary.
 
 ## HDMI CEC
 
-CEC is a channel in the HDMI cable, and the devices on the cable use it to
-switch each other on and to change each other's inputs. With this module the
-machine behaves as a console: press the Steam button and the television comes
-on and changes to this input, and put the machine into suspend and the
-television goes off with it.
+With this module the machine behaves as a console. Press the Steam button and
+the television comes on and changes to this input. Put the machine into suspend
+and the television goes off with it.
 
 **What it needs.** A CEC adapter that the kernel gives as `/dev/cec0`. Use a
 DisplayPort-to-HDMI adapter with CEC support, because the machine's own output
@@ -387,16 +372,11 @@ matched. **Discover** fills in the adapter, the device that carries the volume,
 and the HDMI sound card.
 
 The other forty settings are in `/etc/steamos-cec-toolkit.conf`, each with its
-own paragraph. The page writes a user file that has priority over that one.
+own paragraph.
 
 Caution: Volume over CEC needs an amplifier or a soundbar. A television with
 its own speakers usually accepts the command, does nothing, and answers
-nothing. **Ask about volume** on the page gets the direct answer:
-
-```
-GIVE_SYSTEM_AUDIO_MODE_STATUS (0x7d)
-    Received from TV (0): FEATURE_ABORT  reason: refused (0x04)
-```
+nothing. **Ask about volume** on the page gets the direct answer.
 
 Caution: If you remove the adapter, switch the features off. With them on and
 the adapter gone, each start spends more than one minute on a television that
@@ -410,9 +390,8 @@ faults this fork corrects.
 
 ### Keyboard layout
 
-Both are on the **System** page. Game Mode has no keyboard settings, so gamescope uses `XKB_DEFAULT_LAYOUT`. The
-page writes one line into `~/.config/environment.d/10-keyboard.conf`, and the
-setting takes effect at the next login.
+Both are on the **System** page. Game Mode has no keyboard settings of its own.
+This page sets the layout, and it takes effect at the next login.
 
 | | |
 | --- | --- |
@@ -432,20 +411,12 @@ A list with a comma (`de,us`) changes between two layouts.
 
 ### Drives
 
-A second drive for a Steam library. A line in `/etc/fstab` does not survive a
-SteamOS update, so this page writes one systemd mount unit for each drive:
+A second drive for a Steam library, and it survives a SteamOS update. You
+select a drive from a list rather than type a UUID. A drive that is not
+connected does not stop the boot.
 
-```
-/etc/systemd/system/mnt-games.mount
-```
-
-The page reads the partitions with `lsblk`, so you select a drive rather than
-type a UUID. The unit names the drive by its UUID. A drive is *wanted* by
-`multi-user.target` and not required by it, so a drive that is not connected
-does not stop the boot.
-
-**Take ownership** runs one `chown` over the mount point, so that Steam can
-write a library there. It is offered for `ext4`, `btrfs`, `xfs` and `f2fs`. For
+**Take ownership** gives the mount point to you, so that Steam can write a
+library there. It is offered for `ext4`, `btrfs`, `xfs` and `f2fs`. For
 `exfat`, `ntfs3` and `vfat` the page writes `uid=` and `gid=` into the mount
 options instead.
 
@@ -453,12 +424,11 @@ options instead.
 steamos-utility-center --mounts
 ```
 
-A drive that the record names and that has no unit reports `NO UNIT`, and the
-repair unit writes it again at the next boot.
+A drive that reports `NO UNIT` is mounted again at the next boot.
 
-Caution: A mount point holds no symlink. systemd refuses such a unit. The page
-resolves the path before it writes, so `/mnt/games` on a machine where `/mnt`
-is a link is recorded as `/var/mnt/games`.
+Caution: A mount point that holds a symlink is recorded under its resolved
+name. `/mnt/games` on a machine where `/mnt` is a link becomes
+`/var/mnt/games`.
 
 ## The control panel
 
@@ -489,8 +459,7 @@ the detail, and its repair button. Grey means "not installed" and is not a
 fault.
 
 **Apply and Reload** stand below all the pages, beside **Save profile** and
-**Load profile**. Apply writes each setting of each page and restarts the
-service only when a setting the service reads is different. It asks for no
+**Load profile**. Apply writes each setting of each page, and it asks for no
 password on an ordinary installation.
 
 Three things still ask for one: **Take ownership**, **Rebuild and reinstall**
@@ -530,8 +499,7 @@ is in this repository.
 
 The graphics card takes two presses: one button sends the sliders to the card,
 and a second keeps them. **Cooling Boost** takes one press and confirms itself.
-**Take ownership** stays in the panel, because Game Mode has nobody to answer
-for a `chown` over a whole drive.
+**Take ownership** stays in the panel.
 
 To build the page again after a change:
 
@@ -563,16 +531,14 @@ steamos-utility-centerctl areas
 
 `get` gives the settings of one area and the values that this machine offers.
 `set` takes a JSON object of changes and keeps every other setting. `set
-drives` takes the whole list, because a drive is a record and not a setting.
+drives` takes the whole list.
 
-`status` reads files and starts no process. `status --full` adds the answers
-that need `systemctl`, `lsblk` and the CEC toolkit. `status` also gives
-`modules`, the list of [modules](#modules) this machine has.
+`status` is the cheap half, for a front end that asks again and again.
+`status --full` adds the slower answers. Both give `modules`, the list of
+[modules](#modules) this machine has.
 
-The installer writes `/etc/sudoers.d/zz-steamos-utility-center`, so nothing
-asks for a password in Game Mode. The rule holds no wildcard: each line names
-one program by its full path and the one argument it can take, one line for
-each installed module. `--no-sudoers` leaves it out.
+The installer writes a sudoers rule, so nothing asks for a password in Game
+Mode. `--no-sudoers` leaves it out.
 
 ## Settings reference
 
@@ -697,8 +663,8 @@ The installer keeps `/etc/steamos-utility-center.conf` and reaches each module
 this machine has. Flash the ESP again only when something in `firmware/`
 changed.
 
-Caution: After a SteamOS system update the kernel module is gone, because a
-module matches one kernel only.
+Caution: A SteamOS system update takes the kernel module away. Build it
+again:
 
 ```bash
 cd ~/SteamOS-Utility-Center && sudo ./install.sh --rebuild-module
@@ -764,8 +730,7 @@ SteamOS CEC Toolkit, which is MIT. `decky/main.py` says so at the top.
 
 The graphics card settings are
 **[LACT](https://github.com/ilya-zlobintsev/LACT)** by **Ilya Zlobintsev**,
-which is MIT-licensed. None of it is here and nothing installs it. The panel
-communicates with the LACT daemon over the socket that it already opens.
+which is MIT-licensed. None of it is here and nothing installs it.
 
 The firmware uses **[NeoPixelBus](https://github.com/Makuna/NeoPixelBus)** by
 Michael C. Miller (LGPL-3.0-or-later), and the Arduino cores for
