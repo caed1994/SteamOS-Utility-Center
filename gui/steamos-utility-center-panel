@@ -1328,9 +1328,13 @@ def apply_theme(root, mode=appsettings.THEME_DARK):
     # On the page. A notebook is the stack that holds the pages. Its own
     # background is visible above and beside the content of the page. Before
     # this style, that background gave a dark band above each card.
+    #
+    # No tab margin, because rail() takes the tab row away. The margin held a
+    # gap above each page for a row that is not there, and that gap put the
+    # first card of a page four pixels below the rail card beside it.
     style.configure("TNotebook", background=page, borderwidth=0,
                     bordercolor=page, lightcolor=page,
-                    darkcolor=page, tabmargins=(0, 4, 0, 0))
+                    darkcolor=page, tabmargins=0)
     # On the card below the list, and not on the page. See rail() in dress().
     style.configure("Rail.TRadiobutton", background=surface,
                     foreground=variant, focuscolor=surface, anchor="w")
@@ -2391,8 +2395,12 @@ class Panel:
         # beside the page it chose, and with both on the same ground the two
         # read as one column of things you can click.
         rail_card = self._card(strip)
-        rail_card.pack(side="left", fill="y", padx=(0, GROUP_GAP),
-                       pady=(0, GROUP_GAP))
+        # The same left edge and the same gap as a card on any other page.
+        # With neither, this card stood 16 px left of the module card above it
+        # and its top edge touched that card's bottom edge. Two rounded cards
+        # that touch read as one shape that went wrong.
+        rail_card.pack(side="left", fill="y", padx=(SIDE_MARGIN, GROUP_GAP),
+                       pady=(ROW_GAP, GROUP_GAP))
         self.rail = ttk.Frame(rail_card, style="OnCard.TFrame")
         self.rail.pack(fill="y", expand=True, padx=ROW_GAP, pady=ROW_GAP)
         notebook = self.notebook = ttk.Notebook(strip)

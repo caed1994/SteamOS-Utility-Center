@@ -3698,6 +3698,83 @@ class ButtonRowTest(unittest.TestCase):
         self.assertEqual(squeezed, [])
 
 
+class StripHeadTest(unittest.TestCase):
+    """The three cards at the head of the LED Strip page stand in one column.
+
+    Reported with a photograph: the card of the module and the card of the
+    page list collided. The list card was packed with no left margin and no
+    gap above it, so it stood 16 px left of the card above it and its top
+    edge touched that card's bottom edge.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.panel_module = _panel_module()
+
+    def setUp(self):
+        # A machine that has the LED module, whatever this one has: the
+        # module card is the card under test.
+        was = self.panel_module.ledpanel.modules_here
+        self.panel_module.ledpanel.modules_here = lambda home=None: ("led",)
+        self.addCleanup(setattr, self.panel_module.ledpanel, "modules_here",
+                        was)
+        self.root = tk.Tk()
+        self.addCleanup(self._destroy)
+        self.panel = self.panel_module.Panel(self.root)
+        self.root.update()
+        self.panel._open_section("strip")
+        for _ in range(4):
+            self.root.update_idletasks()
+            self.root.update()
+
+    def _destroy(self):
+        if getattr(self, "root", None) is not None:
+            self.root.destroy()
+            self.root = None
+
+    def _cards(self):
+        """The module card, the list card and the first card of the page."""
+        rail_card = self.panel.rail.master
+        strip = rail_card.master
+        present = strip.master
+        module = [one for one in present.winfo_children()
+                  if one is not strip][0]
+        page = self.panel.notebook.nametowidget(self.panel.notebook.select())
+        first = None
+        stack = [page]
+        while stack and first is None:
+            for child in stack.pop(0).winfo_children():
+                try:
+                    if str(child.cget("style")) == "Card.TFrame":
+                        first = child
+                        break
+                except tk.TclError:                          # pragma: no cover
+                    pass
+                stack.append(child)
+        self.assertIsNotNone(first, "the page has no card")
+        return module, rail_card, first
+
+    def test_the_list_starts_at_the_left_edge_of_the_card_above_it(self):
+        module, rail_card, _first = self._cards()
+        self.assertEqual(rail_card.winfo_rootx(), module.winfo_rootx())
+
+    def test_the_list_does_not_touch_the_card_above_it(self):
+        module, rail_card, _first = self._cards()
+        gap = rail_card.winfo_rooty() - (module.winfo_rooty()
+                                         + module.winfo_height())
+        self.assertGreaterEqual(gap, self.panel_module.ROW_GAP)
+
+    def test_the_list_and_the_page_start_on_the_same_line(self):
+        """A notebook keeps a border round its page. Two pixels of it are
+        left, and a step of four more came from a margin for the tab row
+        that rail() takes away.
+        """
+        _module, rail_card, first = self._cards()
+        self.assertLessEqual(
+            abs(rail_card.winfo_rooty() - first.winfo_rooty()), 2,
+            "the list card and the first card of the page are not level")
+
+
 class SidebarWidthTest(unittest.TestCase):
     """The rail is as wide as the names in it need.
 
