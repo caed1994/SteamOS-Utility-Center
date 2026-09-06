@@ -3137,6 +3137,118 @@ class FoldTest(unittest.TestCase):
         self.assertEqual(everything(), before)
 
 
+class StatusShapeTest(unittest.TestCase):
+    """A fault gets a card. Everything else gets one row in one card.
+
+    Six cards that each say "in order" are six cards to pass to reach the one
+    that does not. The count and Check again stand at the head, where a page
+    with something to repair does not push them off the screen.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.panel_module = _panel_module()
+
+    def setUp(self):
+        self.root = tk.Tk()
+        self.addCleanup(self._destroy)
+        self.panel = self.panel_module.Panel(self.root)
+        self.root.update()
+        self.panel._open_section("status")
+
+    def _destroy(self):
+        if getattr(self, "root", None) is not None:
+            self.root.destroy()
+            self.root = None
+
+    def _draw(self, **broken):
+        """Draw the page with the named parts broken and the rest in order."""
+        plain = self.panel._read_parts
+
+        def parts():
+            found = plain()
+            for part in found:
+                bad = part.key in broken
+                part.ok = not bad
+                part.verdict = "Broken." if bad else "In order."
+            return found
+
+        self.panel._read_parts = parts
+        self.addCleanup(setattr, self.panel, "_read_parts", plain)
+        # A block that opened itself for a real fault of this machine stays
+        # open. Each test here says what is broken, so start each one folded.
+        self.panel._open_parts.clear()
+        self.panel.refresh_status()
+        for _ in range(4):
+            self.root.update_idletasks()
+            self.root.update()
+        return self.panel.parts_box.winfo_children()
+
+    def test_nothing_broken_is_one_card(self):
+        self.assertEqual(len(self._draw()), 1)
+
+    def test_each_fault_takes_a_card_of_its_own(self):
+        cards = self._draw(led=True, cec=True)
+        self.assertEqual(len(cards), 3, "two faults and the rest")
+
+    def test_the_head_counts_and_does_not_name(self):
+        self._draw(led=True)
+        said = str(self.panel.parts_line.cget("text"))
+        self.assertIn("1 part needs attention", said)
+        self.assertNotIn("LED bar", said)
+
+    def test_check_again_stands_above_the_cards(self):
+        """It stood below them, which is off the screen on the machine that
+        has something to repair.
+        """
+        self._draw(led=True)
+        # This page only. Other pages have a Check again button of their own.
+        page = self.panel.parts_box.master
+        buttons = [widget for widget in _every_button(page)
+                   if str(widget.cget("text")) == "Check again"]
+        self.assertEqual(len(buttons), 1)
+        self.assertLess(buttons[0].winfo_rooty(),
+                        self.panel.parts_box.winfo_rooty())
+
+    def test_a_fault_carries_one_repair_and_not_two(self):
+        """The fold of a compact row holds the repair. A card has its own
+        button beside the fold, and had both for a while.
+        """
+        self._draw(led=True)
+        card = self.panel.parts_box.winfo_children()[0]
+        said = _labels_of(card)
+        self.assertEqual(said.count("Rebuild and reinstall"), 1, said)
+
+    def test_a_row_keeps_its_fold_and_its_detail(self):
+        self._draw()
+        self.assertIn("led", self.panel._part_details)
+        self.assertFalse(self.panel._part_details["led"].winfo_ismapped())
+        self.panel._fold_part("led")
+        for _ in range(4):
+            self.root.update_idletasks()
+            self.root.update()
+        self.assertTrue(self.panel._part_details["led"].winfo_ismapped())
+
+    def test_no_sentence_runs_under_its_details_button(self):
+        """The rows wrap against their own position, and the button beside
+        them takes room that the position alone does not hold.
+        """
+        self._draw(led=True)
+        card = self.panel.parts_box.winfo_children()[-1]
+        folds = [widget for widget in _every_button(card)
+                 if "Details" in str(widget.cget("text"))]
+        self.assertTrue(folds, "no row had a fold")
+        for fold in folds:
+            for label in _every_label(card):
+                if label.winfo_rooty() != fold.winfo_rooty():
+                    continue
+                self.assertLessEqual(
+                    label.winfo_rootx() + label.winfo_width(),
+                    fold.winfo_rootx(),
+                    "%r reaches under its Details button"
+                    % str(label.cget("text"))[:40])
+
+
 class WakeRadioButtonTest(unittest.TestCase):
     """The button that answers "which radios can wake this machine?".
 
@@ -4078,6 +4190,16 @@ def _every_label(widget):
         if child.winfo_class() == "TLabel":
             found.append(child)
         found += _every_label(child)
+    return found
+
+
+def _every_button(widget):
+    """Every button under a widget, however deeply nested."""
+    found = []
+    for child in widget.winfo_children():
+        if child.winfo_class() == "TButton":
+            found.append(child)
+        found += _every_button(child)
     return found
 
 

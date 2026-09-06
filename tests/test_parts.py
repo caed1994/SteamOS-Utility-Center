@@ -567,5 +567,45 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("in order", ledpanel.parts_summary([]))
 
 
+class CountTest(unittest.TestCase):
+    """parts_count, which is the head of the Status page.
+
+    It counts and does not name, because the block of each named part stands
+    directly below it.
+    """
+
+    def _parts(self, **broken):
+        parts = [ledpanel.led_part(ledpanel.run_checks(probe=healthy())),
+                 ledpanel.cec_part(cec_status(), True),
+                 ledpanel.layout_part(""),
+                 ledpanel.panel_part("1.0.0")]
+        for part in parts:
+            if part.key in broken:
+                part.ok = broken[part.key]
+        return parts
+
+    def test_all_well_says_so(self):
+        self.assertIn("in order", ledpanel.parts_count(self._parts()))
+
+    def test_one_is_counted_and_not_named(self):
+        said = ledpanel.parts_count(self._parts(cec=False))
+        self.assertIn("1 part needs attention", said)
+        self.assertNotIn("HDMI CEC", said)
+
+    def test_several_are_counted_and_not_named(self):
+        said = ledpanel.parts_count(self._parts(cec=False, led=False))
+        self.assertIn("2 parts need attention", said)
+        self.assertNotIn("HDMI CEC", said)
+        self.assertNotIn("LED bar", said)
+
+    def test_a_part_nobody_installed_is_not_a_count(self):
+        parts = [ledpanel.cec_part(None, False),
+                 ledpanel.power_part({"CPU_GOVERNOR": ""}, {})]
+        self.assertIn("in order", ledpanel.parts_count(parts))
+
+    def test_an_empty_list_is_not_a_crash(self):
+        self.assertIn("in order", ledpanel.parts_count([]))
+
+
 if __name__ == "__main__":                                  # pragma: no cover
     unittest.main()

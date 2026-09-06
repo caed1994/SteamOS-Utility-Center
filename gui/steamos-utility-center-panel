@@ -716,6 +716,9 @@ CEC_INDENT = 9 * material.SPACE
 # The same for a status block: its sentence sits under the part's name rather
 # than under the light beside it.
 PART_INDENT = 6 * material.SPACE
+# The room a compact status row keeps for its Details button, so a long
+# sentence wraps before it and does not run under it.
+FOLD_ROOM = 32 * material.SPACE
 GROUP_GAP = 6 * material.SPACE
 ROW_GAP = 2 * material.SPACE
 INDENT_STEP = 5 * material.SPACE
@@ -3665,8 +3668,13 @@ class Panel:
         the ends of these explanations past the side of the window.
         """
         found = self._wrap_insets.get(str(label), 0)
+        # A pair is an indent and the room that something beside the line
+        # takes, which the indent alone does not hold.
+        extra = 0
+        if isinstance(found, tuple):
+            found, extra = found
         if isinstance(found, int):
-            return found
+            return found + extra
         try:
             lead = found.winfo_x()
         except tk.TclError:                                 # pragma: no cover
@@ -3675,10 +3683,10 @@ class Panel:
         # pixel wide; wrapping to that would be a column of single words that
         # a later pass would have to undo.
         if lead <= 1:
-            return CEC_INDENT
+            return CEC_INDENT + extra
         # The same value as a note in a card. See _note. This also adds the
         # indent of this line.
-        return lead + 2 * GROUP_GAP
+        return lead + 2 * GROUP_GAP + extra
 
     def _build_apply(self, parent):
         """Apply and Reload, once, below the tabs that have settings.
@@ -5711,10 +5719,13 @@ class Panel:
     # -- status and repair ------------------------------------------------
 
     def _build_status(self, parent):
-        """Builds one block for the condition of each part of the toolbox.
+        """The condition of each part of the toolbox, and its repair.
 
-        Each block has the same shape: a light, a sentence, the detail behind
-        it, and the one button that repairs *that* part.
+        A part with a fault gets a block of its own: a light, the sentence,
+        the checks behind a fold, and the one button that repairs *that* part.
+        Every other part is one row in one card at the foot. Six cards that
+        each say "in order" are six cards to pass to reach the one that does
+        not.
 
         The repair buttons stay here and do not move to their own pages. A
         person finds a fault here, and a walk to another section is the walk
@@ -5737,12 +5748,22 @@ class Panel:
         # See _fold_part. Each refresh_status fills this map again.
         self._part_details = {}
         self._fold_arrows = {}
+        # The head of the page: the count, and Check again beside it. The
+        # button stood below every block before, which is off the screen on
+        # the machine that has something to repair.
+        card = self._card(outer)
+        card.pack(fill="x", padx=SIDE_MARGIN, pady=(ROW_GAP, 0))
+        inner = ttk.Frame(card, style="OnCard.TFrame")
+        inner.pack(fill="x", padx=GROUP_GAP, pady=GROUP_GAP)
+        inner.columnconfigure(0, weight=1)
+        self.parts_line = ttk.Label(inner, style="Section.TLabel")
+        self.parts_line.grid(row=0, column=0, sticky="w")
+        ttk.Button(inner, text="Check again", style="Outlined.TButton",
+                   command=self.refresh_status).grid(row=0, column=1,
+                                                     sticky="e")
+
         self.parts_box = ttk.Frame(outer, style="Page.TFrame")
-        self.parts_box.pack(fill="x")
-        row = ttk.Frame(outer, style="Page.TFrame")
-        row.pack(anchor="w", padx=SIDE_MARGIN, pady=(GROUP_GAP, GROUP_GAP))
-        ttk.Button(row, text="Check again", style="Page.Outlined.TButton",
-                   command=self.refresh_status).pack(side="left")
+        self.parts_box.pack(fill="x", pady=(0, GROUP_GAP))
         return outer
 
     def _read_parts(self):
@@ -5768,23 +5789,30 @@ class Panel:
                                 head=ledpanel.head_commit(SOURCE_DIR)),
         ]
 
+    def _light(self, parent, ok):
+        """The three-state indicator of one part. Grey is "not installed"."""
+        colour = (self.roles["on_surface_variant"] if ok is None
+                  else self.roles["positive"] if ok
+                  else self.roles["error"])
+        dot = tk.Canvas(parent, width=STATUS_DOT * 2, height=STATUS_DOT * 2,
+                        highlightthickness=0, borderwidth=0,
+                        background=self.roles["surface_container_lowest"])
+        dot.create_oval(1, 1, STATUS_DOT * 2 - 1, STATUS_DOT * 2 - 1,
+                        width=0, fill=colour)
+        return dot
+
     def _build_part(self, part):
-        """One block: a light, a sentence, a fold, and its own repair."""
+        """One block for a part with a fault: a light, a sentence, a fold,
+        and its own repair.
+        """
         card = self._card(self.parts_box)
         card.pack(fill="x", padx=SIDE_MARGIN, pady=(ROW_GAP, 0))
         inner = ttk.Frame(card, style="OnCard.TFrame")
         inner.pack(fill="x", padx=GROUP_GAP, pady=GROUP_GAP)
         inner.columnconfigure(1, weight=1)
 
-        colour = (self.roles["on_surface_variant"] if part.ok is None
-                  else self.roles["positive"] if part.ok
-                  else self.roles["error"])
-        dot = tk.Canvas(inner, width=STATUS_DOT * 2, height=STATUS_DOT * 2,
-                        highlightthickness=0, borderwidth=0,
-                        background=self.roles["surface_container_lowest"])
-        dot.create_oval(1, 1, STATUS_DOT * 2 - 1, STATUS_DOT * 2 - 1,
-                        width=0, fill=colour)
-        dot.grid(row=0, column=0, sticky="w", padx=(0, ROW_GAP))
+        self._light(inner, part.ok).grid(row=0, column=0, sticky="w",
+                                         padx=(0, ROW_GAP))
         ttk.Label(inner, text=part.name, style="Section.TLabel").grid(
             row=0, column=1, sticky="w")
 
@@ -5805,8 +5833,8 @@ class Panel:
                            side="left")
 
         said = ttk.Label(inner, text=part.verdict, justify="left",
-                         style="TLabel" if part.ok is not False
-                         else "Bad.TLabel", wraplength=CARD_WRAP - PART_INDENT)
+                         style="Bad.TLabel",
+                         wraplength=CARD_WRAP - PART_INDENT)
         said.grid(row=1, column=1, columnspan=2, sticky="w", pady=(2, 0))
         self._wrapped.append(said)
         self._wrap_insets[str(said)] = PART_INDENT
@@ -5825,36 +5853,97 @@ class Panel:
             if part.key not in self._open_parts:
                 holder.grid_remove()
 
-    def _build_part_detail(self, inner, part):
+    def _build_rest(self, parts, headed=False):
+        """One card for the parts with no fault, one row for each.
+
+        A row carries the same light and the same sentence as a block. Its
+        checks and its repair are behind the fold, because a part that
+        reports no fault needs neither to be read.
+        """
+        card = self._card(self.parts_box)
+        card.pack(fill="x", padx=SIDE_MARGIN, pady=(ROW_GAP, 0))
+        inner = ttk.Frame(card, style="OnCard.TFrame")
+        inner.pack(fill="x", padx=GROUP_GAP, pady=GROUP_GAP)
+        # The empty column at the end takes the free width, so each Details
+        # button stands beside its own sentence and not at the card edge.
+        inner.columnconfigure(4, weight=1)
+
+        at = 0
+        if headed:
+            ttk.Label(inner, text="The rest", style="Section.TLabel").grid(
+                row=0, column=0, columnspan=5, sticky="w", pady=(0, ROW_GAP))
+            at = 1
+        for part in parts:
+            self._light(inner, part.ok).grid(row=at, column=0, sticky="nw",
+                                             padx=(0, ROW_GAP), pady=2)
+            ttk.Label(inner, text=part.name).grid(
+                row=at, column=1, sticky="nw", pady=2, padx=(0, GROUP_GAP))
+            said = ttk.Label(inner, text=part.verdict, style="Muted.TLabel",
+                             justify="left", wraplength=CARD_WRAP)
+            said.grid(row=at, column=2, sticky="nw", pady=2)
+            self._wrapped.append(said)
+            # Its own position, because the name column takes the width of the
+            # longest name and that width is the font's. See _inset_of. With
+            # the room its Details button takes, which stands beside it.
+            self._wrap_insets[str(said)] = (said, FOLD_ROOM)
+            if not (part.detail or part.repair):
+                at += 1
+                continue
+            fold = ttk.Button(inner, style="Text.TButton",
+                              command=lambda k=part.key: self._fold_part(k))
+            fold.configure(text="Details \u25b4" if part.key in self._open_parts
+                           else "Details \u25be")
+            fold.grid(row=at, column=3, sticky="nw", padx=(ROW_GAP, 0))
+            self._fold_buttons.add(str(fold))
+            self._fold_arrows[part.key] = fold
+            holder = self._build_part_detail(inner, part, row=at + 1,
+                                             column=2, span=3, repair=True)
+            self._part_details[part.key] = holder
+            if part.key not in self._open_parts:
+                holder.grid_remove()
+            at += 2
+
+    def _build_part_detail(self, inner, part, row=2, column=1, span=2,
+                           repair=False):
         """What is behind a block, which is a list of Checks or of lines.
 
         Returns the frame so the fold can show and hide it without this
-        having to run again.
+        having to run again. A compact row places it one row lower and one
+        column further in, under its own sentence, and asks for the repair
+        here because it has no room of its own for that button.
         """
         holder = ttk.Frame(inner, style="OnCard.TFrame")
-        holder.grid(row=2, column=1, columnspan=2, sticky="ew",
+        holder.grid(row=row, column=column, columnspan=span, sticky="ew",
                     pady=(ROW_GAP, 0))
         holder.columnconfigure(2, weight=1)
-        for row, item in enumerate(part.detail):
+        for line, item in enumerate(part.detail or ()):
             if isinstance(item, str):
                 # A plain line, from a part that has no checks of its own.
                 ttk.Label(holder, text=item, style="Muted.TLabel").grid(
-                    row=row, column=0, columnspan=3, sticky="w", pady=2)
+                    row=line, column=0, columnspan=3, sticky="w", pady=2)
                 continue
             ttk.Label(holder, text="\u2713" if item.ok else "\u2717", width=3,
                       style="Good.TLabel" if item.ok else "Bad.TLabel").grid(
-                          row=row, column=0, sticky="nw", pady=2)
+                          row=line, column=0, sticky="nw", pady=2)
             # Each column at the top of its row. The third column wraps, so a
             # mark and a name that centre themselves against it stand beside
             # the wrong line of it.
             ttk.Label(holder, text=item.name,
                       style="TLabel" if item.ok else "Bad.TLabel").grid(
-                          row=row, column=1, sticky="nw", pady=2,
+                          row=line, column=1, sticky="nw", pady=2,
                           padx=(0, GROUP_GAP))
             if not item.ok:
                 ttk.Label(holder, text=item.detail, wraplength=460,
                           justify="left", style="Muted.TLabel").grid(
-                              row=row, column=2, sticky="nw", pady=2)
+                              row=line, column=2, sticky="nw", pady=2)
+        if repair and part.repair:
+            # The repair of a part that has no block of its own. A part with
+            # a block carries it beside the fold instead.
+            ttk.Button(holder, text=ledpanel.REPAIR_LABELS[part.repair],
+                       style="Tonal.TButton",
+                       command=lambda r=part.repair: self._repair(r)).grid(
+                           row=len(part.detail or ()), column=0, columnspan=3,
+                           sticky="w", pady=(ROW_GAP, 0))
         return holder
 
     def _fold_part(self, key):
@@ -6478,8 +6567,13 @@ class Panel:
         self._part_details = {}
         self._fold_arrows = {}
         parts = self._read_parts()
+        self.parts_line.configure(text=ledpanel.parts_count(parts))
         for part in parts:
-            self._build_part(part)
+            if part.ok is False:
+                self._build_part(part)
+        rest = [part for part in parts if part.ok is not False]
+        if rest:
+            self._build_rest(rest, headed=len(rest) < len(parts))
         # The blocks' buttons are new widgets every time, so the list of what
         # to grey while a command runs has to be taken again.
         self._register_buttons()

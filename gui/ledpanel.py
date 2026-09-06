@@ -570,6 +570,20 @@ def summary_for(parts, section=""):
     return parts_summary(parts, name_one=section == ALL_PARTS_SECTION)
 
 
+def parts_count(parts):
+    """How many parts need attention, with no name.
+
+    The head of the Status page, where the block of each such part is
+    directly below. The name there would be the same name twice.
+    """
+    problems = [part for part in parts if part.ok is False]
+    if not problems:
+        return "Everything is in order."
+    if len(problems) == 1:
+        return "1 part needs attention."
+    return "%d parts need attention." % len(problems)
+
+
 def parts_summary(parts, name_one=True):
     """Returns one sentence for the top of the window, over each part.
 
