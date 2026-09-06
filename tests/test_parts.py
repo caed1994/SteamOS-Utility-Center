@@ -523,9 +523,32 @@ class SummaryTest(unittest.TestCase):
 
     def test_several_are_counted_and_named(self):
         said = ledpanel.parts_summary(self._parts(cec=False, led=False))
-        self.assertIn("2 problems", said)
+        self.assertIn("2 parts", said)
         self.assertIn("HDMI CEC", said)
         self.assertIn("LED bar", said)
+
+    def test_a_page_that_owns_no_part_counts_rather_than_names(self):
+        """A named fault under the heading of another section reads as that
+        section's fault.
+
+        The System page said "LED bar: the kernel module is missing" over a
+        keyboard layout that was in order.
+        """
+        parts = self._parts(led=False)
+        said = ledpanel.summary_for(parts, "keyboard")
+        self.assertIn("1 part needs attention", said)
+        self.assertIn("LED bar", said)
+        self.assertNotIn("kernel module", said)
+
+    def test_the_status_page_names_it(self):
+        """That page is about every part, so a name is an answer about it."""
+        parts = self._parts(led=False)
+        said = ledpanel.summary_for(parts, ledpanel.ALL_PARTS_SECTION)
+        self.assertIn("LED bar:", said)
+
+    def test_a_page_that_owns_the_fault_still_names_it(self):
+        parts = self._parts(cec=False)
+        self.assertIn("HDMI CEC:", ledpanel.summary_for(parts, "cec"))
 
     def test_parts_nobody_installed_are_not_problems(self):
         """The bug this replaces, in reverse.

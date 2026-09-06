@@ -546,6 +546,11 @@ def panel_part(version, update_state=None, update_said="", behind="",
 SECTION_PARTS = {"strip": "led", "cec": "cec", "keyboard": "layout"}
 
 
+# The section that reports on every part. It is the one page where a named
+# fault is an answer about the page.
+ALL_PARTS_SECTION = "status"
+
+
 def summary_for(parts, section=""):
     """Returns the sentence for one page, and not always the global one.
 
@@ -554,16 +559,18 @@ def summary_for(parts, section=""):
     said "Not installed yet", and both were correct.
 
     So the part of the page gives the sentence when its condition is not good.
-    A page with no part of its own gets the count across all parts.
+    A page with no such part gets a count, and not the name of a fault that
+    belongs to another section: "LED bar: the kernel module is missing" under
+    the heading "System" reads as a fault of the System page.
     """
     key = SECTION_PARTS.get(section, section)
     mine = next((part for part in parts if part.key == key), None)
     if mine is not None and mine.ok is not True:
         return "%s: %s" % (mine.name, mine.verdict)
-    return parts_summary(parts)
+    return parts_summary(parts, name_one=section == ALL_PARTS_SECTION)
 
 
-def parts_summary(parts):
+def parts_summary(parts, name_one=True):
     """Returns one sentence for the top of the window, over each part.
 
     This counts each part. Before, it counted the LED checklist only. A
@@ -577,13 +584,15 @@ def parts_summary(parts):
     problems = [part for part in parts if part.ok is False]
     if not problems:
         return "Everything is in order."
-    if len(problems) == 1:
-        # Give the name of one fault. The sentence is then the same sentence
-        # that the block of the part shows, and the user opens that block
-        # next.
+    if len(problems) == 1 and name_one:
+        # The same sentence that the block of the part shows, so a reader who
+        # opens that block reads what they read here. `name_one` is off for a
+        # page that does not own the part. See summary_for.
         return "%s: %s" % (problems[0].name, problems[0].verdict)
-    return "%d problems: %s." % (len(problems),
-                                 ", ".join(part.name for part in problems))
+    if len(problems) == 1:
+        return "1 part needs attention: %s." % problems[0].name
+    return "%d parts need attention: %s." % (
+        len(problems), ", ".join(part.name for part in problems))
 
 
 # -- settings profiles -----------------------------------------------------

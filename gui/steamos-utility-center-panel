@@ -545,8 +545,12 @@ SIDEBAR_RADIUS = material.SHAPE_MEDIUM
 SIDEBAR_ICON_X = 20
 SIDEBAR_TEXT_X = 56
 
-# The dots at the foot of the window: the LED bar, and HDMI CEC.
-STATUS_DOT = 5
+# The radius of a status light: the two at the foot of the window, and the one
+# at the head of each block on the Status page.
+#
+# It is the height of a line of text. Smaller than that, the three colours of a
+# block are not three lights but three bullet points.
+STATUS_DOT = 7
 
 # The time after the window opens, before the panel asks HDMI CEC about its
 # condition. The foot of the window shows that condition on each page, so the
@@ -5840,14 +5844,17 @@ class Panel:
             ttk.Label(holder, text="\u2713" if item.ok else "\u2717", width=3,
                       style="Good.TLabel" if item.ok else "Bad.TLabel").grid(
                           row=row, column=0, sticky="nw", pady=2)
+            # Each column at the top of its row. The third column wraps, so a
+            # mark and a name that centre themselves against it stand beside
+            # the wrong line of it.
             ttk.Label(holder, text=item.name,
                       style="TLabel" if item.ok else "Bad.TLabel").grid(
-                          row=row, column=1, sticky="w", pady=2,
+                          row=row, column=1, sticky="nw", pady=2,
                           padx=(0, GROUP_GAP))
             if not item.ok:
                 ttk.Label(holder, text=item.detail, wraplength=460,
                           justify="left", style="Muted.TLabel").grid(
-                              row=row, column=2, sticky="w", pady=2)
+                              row=row, column=2, sticky="nw", pady=2)
         return holder
 
     def _fold_part(self, key):
