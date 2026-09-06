@@ -449,14 +449,16 @@ The list at the left edge selects a section:
 | **Status** | the condition of each part, each with the button that repairs it |
 | **App Settings** | the appearance of this program and its updates |
 
-The LED Strip section holds seven pages: Strip, Desktop mode, Notifications,
-Advanced, Effects, Preview and Test. **Preview** draws the effects of this
-project on *your* strip. **Test** starts each notification and flash shape, the
-self-test, the Steam check, the sensor and counter lists, and the ESP flash.
+The LED Strip section holds seven pages: Strip, Effects, Desktop mode,
+Notifications, Advanced, Preview and Test. **Strip** holds the hardware: the
+length, the direction and the brightness. **Effects** holds what the bar
+draws. **Preview** draws the effects of this project on *your* strip. **Test**
+starts each notification and flash shape, the self-test, the Steam check, the
+sensor and counter lists, and the ESP flash.
 
-**Status** has one block for each part with a light, one sentence, a fold with
-the detail, and its repair button. Grey means "not installed" and is not a
-fault.
+**Status** gives a block to each part with a fault: a light, one sentence, a
+fold with the detail, and its repair button. Every other part is one row in
+one card at the foot. Grey means "not installed" and is not a fault.
 
 **Apply and Reload** stand below all the pages, beside **Save profile** and
 **Load profile**. Apply writes each setting of each page, and it asks for no

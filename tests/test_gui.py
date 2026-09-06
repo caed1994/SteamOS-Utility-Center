@@ -1310,8 +1310,8 @@ class PanelSettingsTest(unittest.TestCase):
         # sections of their own. That change is the reason for the two levels.
         # The pages here are the pages about the bar.
         self.assertEqual([title.strip() for title in self._tab_titles()],
-                         ["Strip", "Desktop mode", "Notifications", "Advanced",
-                          "Preview", "Test"])
+                         ["Strip", "Effects", "Desktop mode", "Notifications",
+                          "Advanced", "Preview", "Test"])
 
     def test_the_sections_are_in_the_order_the_sidebar_lists_them(self):
         """The outer level: the type of the settings.

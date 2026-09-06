@@ -185,24 +185,21 @@ class LiveWindowTest(unittest.TestCase):
             heights[key] = controls[0].winfo_height()
         self.assertEqual(len(set(heights.values())), 1, heights)
 
-    def test_a_row_that_governs_others_has_the_same_room_either_side_of_it(self):
-        # A row that opens a block has space above it and below it. The rows of
-        # that block are close together below it. Equal space on both sides
-        # keeps the row separate from the row below it.
-        #
-        # The measurement uses the Strip page, where this pattern is still
-        # present. The notification blocks were the example before, and each of
-        # them is one line now. See the flash rows. So the rainbow choice, with
-        # the temperature marks indented below it, is the last example.
-        self.panel.notebook.select(self._page_named("Strip"))
+    def test_a_row_that_governs_others_stands_clear_of_them(self):
+        """The rows of a block are closer to each other than to the row that
+        opens the block. That spacing is what says which rows belong to it.
+
+        This measured the space above the governing row as well, and asked
+        for the same space on both sides. Each block opens a group of its own
+        now, so what is above such a row is the gap between two cards.
+        """
+        self.panel.notebook.select(self._page_named("Effects"))
         # The block must be on the page for the measurement, and a choice now
         # decides which block is there. See the note above DEPENDS_ON.
         self.panel.vars["RAINBOW_SHOWS"][0].set("Temperature")
         self.root.update()
-        # The row directly above the governing row, and not one further up:
-        # the standby switch gained rows of its own below it.
-        rows = ("STANDBY_BRIGHTNESS", "RAINBOW_SHOWS", "TEMPERATURE_MIN",
-                "TEMPERATURE_MAX")
+        rows = ("RAINBOW_SHOWS", "TEMPERATURE_MIN", "TEMPERATURE_MAX",
+                "TEMPERATURE_SENSOR")
         # The measurement uses the name labels and not the controls. Each label
         # is a plain label of one height. A switch, a menu and a slider have
         # three different heights. A control that is shorter than its row also
@@ -210,14 +207,13 @@ class LiveWindowTest(unittest.TestCase):
         # therefore reports the widgets and the spacing together. This test is
         # about the rows.
         tops = [self.panel._rows[key][0][0].winfo_rooty() for key in rows]
-        above, below, tight = (tops[index + 1] - tops[index]
-                               for index in range(3))
-        self.assertEqual(above, below,
-                         "the row is not the same distance from the row above "
-                         "it as from the one it governs")
-        self.assertLess(tight, below,
-                        "the rows it governs are no closer to each other than "
-                        "it is to them")
+        below, tight, also = (tops[index + 1] - tops[index]
+                              for index in range(3))
+        self.assertGreater(below, tight,
+                           "the rows it governs are no closer to each other "
+                           "than they are to it")
+        self.assertEqual(tight, also,
+                         "the rows it governs are not evenly spaced")
 
     def test_a_notification_keeps_its_switch_colour_and_shape_on_one_line(self):
         # What the page is now: four notifications as four lines you can
@@ -363,10 +359,9 @@ class LiveWindowTest(unittest.TestCase):
         height below a row that is gone is the space of that row. Three such
         spaces below the slot give a page that looks like a draw fault.
         """
-        self.panel.notebook.select(self._page_named("Strip"))
+        self.panel.notebook.select(self._page_named("Effects"))
         slot = self.panel.vars["RAINBOW_SHOWS"][0]
-        strip = ("LED_COUNT", "REVERSE", "MAX_BRIGHTNESS", "MIN_BRIGHTNESS",
-                 "PATROL_DOTS", "SPEED", "STANDBY_PULSE", "RAINBOW_SHOWS",
+        strip = ("PATROL_DOTS", "SPEED", "STANDBY_PULSE", "RAINBOW_SHOWS",
                  "TEMPERATURE_MIN", "TEMPERATURE_MAX", "TEMPERATURE_SENSOR",
                  "LOAD_CPU_COLOR", "LOAD_GPU_COLOR", "LOAD_SWAP")
 
@@ -832,13 +827,13 @@ class LiveWindowTest(unittest.TestCase):
         self.panel._refit()
         for _ in range(6):
             self.root.update()
-        self.panel.notebook.select(self._page_named("Strip"))
+        self.panel.notebook.select(self._page_named("Effects"))
         # The sensor menu is the widest control of the page, and it is on the
         # page only while the slot shows the temperature.
         self.panel.vars["RAINBOW_SHOWS"][0].set("Temperature")
         for _ in range(4):
             self.root.update()
-        for key in ("TEMPERATURE_SENSOR", "RAINBOW_SHOWS", "LED_COUNT"):
+        for key in ("TEMPERATURE_SENSOR", "RAINBOW_SHOWS", "SPEED"):
             _labels, controls = self.panel._rows[key]
             widget = controls[0]
             self.assertGreaterEqual(widget.winfo_width(),

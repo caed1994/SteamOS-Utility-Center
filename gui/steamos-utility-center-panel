@@ -80,11 +80,20 @@ STRIP = [
         ("MAX_BRIGHTNESS", "Maximum brightness", "int", 0, 255, 1),
         ("MIN_BRIGHTNESS", "Minimum brightness", "int", 0, 255, 1),
     ]),
-    ("Effects", [
+]
+
+# What the bar draws. This was one group of fourteen rows at the foot of
+# Strip, where the four rows above it describe the hardware. A page of its own,
+# in groups: a person who sets the colours of the load gauge reads three rows
+# and not fourteen.
+EFFECTS = [
+    ("Movement", [
         # Three at most. On 17 LEDs a fourth dot leaves no dark between them,
         # and the effect stops reading as dots chasing each other.
         ("PATROL_DOTS", "Patrol dots", "int", 1, 3, 1),
         ("SPEED", "Effect speed", "float", 0.1, 4.0, 0.1),
+    ]),
+    ("While the machine sleeps", [
         # Drawn by the ESP, not by us: during a suspend this service is
         # frozen, so the strip has to carry on alone. That is also why the
         # shape is one of a short list and not any effect of this project:
@@ -100,6 +109,12 @@ STRIP = [
         # menu is at full strength, and a standby light at full strength is a
         # night light.
         ("STANDBY_BRIGHTNESS", "Brightness", "int", 0, 255, 1),
+    ]),
+    # The slot and the settings of whichever gauge it shows. One group,
+    # because DEPENDS_ON puts the rows below the slot on the page and takes
+    # them off it again. In a group of their own they would be a heading over
+    # nothing for each choice that is not that gauge.
+    ("The Rainbow entry of Steam", [
         # Nothing can add an entry to the LED menu of Steam. So an effect of
         # this project must use an entry that the menu already has. Users
         # give up the rainbow entry the most readily. There is one slot, and
@@ -289,6 +304,7 @@ SYSTEM = [
 # bar, and it is now a section of its own. See SECTION_SETTINGS.
 SETTINGS_TABS = (
     ("Strip", STRIP),
+    ("Effects", EFFECTS),
     ("Desktop mode", DESKTOP, DESKTOP_NOTE),
     ("Notifications", NOTIFICATIONS),
     ("Advanced", ADVANCED),
@@ -2399,10 +2415,13 @@ class Panel:
         # With neither, this card stood 16 px left of the module card above it
         # and its top edge touched that card's bottom edge. Two rounded cards
         # that touch read as one shape that went wrong.
-        rail_card.pack(side="left", fill="y", padx=(SIDE_MARGIN, GROUP_GAP),
+        # As tall as the list in it, and at the top. Stretched to the height
+        # of the page, the card carried about 350 px of nothing below its last
+        # entry, which reads as a column that failed to fill.
+        rail_card.pack(side="left", anchor="n", padx=(SIDE_MARGIN, GROUP_GAP),
                        pady=(ROW_GAP, GROUP_GAP))
         self.rail = ttk.Frame(rail_card, style="OnCard.TFrame")
-        self.rail.pack(fill="y", expand=True, padx=ROW_GAP, pady=ROW_GAP)
+        self.rail.pack(fill="x", padx=ROW_GAP, pady=ROW_GAP)
         notebook = self.notebook = ttk.Notebook(strip)
         notebook.pack(side="left", fill="both", expand=True)
 
