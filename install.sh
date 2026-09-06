@@ -205,11 +205,21 @@ fi
 
 [[ $EUID -eq 0 ]] || die "run as root: sudo ./install.sh"
 
+# "0", "n" and nothing all mean "do not flash". See resolve_firmware_choice,
+# which turns each of them into nothing.
+no_flash() { [[ -z "$1" || "$1" == "0" || "$1" == "n" ]]; }
+
 # A setting of the LED module asks for the LED module. Somebody who types
 # --leds 60 has a strip, and a run that took the number and installed nothing
 # to use it would be a run that did what it was told and nothing that was
 # meant.
-if [[ -n "$LED_COUNT" || -n "$SERIAL_PORT" || -n "$BAUD" || -n "$FLASH_ENV" ]]
+#
+# --flash 0 is the one value that asks for nothing. The panel passes it on
+# every command it runs, to say "never touch the board". Read as a request,
+# it put the LED module back on each machine that took it off, and it made
+# the panel's repair reach the LED module and no other.
+if [[ -n "$LED_COUNT" || -n "$SERIAL_PORT" || -n "$BAUD" ]] \
+    || ! no_flash "$FLASH_ENV"
 then
     WITH="$WITH,led"
 fi
@@ -310,7 +320,7 @@ fi
 # Turns "2", "esp32dev" or "" into an environment name, or nothing for "no".
 resolve_firmware_choice() {
     local choice="$1" entry
-    [[ -z "$choice" || "$choice" == "0" || "$choice" == "n" ]] && return 0
+    no_flash "$choice" && return 0
 
     if [[ "$choice" =~ ^[0-9]+$ ]]; then
         (( choice >= 1 && choice <= ${#FIRMWARE_ENVS[@]} )) \

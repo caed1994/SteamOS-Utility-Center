@@ -4262,7 +4262,18 @@ class GpuFirstLookTest(unittest.TestCase):
             self.root = None
 
     def test_the_first_look_is_booked(self):
-        self.assertIsNotNone(self.panel._gpu_first,
+        """Before an update call, and in a window of its own.
+
+        _first_look_gpu clears the booking when it runs, and it runs a fifth
+        of a second after the window opens. The build of this window takes
+        longer than that, so the timer is due at the first update, and a
+        check after that update reads the clock and not the code. It failed
+        one run in two. The CEC twin of this test says the same.
+        """
+        self._destroy()
+        self.root = tk.Tk()
+        panel = self.panel_module.Panel(self.root)
+        self.assertIsNotNone(panel._gpu_first,
                              "nothing reads the card until its page opens")
 
     def test_it_reads_the_card_and_reports_it(self):

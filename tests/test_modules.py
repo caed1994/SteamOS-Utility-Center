@@ -213,6 +213,92 @@ class InstallerTest(unittest.TestCase):
                         self.text.index('[[ $EUID -eq 0 ]] || die'))
 
 
+class WantedModulesTest(unittest.TestCase):
+    """Which modules a set of options asks for, from the installer itself.
+
+    Reported: removing the LED bar worked, and removing any other module
+    afterwards put it back. The panel passes --flash 0 on every command it
+    runs, which says "never touch the board". The installer read a value in
+    --flash as a request for the LED module, so every such command asked for
+    the module the person had just taken off.
+
+    The same fault made "Rebuild and reinstall" reach the LED module and no
+    other, because a run that names a module touches that module alone.
+
+    This runs the real lines. A shape test on the text of the condition
+    passes for a condition that reads the wrong variable.
+    """
+
+    def _wants(self, *options):
+        """Runs the installer's option handling and returns its two answers.
+
+        The copy ends where the decisions are made, before the first change
+        to the machine, and its one test for root is taken out. Root is not
+        needed to answer a question about the options, and a test that needed
+        it would not run.
+
+        It stands in a directory that carries the clone's own files, because
+        the installer reads them from beside itself.
+        """
+        text = _read(INSTALLER)
+        cut = text.index('dropping()   {')
+        head = text[:text.index("\n", cut) + 1]
+        head = head.replace('[[ $EUID -eq 0 ]] || die "run as root: '
+                            'sudo ./install.sh"', ':')
+        # if, and a last line that succeeds. The installer stops at the
+        # first command that fails, and a module it does not touch is a
+        # command that fails.
+        head += ('\nfor name in "${MODULE_ORDER[@]}"; do\n'
+                 '    if want "$name"; then printf \'want %s\\n\' "$name"; fi\n'
+                 '    if touching "$name"; then printf \'touch %s\\n\' "$name"; fi\n'
+                 'done\n'
+                 'exit 0\n')
+        root = os.path.join(HERE, "..")
+        with tempfile.TemporaryDirectory() as room:
+            for name in ("scripts", "server"):
+                os.symlink(os.path.abspath(os.path.join(root, name)),
+                           os.path.join(room, name))
+            copy = os.path.join(room, "install.sh")
+            with open(copy, "w", encoding="utf-8") as handle:
+                handle.write(head)
+            done = subprocess.run(["bash", copy] + list(options),
+                                  capture_output=True, text=True, cwd=room)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        said = done.stdout.split()
+        return (set(said[at + 1] for at, word in enumerate(said)
+                    if word == "want"),
+                set(said[at + 1] for at, word in enumerate(said)
+                    if word == "touch"))
+
+    def test_removing_one_module_asks_for_no_other(self):
+        wanted, touched = self._wants("--yes", "--flash", "0",
+                                      "--without", "cec")
+        self.assertNotIn("led", wanted)
+        self.assertEqual(touched, {"cec"})
+
+    def test_the_repair_reaches_every_module(self):
+        """A bare run is the panel's "Rebuild and reinstall"."""
+        wanted, touched = self._wants("--yes", "--flash", "0",
+                                      "--rebuild-module")
+        self.assertEqual(touched, set(modules.ORDER))
+        self.assertNotIn("led", wanted)
+
+    def test_a_firmware_name_still_asks_for_the_led_module(self):
+        wanted, touched = self._wants("--yes", "--flash", "nodemcuv2",
+                                      "--without", "cec")
+        self.assertIn("led", wanted)
+
+    def test_a_strip_length_still_asks_for_the_led_module(self):
+        wanted, touched = self._wants("--yes", "--leds", "60")
+        self.assertIn("led", wanted)
+        self.assertIn("led", touched)
+
+    def test_adding_one_module_asks_for_that_one(self):
+        wanted, touched = self._wants("--yes", "--flash", "0", "--with", "led")
+        self.assertIn("led", wanted)
+        self.assertEqual(touched, {"led"})
+
+
 class UninstallerTest(unittest.TestCase):
     """It removes every part, and the module state does not change that."""
 
