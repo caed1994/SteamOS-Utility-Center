@@ -839,6 +839,30 @@ class LiveWindowTest(unittest.TestCase):
             self.assertGreaterEqual(widget.winfo_width(),
                                     widget.winfo_reqwidth(), key)
 
+    def test_the_window_fits_the_open_page_and_not_the_tallest_one(self):
+        """Half the pages are short and half are long. A window sized to the
+        longest one leaves the difference empty on every short page.
+
+        A notebook with no height of its own asks for the height of its
+        tallest page, so the window was one height on every page: the height
+        that Notifications needs, also on Desktop mode, which is one card.
+        """
+        self.panel._open_section("strip")
+
+        def fitted(name):
+            self.panel.notebook.select(self._page_named(name))
+            self.panel._refit()
+            for _ in range(6):
+                self.root.update_idletasks()
+                self.root.update()
+            return self.root.winfo_height()
+
+        short = fitted("Strip")
+        tall = fitted("Notifications")
+        self.assertGreater(
+            tall, short + 100,
+            "the window is the same height on a short page as on a long one")
+
     def test_the_window_never_opens_taller_than_the_screen(self):
         self.panel._refit()
         for _ in range(4):

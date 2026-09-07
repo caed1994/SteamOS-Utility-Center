@@ -6017,6 +6017,32 @@ class Panel:
         if self._refit_job is None:
             self._refit_job = self.root.after_idle(self._refit)
 
+    def _ask_for_the_open_page(self):
+        """Each notebook asks for the height of the page that is open.
+
+        A notebook with no height of its own asks for the height of its
+        tallest page. So the window opened at the height that Notifications
+        needs, on every page, and Desktop mode showed 700 px of nothing below
+        its one card.
+
+        The pages scroll, so a page taller than the window gets a scrollbar.
+        The window itself keeps the size it has: this runs when something
+        fits the window, and a change of the page is not one of those things.
+
+        The inner notebook first. It stands on the open page of the outer
+        one, so its height is part of what that page then asks for.
+        """
+        for book in (getattr(self, "notebook", None),
+                     getattr(self, "sections", None)):
+            if book is None:
+                continue
+            self.root.update_idletasks()
+            try:
+                page = book.nametowidget(book.select())
+            except (tk.TclError, KeyError):                 # pragma: no cover
+                continue
+            book.configure(height=max(1, page.winfo_reqheight()))
+
     def _refit(self):
         """Set the height outright; asking nicely does not work.
 
@@ -6028,6 +6054,7 @@ class Panel:
         # cancel after this point cancels a later call.
         self._refit_job = None
         try:
+            self._ask_for_the_open_page()
             self.root.update_idletasks()
             width = self.root.winfo_width()
             if width <= 1:                      # not on screen yet
