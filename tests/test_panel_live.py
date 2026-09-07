@@ -855,13 +855,31 @@ class LiveWindowTest(unittest.TestCase):
             for _ in range(6):
                 self.root.update_idletasks()
                 self.root.update()
-            return self.root.winfo_height()
+            # The notebook and not the window: the window has a floor under
+            # it and a screen above it, and this is about what it asks for.
+            return self.panel.notebook.winfo_reqheight()
 
         short = fitted("Strip")
         tall = fitted("Notifications")
         self.assertGreater(
             tall, short + 100,
-            "the window is the same height on a short page as on a long one")
+            "the notebook asks for the same height on a short page as on a "
+            "long one")
+
+    def test_the_window_opens_no_shorter_than_the_start_height(self):
+        """A window that takes the height of the open page and no more is a
+        strip of a window on the shortest page.
+        """
+        self.panel._open_section("strip")
+        self.panel.notebook.select(self._page_named("Strip"))
+        self.panel._refit()
+        for _ in range(6):
+            self.root.update_idletasks()
+            self.root.update()
+        room = (self.root.winfo_screenheight()
+                - self.panel_module.SCREEN_ALLOWANCE)
+        self.assertEqual(self.root.winfo_height(),
+                         min(self.panel_module.START_HEIGHT, room))
 
     def test_the_window_never_opens_taller_than_the_screen(self):
         self.panel._refit()

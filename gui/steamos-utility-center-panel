@@ -639,7 +639,11 @@ CARD_WRAP = CONTENT_MAX - CARD_INSET
 # margins. Narrower, and the two lists take space from the settings they
 # open.
 START_WIDTH = 1400
-START_HEIGHT = 900
+# The height the window opens at, and the floor under the fit. A window that
+# takes the height of the open page and no more is 690 px on the shortest
+# page, which is a strip of a window on a desktop screen. This value gives
+# the short pages a little air and the long pages most of themselves.
+START_HEIGHT = 950
 MIN_WIDTH = 1120
 MIN_HEIGHT = 680
 FIELD_RADIUS = material.SHAPE_EXTRA_SMALL
@@ -6063,7 +6067,10 @@ class Panel:
             # edge cannot be resized back on some window managers, and the page
             # inside it scrolls now, so there is nothing to lose by capping.
             room = self.root.winfo_screenheight() - SCREEN_ALLOWANCE
-            height = min(self.root.winfo_reqheight(), room)
+            # Not below START_HEIGHT, and never past the screen. On a screen
+            # with less room than that the screen wins: a window off the
+            # bottom edge is worse than a window with a scrollbar.
+            height = min(max(self.root.winfo_reqheight(), START_HEIGHT), room)
             self.root.geometry("%dx%d" % (width, height))
         except tk.TclError:                                 # pragma: no cover
             pass
