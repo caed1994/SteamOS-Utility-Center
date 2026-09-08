@@ -461,13 +461,13 @@ TEMPERATURE_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "temperature")
 LOAD_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "load")
 SCENE_HAS_COLOUR = ("DESKTOP_SCENE", ("color", "breath", "patrol"))
 SCENE_IS_LIT = ("DESKTOP_SCENE", ("color", "breath", "patrol", "rainbow",
-                                  "fire", "aurora", "temperature"))
+                                  "fire", "aurora", "ooze", "temperature"))
 # This does not include the temperature gauge, which is one colour with no
 # movement. It draws again when the sensor value changes, and there is no
 # cycle for the slider to scale. It does not include the load gauge either.
 # The brightness of that gauge is one half of its report.
 SCENE_MOVES = ("DESKTOP_SCENE", ("breath", "patrol", "rainbow", "fire",
-                                 "aurora"))
+                                 "aurora", "ooze"))
 # The energy preference applies only under a governor that gives the firmware
 # a range. Under `performance` the kernel fixes the value and refuses the
 # file, so the panel hides the row rather than show a menu with no result.

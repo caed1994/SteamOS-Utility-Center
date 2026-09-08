@@ -585,6 +585,66 @@ class AuroraTest(unittest.TestCase):
                 self.assertGreater(max(pixel), 0.0)
 
 
+class OozeTest(unittest.TestCase):
+    """The warm half of the circle, where the aurora is the cold half."""
+
+    def _renderer(self):
+        return _renderer(rainbow_shows=render.SHOWS_OOZE)
+
+    def _hues(self, snapshot, ticks=280):
+        renderer = self._renderer()
+        hues = []
+        for tick in range(ticks):
+            for red, green, blue in renderer.render_logical(snapshot,
+                                                            tick * 0.1):
+                hues.append(colorsys.rgb_to_hsv(red / 255.0, green / 255.0,
+                                                blue / 255.0)[0])
+        return hues
+
+    def test_it_keeps_to_acid_yellow_through_green(self):
+        # The restraint is the effect, as it is for the aurora. Past green it
+        # reaches the aurora's half of the circle, and past yellow it is a
+        # fire.
+        hues = self._hues(_rainbow_snapshot())
+        self.assertGreaterEqual(min(hues), 0.14, "wandered towards red")
+        self.assertLessEqual(max(hues), 0.36, "wandered towards cyan")
+
+    def test_steams_colour_slider_still_moves_it(self):
+        plain = _rainbow_snapshot()
+        shifted = shim.make_snapshot(shim.EFFECT_RAINBOW, color_shift=128)
+        self.assertNotEqual(self._renderer().render_logical(plain, 1.0),
+                            self._renderer().render_logical(shifted, 1.0))
+
+    def test_it_creeps_more_slowly_than_the_aurora_drifts(self):
+        self.assertGreater(render.OOZE_CYCLE, render.AURORA_CYCLE)
+
+    def test_the_gaps_are_dark_and_never_black(self):
+        renderer = self._renderer()
+        snapshot = _rainbow_snapshot()
+        for tick in range(90):
+            for pixel in renderer.render_logical(snapshot, tick * 0.2):
+                self.assertGreater(max(pixel), 0.0)
+
+    def test_the_bar_never_stands_still(self):
+        """Blobs that reach far enough add up to the same everywhere.
+
+        At OOZE_REACH = 0.23 the three covered the ring wherever they stood,
+        and the bar held one flat colour for about an eighth of the time in
+        runs of nearly two seconds. A person reads that as a fault and not as
+        calm. This test is on the reach and not on the speeds: the measurement
+        was the same for every set of speeds tried.
+        """
+        renderer = self._renderer()
+        snapshot = _rainbow_snapshot()
+        flat = 0
+        for tick in range(560):                  # two full cycles
+            levels = [max(pixel) for pixel
+                      in renderer.render_logical(snapshot, tick * 0.05)]
+            if max(levels) - min(levels) < 40:
+                flat += 1
+        self.assertEqual(flat, 0, "the bar goes flat %d times" % flat)
+
+
 class ColourScaleTest(unittest.TestCase):
     """The shared stop-mixing both the temperature scale and fire use."""
 

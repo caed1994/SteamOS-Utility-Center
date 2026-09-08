@@ -401,6 +401,73 @@ def _aurora(snapshot, elapsed, options):
     return frame
 
 
+# -- ooze ------------------------------------------------------------------
+
+# The other half of the circle from the aurora: acid yellow through to deep
+# green, and never a cool colour. 0.16 is yellow and 0.33 is pure green.
+#
+# The two are drawn the same way and read as opposites: the aurora is thin
+# and cold and thins to nothing, this is thick and warm and never goes out.
+OOZE_HUE_HOT = 0.17
+OOZE_HUE_COLD = 0.32
+
+OOZE_CYCLE = 14.0           # thick: it creeps, it does not flow
+
+# Three blobs, each with its own start and its own speed. Two run one way and
+# one the other, so they pass through each other rather than holding
+# formation. The numbers are (start, speed, hue), and the hue is between the
+# two above: a blob carries its own thickness. The speeds are awkward numbers
+# so that the three meet in a different arrangement each time round.
+OOZE_BLOBS = ((0.00, -0.87, 0.95), (0.35, -0.41, 0.10), (0.70, 0.53, 0.50))
+# How far a blob reaches, as a share of the bar.
+#
+# This value decides whether the effect has any shape at all, and it is a
+# narrow window. At 0.23 the three reach far enough to cover the ring wherever
+# they stand, so their sum is nearly the same everywhere: the bar held one
+# flat colour for about an eighth of the time, in runs of nearly two seconds,
+# which reads as a fault and not as calm. The speeds do not help there. The
+# measurement is the same for every set of them.
+#
+# Narrower than this and a strip of seventeen shows the three as separate
+# lamps with dark between, which is blobs and not ooze.
+OOZE_REACH = 0.15
+OOZE_FLOOR = 0.06           # the gaps are dark, and not black
+
+
+def _ooze(snapshot, elapsed, options):
+    """Draws thick yellow-green blobs that creep and merge."""
+    period = _cycle(snapshot, OOZE_CYCLE, options.speed_scale)
+    phase = elapsed / period
+    # The colour picker moves it, the way it moves the rainbow and the aurora:
+    # the effect keeps its character, you choose which hazard it is.
+    shift = snapshot.color_shift / 255.0
+
+    frame = []
+    for index in range(shim.LOGICAL_LEDS):
+        where = index / float(shim.LOGICAL_LEDS)
+        level = 0.0
+        thickness = 0.0
+        for start, speed, hot in OOZE_BLOBS:
+            centre = (start + phase * speed) % 1.0
+            # Round the bar, so a blob leaves one end and returns at the other
+            # rather than turning back at a wall that is not there.
+            gap = abs(where - centre)
+            gap = min(gap, 1.0 - gap)
+            near = math.exp(-(gap / OOZE_REACH) ** 2)
+            level += near
+            thickness += hot * near
+        # The blobs add up, so where two meet it is brighter and its colour is
+        # the colour of the heavier of the two.
+        thickness = thickness / level if level > 0.0 else 0.5
+        level = min(1.0, level)
+        hue = OOZE_HUE_COLD + (OOZE_HUE_HOT - OOZE_HUE_COLD) * thickness
+        # Full colour in the gaps and a little washed out at a peak, which is
+        # what a thick liquid does under its own light.
+        frame.append(hsv_to_rgb(hue + shift, 1.0 - 0.22 * level ** 3,
+                                OOZE_FLOOR + (1.0 - OOZE_FLOOR) * level))
+    return frame
+
+
 # What the rainbow entry shows.
 #
 # SteamOS does not permit new entries in its LED menu: the entries are in the
@@ -414,6 +481,7 @@ SHOWS_TEMPERATURE = "temperature"
 SHOWS_LOAD = "load"
 SHOWS_FIRE = "fire"
 SHOWS_AURORA = "aurora"
+SHOWS_OOZE = "ooze"
 
 # What the brightness and the speed of a scene reach.
 #
@@ -450,6 +518,7 @@ _SUBSTITUTES = {
     SHOWS_LOAD: (_load, "load", TAKES_NOTHING),
     SHOWS_FIRE: (_fire, None, TAKES_BOTH),
     SHOWS_AURORA: (_aurora, None, TAKES_BOTH),
+    SHOWS_OOZE: (_ooze, None, TAKES_BOTH),
 }
 RAINBOW_CHOICES = (SHOWS_RAINBOW,) + tuple(_SUBSTITUTES)
 

@@ -157,6 +157,7 @@ Mode. The download progress bar comes from there too.
 | `load` | the CPU and GPU load, as two bars from the centre | ![load](docs/previews/load.png) |
 | `fire` | a flame that moves along the strip | ![fire](docs/previews/fire.png) |
 | `aurora` | slow green and violet curtains | ![aurora](docs/previews/aurora.png) |
+| `ooze` | thick acid blobs that creep and merge | ![ooze](docs/previews/ooze.png) |
 
 Set the option, then select **Rainbow** in Steam's LED menu. A machine that
 cannot show your selection gets the rainbow, with the reason in the log.
@@ -175,7 +176,7 @@ sides. The GPU half needs an amdgpu card.
 
 Steam sets the LEDs in Game Mode only. The panel's **Desktop mode** page gives
 the desktop a scene of its own: `steam`, `off`, `color`, `breath`, `patrol`,
-`rainbow`, `fire`, `aurora`, `temperature` or `load`.
+`rainbow`, `fire`, `aurora`, `ooze`, `temperature` or `load`.
 
 Every effect is available here, and not only the one in the rainbow slot. The
 two modes can show different effects.

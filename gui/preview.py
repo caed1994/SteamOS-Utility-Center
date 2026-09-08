@@ -169,7 +169,7 @@ class Preview:
             return None
 
     def slot_frame(self, shows, elapsed):
-        """One frame of `fire`, `aurora`, `temperature` or `load`."""
+        """One frame of `fire`, `aurora`, `ooze`, `temperature` or `load`."""
         if shows == render.SHOWS_TEMPERATURE:
             self.sensor.celsius_value = (
                 SWEEP_LOW + _there_and_back(elapsed / SWEEP_SECONDS)
@@ -226,6 +226,7 @@ class Preview:
 SLOT_EFFECTS = (
     ("Fire", render.SHOWS_FIRE, "Flame drifting along the strip"),
     ("Aurora", render.SHOWS_AURORA, "Slow curtains, green to violet"),
+    ("Ooze", render.SHOWS_OOZE, "Thick acid blobs that creep and merge"),
     ("Temperature", render.SHOWS_TEMPERATURE,
      "Colour carries the reading, cool to hot"),
     # This text names no colour and no side, because both are settings now.

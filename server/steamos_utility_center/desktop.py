@@ -43,13 +43,14 @@ SCENE_BREATH = "breath"
 SCENE_PATROL = "patrol"
 SCENE_RAINBOW = "rainbow"
 
-# And this project's own four effects.
+# And this project's own five effects.
 #
 # In Game Mode they share the rainbow slot, because the menu entries are in
 # Steam's client and a new effect must replace one. The desktop does not use
 # that menu, so each of the four is a scene of its own here.
 SCENE_FIRE = "fire"
 SCENE_AURORA = "aurora"
+SCENE_OOZE = "ooze"
 SCENE_TEMPERATURE = "temperature"
 SCENE_LOAD = "load"
 
@@ -57,7 +58,7 @@ SCENE_LOAD = "load"
 # table is the full translation. A scene that is not in this table is not a
 # scene, and that is what the validator reports.
 #
-# The last five scenes share an effect, because they share the slot that the
+# The last six scenes share an effect, because they share the slot that the
 # renderer replaces. SCENE_SHOWS below separates those five. It goes to the
 # renderer with the snapshot.
 SCENE_EFFECTS = {
@@ -68,17 +69,19 @@ SCENE_EFFECTS = {
     SCENE_RAINBOW: shim.EFFECT_RAINBOW,
     SCENE_FIRE: shim.EFFECT_RAINBOW,
     SCENE_AURORA: shim.EFFECT_RAINBOW,
+    SCENE_OOZE: shim.EFFECT_RAINBOW,
     SCENE_TEMPERATURE: shim.EFFECT_RAINBOW,
     SCENE_LOAD: shim.EFFECT_RAINBOW,
 }
 
-# What each of those five puts in the slot. A scene that names one says so
+# What each of those six puts in the slot. A scene that names one says so
 # directly, and that is the difference from Game Mode. In Game Mode, a setting
 # elsewhere decides the content of the slot. Here it is the selected scene.
 SCENE_SHOWS = {
     SCENE_RAINBOW: render.SHOWS_RAINBOW,
     SCENE_FIRE: render.SHOWS_FIRE,
     SCENE_AURORA: render.SHOWS_AURORA,
+    SCENE_OOZE: render.SHOWS_OOZE,
     SCENE_TEMPERATURE: render.SHOWS_TEMPERATURE,
     SCENE_LOAD: render.SHOWS_LOAD,
 }
@@ -86,7 +89,7 @@ SCENE_SHOWS = {
 SCENES = (SCENE_STEAM,) + tuple(SCENE_EFFECTS)
 
 # The scenes whose colour is the colour that a person sets. This list does not
-# have the four that make their own colours, and it does not have "off", which
+# have the five that make their own colours, and it does not have "off", which
 # has no colour. To offer the colour control for those is to offer a setting
 # that does nothing.
 SCENES_WITH_COLOUR = (SCENE_COLOR, SCENE_BREATH, SCENE_PATROL)

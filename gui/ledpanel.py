@@ -1269,6 +1269,7 @@ def rainbow_choices(names):
         "load": "CPU and GPU load",
         "fire": "Fire",
         "aurora": "Aurora",
+        "ooze": "Ooze",
     }
     return tuple((labels.get(name, name.capitalize()), name) for name in names)
 
