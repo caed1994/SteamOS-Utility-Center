@@ -87,7 +87,19 @@ static void ensureStrip(uint16_t count) {
     return;
   }
   delete strip;
+  // An Arduino core builds without exceptions, so a full heap makes new give
+  // nothing back rather than throw. Begin() below used to run on that
+  // nothing, which made the test for nullptr in every caller a test that
+  // never ran: the crash came first. A long strip on a fragmented heap is
+  // where this happens, because delete frees the room in pieces and new
+  // wants it in one.
   strip = new Strip(count, LED_PIN);
+  if (strip == nullptr) {
+    // And no claim to a strip that is not there. knownLength() then falls
+    // back to the boot default, and the next frame asks again.
+    stripLength = 0;
+    return;
+  }
   stripLength = count;
   strip->Begin();
   strip->ClearTo(RgbColor(0, 0, 0));
@@ -218,32 +230,40 @@ static const uint8_t STANDBY_LAST = STANDBY_DOT;
 
 static const uint16_t MAX_PAYLOAD = MAX_LEDS * 3 + 8;
 
-static uint16_t crc16(const uint8_t *data, uint16_t length) {
-  uint16_t crc = 0xFFFF;
-  for (uint16_t i = 0; i < length; i++) {
-    crc ^= (uint16_t)data[i] << 8;
-    for (uint8_t bit = 0; bit < 8; bit++) {
-      crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
-    }
+// CRC-16/CCITT-FALSE, one byte at a time. The three places that need it are
+// the two ends of sendFrame and the parser, and each of them held its own
+// copy of this loop. Three copies of a polynomial are three chances for one
+// of them to change alone.
+static const uint16_t CRC_START = 0xFFFF;
+
+static uint16_t crc16Byte(uint16_t crc, uint8_t byte) {
+  crc ^= (uint16_t)byte << 8;
+  for (uint8_t bit = 0; bit < 8; bit++) {
+    crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
   }
   return crc;
+}
+
+static uint16_t crc16Feed(uint16_t crc, const uint8_t *data, uint16_t length) {
+  for (uint16_t i = 0; i < length; i++) {
+    crc = crc16Byte(crc, data[i]);
+  }
+  return crc;
+}
+
+static uint16_t crc16(const uint8_t *data, uint16_t length) {
+  return crc16Feed(CRC_START, data, length);
 }
 
 static void sendFrame(uint8_t type, const uint8_t *payload, uint16_t length) {
   uint8_t header[4] = {PROTOCOL_VERSION, type, (uint8_t)(length & 0xFF),
                        (uint8_t)(length >> 8)};
+  // Continued over the payload, so the payload needs no buffer of its own.
+  // A message with no payload passes no pointer at all - see MSG_PONG - so
+  // the length is tested rather than left to a loop that would not run.
   uint16_t crc = crc16(header, sizeof(header));
-  // Continue the CRC over the payload without copying it into a buffer.
   if (length > 0) {
-    uint16_t running = crc;
-    for (uint16_t i = 0; i < length; i++) {
-      running ^= (uint16_t)payload[i] << 8;
-      for (uint8_t bit = 0; bit < 8; bit++) {
-        running = (running & 0x8000) ? (uint16_t)((running << 1) ^ 0x1021)
-                                     : (uint16_t)(running << 1);
-      }
-    }
-    crc = running;
+    crc = crc16Feed(crc, payload, length);
   }
   const uint8_t sof[2] = {SOF1, SOF2};
   Serial.write(sof, sizeof(sof));
@@ -297,6 +317,11 @@ static uint16_t rxLength = 0;
 static uint16_t rxFilled = 0;
 static uint8_t rxCrc[2];
 static uint8_t rxCrcLen = 0;
+// The CRC so far. It used to be taken over the whole frame in the one call
+// that received the last byte of it, which is 7200 turns of the loop above
+// for a 300 LED frame - a spike in the middle of the receive path. The
+// header sets this and each payload byte adds itself to it.
+static uint16_t rxCrcRunning = CRC_START;
 
 static uint32_t statFrames = 0;
 static uint16_t statCrcErrors = 0;
@@ -445,12 +470,14 @@ static void feed(uint8_t byte) {
         }
         rxFilled = 0;
         rxCrcLen = 0;
+        rxCrcRunning = crc16(rxHeader, sizeof(rxHeader));
         rxState = rxLength > 0 ? RX_PAYLOAD : RX_CRC;
       }
       break;
 
     case RX_PAYLOAD:
       rxPayload[rxFilled++] = byte;
+      rxCrcRunning = crc16Byte(rxCrcRunning, byte);
       if (rxFilled == rxLength) {
         rxState = RX_CRC;
         rxCrcLen = 0;
@@ -461,15 +488,7 @@ static void feed(uint8_t byte) {
       rxCrc[rxCrcLen++] = byte;
       if (rxCrcLen == 2) {
         const uint16_t expected = (uint16_t)rxCrc[0] | ((uint16_t)rxCrc[1] << 8);
-        uint16_t actual = crc16(rxHeader, sizeof(rxHeader));
-        for (uint16_t i = 0; i < rxLength; i++) {
-          actual ^= (uint16_t)rxPayload[i] << 8;
-          for (uint8_t bit = 0; bit < 8; bit++) {
-            actual = (actual & 0x8000) ? (uint16_t)((actual << 1) ^ 0x1021)
-                                       : (uint16_t)(actual << 1);
-          }
-        }
-        if (actual == expected) {
+        if (rxCrcRunning == expected) {
           handleMessage(rxHeader[1], rxPayload, rxLength);
         } else {
           statCrcErrors++;
@@ -614,8 +633,13 @@ void loop() {
     waitingAnimation(now);
   }
 
+  // Not while the host sleeps. Nobody reads it there, and on a board whose
+  // USB is the processor's own - see the esp32s3 environment - a write waits
+  // for a host that is not draining the port. That wait is a hitch in the
+  // standby animation every five seconds. A PING is answered as before: a
+  // host that pings is a host that is awake.
   static uint32_t lastStatsMs = 0;
-  if ((uint32_t)(now - lastStatsMs) > 5000) {
+  if (!standby && (uint32_t)(now - lastStatsMs) > 5000) {
     lastStatsMs = now;
     uint8_t payload[8];
     payload[0] = (uint8_t)(statFrames & 0xFF);

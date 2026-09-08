@@ -4,8 +4,22 @@
 // Drives the real firmware source against stubbed Arduino/NeoPixelBus.
 #include <cstdio>
 #include <cstdlib>
+#include <new>
 #include <vector>
 #include <string>
+
+// A full heap, on demand. An Arduino core builds without exceptions, so new
+// gives back nothing there instead of throwing. See -fcheck-new in run.sh.
+static bool g_failAlloc = false;
+void *operator new(std::size_t size) {
+  if (g_failAlloc) {
+    g_failAlloc = false;
+    return nullptr;
+  }
+  return malloc(size);
+}
+void operator delete(void *block) noexcept { free(block); }
+void operator delete(void *block, std::size_t) noexcept { free(block); }
 
 FakeSerial Serial;
 std::vector<RgbColor> g_lastShown;
@@ -193,6 +207,32 @@ int main() {
   pump();
   check(g_lastShown[0].R == 0 && g_lastShown[0].G == 0 && g_lastShown[0].B == 0,
         "BLANK clears the strip");
+
+  // --- a full heap leaves the firmware alive, and honest about it ----------
+  //
+  // ensureStrip called Begin() on what new gave back without looking at it,
+  // so a strip it could not build took the board down. The test for nullptr
+  // in each of its callers never ran: the crash came first.
+  {
+    const uint16_t was = stripLength;
+    std::vector<uint8_t> shorter{40, 0};
+    shorter.resize(2 + 40 * 3, 0x11);
+    auto frame = hostFrame(0x10, shorter);
+    Serial.feed(frame.data(), frame.size());
+    // After the feed. That call grows a vector, and the vector would take
+    // the failure meant for the strip.
+    g_failAlloc = true;
+    pump();
+    check(stripLength == 0, "a strip it could not build is not claimed");
+    check(was != 0, "not the state this is about");
+
+    // And the next frame builds it, because nothing recorded a strip that is
+    // not there.
+    Serial.feed(frame.data(), frame.size());
+    pump();
+    check(stripLength == 40 && g_lastShown.size() == 40,
+          "and the frame after it builds the strip");
+  }
 
   // --- a dim breath moves each frame, rather than holding and jumping ------
   //

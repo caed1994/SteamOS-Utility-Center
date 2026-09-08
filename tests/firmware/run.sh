@@ -13,7 +13,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BINARY="$(mktemp -t fwtest.XXXXXX)"
 trap 'rm -f "$BINARY"' EXIT
 
-g++ -std=c++11 -Wall -Wextra \
+# -fcheck-new: an Arduino core builds without exceptions, so new gives back
+# nothing on a full heap rather than throwing. Without this flag g++ takes the
+# result of new to be a pointer that cannot be null, and a test of the
+# firmware's answer to a full heap would be a test of code it removed.
+g++ -std=c++11 -Wall -Wextra -fcheck-new \
     -I "$HERE/stubs" \
     -include "$HERE/stubs/Arduino.h" \
     -include "$HERE/stubs/NeoPixelBus.h" \
