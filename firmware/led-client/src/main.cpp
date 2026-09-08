@@ -79,8 +79,18 @@ typedef NeoPixelBus<ColorFeature, LedMethod> Strip;
 static Strip *strip = nullptr;
 static uint16_t stripLength = 0;
 
+// Whether this board can drive a strip of this length.
+//
+// One place, because ensureStrip steps aside for every other length and a
+// painter that carried on regardless would paint the strip that is already
+// there instead of the one it was asked for. MSG_FILL did exactly that: a
+// fill of no LEDs lit the whole bar, while MSG_FRAME refused the same count.
+static bool canDrive(uint16_t count) {
+  return count > 0 && count <= MAX_LEDS;
+}
+
 static void ensureStrip(uint16_t count) {
-  if (count == 0 || count > MAX_LEDS) {
+  if (!canDrive(count)) {
     return;
   }
   if (strip != nullptr && count == stripLength) {
@@ -401,7 +411,7 @@ static void handleMessage(uint8_t type, const uint8_t *payload, uint16_t length)
         return;
       }
       const uint16_t count = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
-      if (count == 0 || (uint32_t)count * 3 + 2 > length) {
+      if (!canDrive(count) || (uint32_t)count * 3 + 2 > length) {
         return;
       }
       showFrame(payload + 2, count);
@@ -415,6 +425,9 @@ static void handleMessage(uint8_t type, const uint8_t *payload, uint16_t length)
         return;
       }
       const uint16_t count = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
+      if (!canDrive(count)) {
+        return;
+      }
       fillStrip(payload[2], payload[3], payload[4], count);
       statFrames++;
       lastFrameMs = millis();

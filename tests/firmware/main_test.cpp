@@ -208,6 +208,26 @@ int main() {
   check(g_lastShown[0].R == 0 && g_lastShown[0].G == 0 && g_lastShown[0].B == 0,
         "BLANK clears the strip");
 
+  // --- a length the board cannot drive paints nothing, either way ---------
+  //
+  // MSG_FRAME refused a count of zero and MSG_FILL did not. ensureStrip then
+  // stepped aside and fillStrip painted the strip that was already there, so
+  // a fill of no LEDs lit the whole bar. Both ask canDrive now.
+  {
+    fillStrip(0, 0, 0, stripLength);        // a known dark strip to start
+    before = g_showCount;
+    for (uint16_t count : {(uint16_t)0, (uint16_t)(MAX_LEDS + 1)}) {
+      std::vector<uint8_t> silly{(uint8_t)(count & 0xFF),
+                                 (uint8_t)(count >> 8), 0xFF, 0xFF, 0xFF};
+      auto frame = hostFrame(0x11, silly);
+      Serial.feed(frame.data(), frame.size());
+      pump();
+    }
+    check(g_showCount == before, "a fill of a length it cannot drive paints "
+                                 "nothing");
+    check(g_lastShown[0].R == 0, "and the strip is as dark as it was");
+  }
+
   // --- a full heap leaves the firmware alive, and honest about it ----------
   //
   // ensureStrip called Begin() on what new gave back without looking at it,
