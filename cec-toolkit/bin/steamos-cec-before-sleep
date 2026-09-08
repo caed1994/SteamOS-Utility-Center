@@ -42,6 +42,15 @@ TV_STANDBY_SETTLE_SECONDS="${TV_STANDBY_SETTLE_SECONDS:-0.5}"
 # 0 turns the question off. A television that never answers costs that half
 # second on each suspend and gains nothing, and this is the way to say so.
 POWER_STATUS_TIMEOUT="${POWER_STATUS_TIMEOUT:-0.5}"
+# The limit on one cec-ctl call.
+#
+# The question above was the only bounded one. Each other call could take as
+# long as the driver felt like, and the suspend and the shutdown wait for this
+# script: a driver that does not return holds the machine for the whole
+# TimeoutStartSec of the unit, which is fifteen seconds. A CEC message is a
+# few bytes on a slow bus and is acknowledged in milliseconds, so a second is
+# already generous.
+CEC_CALL_TIMEOUT="${CEC_CALL_TIMEOUT:-1}"
 INPUT_INACTIVE_SUSPEND_MARKER="/run/user/$STEAMOS_CEC_UID/steamos-cec-input-inactive-suspend"
 
 case "$CEC_SLEEP_TV_ACTION" in
@@ -53,6 +62,13 @@ case "$CEC_SLEEP_TV_ACTION" in
 esac
 
 touch /run/steamos-cec-local-suspend
+
+# One cec-ctl call, with the device it always names and a limit it did not
+# have. television_is_off keeps a limit of its own, because that one is the
+# length of an answer a person can set and not the length of a hang.
+cec_ctl() {
+  timeout "$CEC_CALL_TIMEOUT" /usr/bin/cec-ctl -d "$CEC_DEVICE" "$@"
+}
 
 run_as_user_bus() {
   runuser -u "$STEAMOS_CEC_USER" -- env \
@@ -75,7 +91,7 @@ BUSCTL_TIMEOUT=0.5
 current_playback_logical_address() {
   local logical
   logical="$(
-    /usr/bin/cec-ctl -d "$CEC_DEVICE" -S 2>/dev/null |
+    cec_ctl -S 2>/dev/null |
       awk '/^[[:space:]]+Logical Address[[:space:]]+:/ {print $4; exit}'
   )"
   if [[ "$logical" =~ ^[0-9]+$ && "$logical" -ge 0 && "$logical" -le 14 ]]; then
@@ -88,13 +104,13 @@ current_playback_logical_address() {
 }
 
 send_native_standby() {
-  /usr/bin/cec-ctl -d "$CEC_DEVICE" -s --to "$1" --standby || true
+  cec_ctl -s --to "$1" --standby || true
 }
 
 send_raw_standby() {
   local source="$1"
   local target="$2"
-  /usr/bin/cec-ctl -d "$CEC_DEVICE" -s --raw-msg \
+  cec_ctl -s --raw-msg \
     -f "$source" -t "$target" \
     --custom-command cmd=0x36 || true
 }
@@ -148,12 +164,12 @@ send_inactive_source() {
     return 0
   fi
 
-  /usr/bin/cec-ctl -d "$CEC_DEVICE" -s --to "$TV_LOGICAL_ADDRESS" \
+  cec_ctl -s --to "$TV_LOGICAL_ADDRESS" \
     --inactive-source phys-addr="$CEC_PHYSICAL_ADDRESS" || true
 
   if payload="$(physical_address_payload)"; then
     sleep 0.5
-    /usr/bin/cec-ctl -d "$CEC_DEVICE" -s --raw-msg \
+    cec_ctl -s --raw-msg \
       -f "$source" -t "$TV_LOGICAL_ADDRESS" \
       --custom-command "cmd=0x9d,payload=$payload" || true
   fi
@@ -231,8 +247,15 @@ if [[ -e "$CEC_DEVICE" ]]; then
   [[ "$said" != "2" ]] || asking=0
   answer="$said"
 
+  # The waits below leave the television time to act before the next *answer*.
+  # A set that gives no power status has no answer to come, so it waited two
+  # seconds on each suspend and each shutdown to learn nothing. It gets the
+  # raw fallback once, with no wait; a set that does answer gets the ladder it
+  # always got.
+  rounds="0.5 1.0"
+  [[ "$asking" == "1" ]] || rounds="0"
   if [[ "$answer" != "0" ]]; then
-    for delay in 0.5 1.0; do
+    for delay in $rounds; do
       sleep "$delay"
       send_raw_standby "$playback_logical_address" "$TV_LOGICAL_ADDRESS"
       sleep 0.25

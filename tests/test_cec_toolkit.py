@@ -22,11 +22,13 @@ not available offline. The state of this tree is available, and this tree is
 the half with the faults.
 """
 
+import getpass
 import json
 import os
 import re
 import subprocess
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -203,6 +205,60 @@ class InstalledAndRemovedTest(unittest.TestCase):
                           self.uninstall, name)
 
 
+class SleepCostTest(unittest.TestCase):
+    """What the sleep hook costs, run rather than read.
+
+    systemd waits for steamos-cec-before-sleep on every suspend and on every
+    shutdown, so each second in it is a second of both. The television it is
+    slowest with is the one that answers nothing: nothing it asks comes back,
+    and it used to wait for those answers anyway.
+
+    This runs the real script against a cec-ctl that behaves that way. It is
+    a clock test, so its limit is generous: the measurement was 1.6 seconds
+    and the version before it took 3.3.
+    """
+
+    SILENT = """#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    -S) printf '    Logical Address              : 4\\n'; exit 0 ;;
+    --give-device-power-status) sleep 5; exit 0 ;;
+  esac
+done
+exit 0
+"""
+
+    def _cost(self, stub):
+        """Seconds one "pre" run takes with this cec-ctl standing in."""
+        with tempfile.TemporaryDirectory() as room:
+            fake = os.path.join(room, "cec-ctl")
+            with open(fake, "w") as handle:
+                handle.write(stub)
+            os.chmod(fake, 0o755)
+            # The script names the path, so the copy names the stand-in.
+            with open(os.path.join(CEC, "bin",
+                                   "steamos-cec-before-sleep")) as handle:
+                text = handle.read().replace("/usr/bin/cec-ctl", fake)
+            script = os.path.join(room, "before-sleep")
+            with open(script, "w") as handle:
+                handle.write(text)
+            device = os.path.join(room, "cec0")
+            open(device, "w").close()
+            place = dict(os.environ)
+            place.update({"STEAMOS_CEC_CONFIG": os.path.join(room, "none"),
+                          # The script asks id -u for this name. Whoever
+                          # runs the suite is a name that exists.
+                          "STEAMOS_CEC_USER": getpass.getuser(),
+                          "CEC_DEVICE": device})
+            started = time.monotonic()
+            subprocess.run(["bash", script, "pre"], env=place,
+                           capture_output=True, timeout=60)
+            return time.monotonic() - started
+
+    def test_a_television_that_answers_nothing_is_not_waited_for(self):
+        self.assertLess(self._cost(self.SILENT), 2.5)
+
+
 class FixedHereTest(unittest.TestCase):
     """The six fixes, each of which was a workaround somewhere else first.
 
@@ -367,6 +423,28 @@ class FixedHereTest(unittest.TestCase):
                       helper)
         self.assertIn("POWER_STATUS_TIMEOUT",
                       self._read("config", "steamos-cec-toolkit.conf.example"))
+
+    def test_every_message_has_a_limit_on_it(self):
+        """The suspend and the shutdown wait for this script, so a call that
+        does not return holds the machine for the whole limit of the unit.
+
+        The question about the power state was the one call with a limit.
+        Each other one went straight to cec-ctl. See cec_ctl.
+        """
+        helper = self._read("bin", "steamos-cec-before-sleep")
+        loose = [line.strip() for line in helper.split("\n")
+                 if "/usr/bin/cec-ctl" in line and "timeout" not in line]
+        self.assertEqual(loose, [], "these calls have no limit")
+
+    def test_a_set_that_says_nothing_does_not_wait_for_an_answer(self):
+        """The ladder waits before each further try, and it waits to leave
+        the television time to answer. A set that answers nothing has no
+        answer coming, so those waits bought two seconds of nothing on each
+        suspend and each shutdown.
+        """
+        helper = self._read("bin", "steamos-cec-before-sleep")
+        self.assertIn('[[ "$asking" == "1" ]] || rounds="0"', helper)
+        self.assertIn("for delay in $rounds; do", helper)
 
     def test_the_question_cannot_end_the_script_by_itself(self):
         """This file runs under `set -e`, where a command that returns
