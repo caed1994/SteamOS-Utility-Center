@@ -236,6 +236,13 @@ PANEL_ICON_GLOB=".local/share/icons/hicolor/*/apps/$PANEL_ICON.png"
 # with the name in the panel.
 PANEL_CONFIG="$NAME-panel.conf"
 
+# Where PlatformIO comes from. install.sh and scripts/install-platformio.sh
+# both name it, and a second copy of a URL is a second thing to update.
+# The environment wins, so a test can point this at a file it wrote. Anybody
+# who can set the environment of this script can already run their own code as
+# this user, so that is no wider a door than the file itself.
+PLATFORMIO_INSTALLER_URL="${PLATFORMIO_INSTALLER_URL:-https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py}"
+
 # What the installer adds to the .bashrc of the user, so that "pio" is a
 # command that the person can type.
 #
@@ -253,6 +260,34 @@ PLATFORMIO_PATH_LINE='export PATH="$HOME/.platformio/penv/bin:$PATH"'
 # What the check looks for. A second installation thus adds no second copy, and
 # the uninstaller can report whether there is a copy.
 PLATFORMIO_PATH_MARK=".platformio/penv/bin"
+
+# Adds those two lines to a .bashrc, one time.
+#
+# Here, with the strings and beside the check the uninstaller makes, because
+# the two match by exact text: a change to the writer that misses the remover
+# leaves the line on that machine for ever.
+#
+# The home directory is an argument, because the two callers know it in
+# different ways. install.sh is root and knows WATCHER_HOME;
+# scripts/install-platformio.sh is the person and knows HOME. It writes as
+# whoever runs it, and install.sh reaches it under runuser, so the file
+# belongs to the person either way.
+add_platformio_to_path() {      # add_platformio_to_path <home>
+    local profile="$1/.bashrc"
+    # The standalone installer does not change the PATH. Without this step
+    # only a program that knows the location finds "pio", and the shell of
+    # the person does not know it.
+    if grep -qF "$PLATFORMIO_PATH_MARK" "$profile" 2>/dev/null; then
+        return 0                        # already there; do not stack copies
+    fi
+    say "Adding PlatformIO to the PATH in $profile"
+    if ! printf '\n%s\n%s\n' "$PLATFORMIO_PATH_NOTE" \
+            "$PLATFORMIO_PATH_LINE" >> "$profile"; then
+        warn "could not write $profile - add this line yourself:"
+        warn "    $PLATFORMIO_PATH_LINE"
+        return 1
+    fi
+}
 
 # --- the names this project installed under before it was renamed -----------
 #

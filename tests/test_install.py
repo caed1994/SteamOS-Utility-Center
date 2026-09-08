@@ -506,10 +506,10 @@ class UninstallHomeTest(unittest.TestCase):
         exactly the first file.
         """
         room, home, _entry, _icons, profile = self._home(bashrc=self.OWN_BASHRC)
-        # WATCHER_HOME is what add_platformio_to_path writes against; the
-        # remover works it out for itself through watcher_user_dirs.
+        # The writer takes the home directory; the remover works it out for
+        # itself through watcher_user_dirs.
         done = self._call(
-            'WATCHER_USER=deck WATCHER_HOME="%s" add_platformio_to_path\n'
+            'WATCHER_USER=deck add_platformio_to_path "%s"\n'
             'grep -ci platformio "%s"\n'
             'remove_platformio_path' % (home, profile), room, home)
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -786,9 +786,13 @@ class InstallerShapeTest(unittest.TestCase):
         that advice gets you a flash that works today and stops working after
         the next system update, for no reason anybody would trace back here.
         """
-        self.assertIn("platformio-core-installer", self.text)
+        # In scripts/user-unit.sh, which install.sh sources: the panel offers
+        # the same download and reads the address from there too.
+        with open(os.path.join(HERE, "..", "scripts", "user-unit.sh")) as one:
+            self.assertIn("platformio-core-installer", one.read())
         for name in ("install.sh", "flash-esp.sh",
-                     os.path.join("scripts", "flash-firmware.sh")):
+                     os.path.join("scripts", "flash-firmware.sh"),
+                     os.path.join("scripts", "install-platformio.sh")):
             with open(os.path.join(HERE, "..", name)) as handle:
                 text = handle.read()
             self.assertNotIn("pip install --user platformio", text, name)
@@ -913,7 +917,12 @@ class InstallerShapeTest(unittest.TestCase):
             shared)
 
     def test_the_path_line_is_not_stacked_on_every_run(self):
-        self.assertIn('grep -qF "$PLATFORMIO_PATH_MARK" "$profile"', self.text)
+        # In scripts/user-unit.sh, beside the strings it writes: the panel
+        # offers the same install now, so the writer went to the file that
+        # both callers read.
+        with open(USER_UNIT) as handle:
+            self.assertIn('grep -qF "$PLATFORMIO_PATH_MARK" "$profile"',
+                          handle.read())
 
     def test_the_two_scripts_spell_that_line_the_same_way(self):
         """Written by one and deleted by the other, both by exact match.
@@ -1102,6 +1111,50 @@ class RetiredUserFilesTest(unittest.TestCase):
             self.assertFalse(
                 os.path.exists(os.path.join(HERE, "..", "server", gone)),
                 "%s is still here - it is the CEC module's job now" % gone)
+
+
+class PlatformIOTest(unittest.TestCase):
+    """One installer for PlatformIO, which two things reach for.
+
+    install.sh offers it on every run, and the firmware page of the panel
+    offers it beside the flash button. Two copies of the steps would be two
+    answers to "how is PlatformIO installed here", and the one that a person
+    does not run is the one that goes stale.
+    """
+
+    SCRIPT = os.path.join(HERE, "..", "scripts", "install-platformio.sh")
+
+    def _read(self, path):
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_the_script_is_there_and_can_be_run(self):
+        self.assertTrue(os.access(self.SCRIPT, os.X_OK), self.SCRIPT)
+
+    def test_it_refuses_to_run_as_root(self):
+        """The toolchains land in ~/.platformio. A copy of that owned by root
+        stops every later run the person makes themselves.
+        """
+        self.assertIn("[[ $EUID -ne 0 ]]", self._read(self.SCRIPT))
+
+    def test_the_installer_reaches_for_it_and_holds_no_copy(self):
+        text = self._read(os.path.join(HERE, "..", "install.sh"))
+        body = text[text.index("\ninstall_platformio() {"):]
+        body = body[:body.index("\n}\n")]
+        self.assertIn("scripts/install-platformio.sh", body)
+        self.assertIn("runuser", body)
+        # And no second copy of the download, which was here before.
+        self.assertNotIn("curl", body)
+        self.assertNotIn("get-platformio", body)
+
+    def test_the_address_is_in_the_one_file_that_both_read(self):
+        shared = self._read(os.path.join(HERE, "..", "scripts",
+                                         "user-unit.sh"))
+        self.assertIn("PLATFORMIO_INSTALLER_URL=", shared)
+        self.assertIn("PLATFORMIO_INSTALLER_URL", self._read(self.SCRIPT))
+        # install.sh sources that file, so it must not set the value again.
+        text = self._read(os.path.join(HERE, "..", "install.sh"))
+        self.assertNotIn('PLATFORMIO_INSTALLER_URL="http', text)
 
 
 class InstalledStampTest(unittest.TestCase):

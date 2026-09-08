@@ -1038,50 +1038,23 @@ find_pio() {
     return 1
 }
 
-# The standalone installer, and not pip. SteamOS keeps the rootfs read-only,
-# so a system-wide pip install cannot write. "pip install --user" writes to a
-# directory that the next system update resets. The standalone installer puts
-# all of PlatformIO under ~/.platformio, which a system update keeps. It is
-# also the method that the PlatformIO documentation gives.
-PLATFORMIO_INSTALLER_URL="https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py"
-
-# PLATFORMIO_PATH_LINE and its comment are in scripts/user-unit.sh. The
-# uninstaller deletes these two lines again. One spelling in the write step
-# and a different spelling in the search step leaves the line on disk.
-
-add_platformio_to_path() {
-    local profile="$WATCHER_HOME/.bashrc"
-    # The standalone installer does not change the PATH. Without this step,
-    # only a program that knows the location finds "pio". This installer
-    # knows the location. The shell of the user does not know it.
-    if grep -qF "$PLATFORMIO_PATH_MARK" "$profile" 2>/dev/null; then
-        return 0                        # already there; do not stack copies
-    fi
-    say "Adding PlatformIO to the PATH in $profile"
-    if ! runuser -u "$WATCHER_USER" -- bash -c '
-            printf "\n%s\n%s\n" "$1" "$2" >> "$3"
-        ' _ "$PLATFORMIO_PATH_NOTE" "$PLATFORMIO_PATH_LINE" "$profile"; then
-        warn "could not write $profile - add this line yourself:"
-        warn "    $PLATFORMIO_PATH_LINE"
-    fi
-}
+# PLATFORMIO_INSTALLER_URL and PLATFORMIO_PATH_LINE are in
+# scripts/user-unit.sh. The uninstaller deletes those two lines again, and one
+# spelling in the write step with a different one in the search step leaves the
+# line on disk.
 
 install_platformio() {
     # As the user, not as root: the toolchains land in ~/.platformio, and a
     # root-owned copy of that breaks every later run they make themselves.
-    say "Fetching $PLATFORMIO_INSTALLER_URL"
-    runuser -u "$WATCHER_USER" -- env "HOME=$WATCHER_HOME" bash -c '
-        set -euo pipefail
-        script="$(mktemp -t get-platformio-XXXXXX.py)"
-        trap "rm -f \"$script\"" EXIT
-        curl -fsSL -o "$script" "$1"
-        python3 "$script"
-    ' _ "$PLATFORMIO_INSTALLER_URL" || {
+    #
+    # The work is in scripts/install-platformio.sh, because the panel offers
+    # the same thing on its firmware page and two copies of an installer are
+    # two answers to "how is PlatformIO installed here".
+    runuser -u "$WATCHER_USER" -- env "HOME=$WATCHER_HOME" \
+        "$SOURCE_DIR/scripts/install-platformio.sh" --force || {
         warn "the PlatformIO installer did not finish - see above"
         return 1
     }
-    add_platformio_to_path
-    say "PlatformIO installed. Open a new shell, or run: source ~/.bashrc"
     return 0
 }
 

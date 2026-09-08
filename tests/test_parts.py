@@ -9,6 +9,7 @@ Three states and not two, a clear difference between "not installed" and
 
 import os
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -443,6 +444,44 @@ class ApplierCommandTest(unittest.TestCase):
         """A name in one and not the other is a run that nothing permits."""
         for area in self.ctl.STAGED:
             self.assertIn(area, self.ctl.APPLIER)
+
+
+class PlatformIOTest(unittest.TestCase):
+    """What the firmware page asks before it offers the download."""
+
+    def test_it_finds_pio_where_the_installer_puts_it(self):
+        with tempfile.TemporaryDirectory() as home:
+            place = os.path.join(home, ".platformio", "penv", "bin")
+            os.makedirs(place)
+            pio = os.path.join(place, "pio")
+            with open(pio, "w") as handle:
+                handle.write("#!/bin/sh\n")
+            os.chmod(pio, 0o755)
+            self.assertEqual(ledpanel.platformio_path(home=home), pio)
+
+    def test_a_file_that_cannot_be_run_is_not_pio(self):
+        """A half-written install leaves the name and not the program."""
+        with tempfile.TemporaryDirectory() as home:
+            place = os.path.join(home, ".local", "bin")
+            os.makedirs(place)
+            with open(os.path.join(place, "pio"), "w") as handle:
+                handle.write("")
+            self.assertEqual(ledpanel.platformio_path(home=home), "")
+
+    def test_nothing_there_is_an_empty_answer_and_not_a_guess(self):
+        with tempfile.TemporaryDirectory() as home:
+            self.assertEqual(ledpanel.platformio_path(home=home), "")
+
+    def test_the_install_asks_for_no_password(self):
+        """PlatformIO belongs to the home directory of the person, and a copy
+        of it owned by root stops every later run they make. The script
+        refuses to be root for that reason, so pkexec would spend a prompt to
+        be told no.
+        """
+        command = ledpanel.install_platformio_command("/src")
+        self.assertNotIn("pkexec", command)
+        self.assertNotIn("sudo", command)
+        self.assertTrue(command[0].endswith("install-platformio.sh"), command)
 
 
 class DriveTroubleTest(unittest.TestCase):

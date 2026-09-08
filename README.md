@@ -63,7 +63,7 @@ On a new SteamOS installation, `sudo` has no password. Run `passwd` first.
 | **WS2812/WS2812B strip** (NeoPixel) | any length. Data on GPIO2 (D4), shared ground, and a separate 5 V supply from approximately 20 LEDs. See [docs/WIRING.md](docs/WIRING.md) |
 | **Python 3.9 or later** | installed on SteamOS. No other packages, not even pyserial |
 | **make, gcc, kernel headers** | for the kernel module. The installer finds the correct headers package and offers to install it |
-| **PlatformIO** | only to flash the ESP. The installer offers it and adds it to your PATH |
+| **PlatformIO** | only to flash the ESP. The installer offers it, and so does the **Install PlatformIO** button on **LED Strip > Test**. Both add it to your PATH |
 | **LACT** | only for the graphics card controls. See [CPU and GPU power](#cpu-and-gpu-power) |
 | **Decky Loader** | only for the Game Mode plugin |
 
@@ -78,7 +78,9 @@ sudo pacman -S base-devel
 sudo pacman -S "$(cat /usr/lib/modules/$(uname -r)/pkgbase)-headers"
 ```
 
-To install PlatformIO by hand:
+To install PlatformIO from the panel, open **LED Strip > Test** and press
+**Install PlatformIO** beside the firmware. It asks for no password:
+PlatformIO goes in your home directory. To do the same by hand:
 
 ```bash
 curl -fsSL -o get-platformio.py \

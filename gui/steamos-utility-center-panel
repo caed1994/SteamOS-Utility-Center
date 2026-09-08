@@ -6094,6 +6094,45 @@ class Panel:
                    "Takes a minute; the strip is dark and the service stops "
                    "while it runs.").pack(anchor="w", pady=(ROW_GAP, 0))
 
+        # PlatformIO builds the firmware, and a flash without it ends in a
+        # page of build output that says so at the bottom. This says it at the
+        # top instead, and offers the download that the installer offers.
+        tools = ttk.Frame(frame, style=self._ground(frame))
+        tools.pack(fill="x", pady=(GROUP_GAP, 0))
+        self.platformio_said = ttk.Label(tools, style="Muted.TLabel",
+                                         justify="left")
+        self.platformio_said.pack(side="left", fill="x", expand=True,
+                                  padx=(0, GROUP_GAP))
+        self._wrapped.append(self.platformio_said)
+        self._wrap_insets[str(self.platformio_said)] = 2 * GROUP_GAP
+        self.platformio_button = ttk.Button(
+            tools, style="Outlined.TButton", command=self.install_platformio)
+        self.platformio_button.pack(side="left")
+        self._reread_platformio()
+
+    def _reread_platformio(self):
+        """Say whether PlatformIO is here, and name the button for that."""
+        found = ledpanel.platformio_path()
+        self.platformio_said.configure(
+            text="PlatformIO: %s" % found if found
+            else "PlatformIO is not installed. Flashing the firmware needs "
+                 "it.")
+        self.platformio_button.configure(
+            text="Reinstall PlatformIO" if found else "Install PlatformIO")
+
+    def install_platformio(self):
+        if not self._ask(
+                "PlatformIO",
+                "This downloads the official PlatformIO installer from "
+                "github.com and runs it as you. The log below names the "
+                "address it fetches.\n\nIt writes to your home directory "
+                "only, so it asks for no password. It fetches a few hundred "
+                "megabytes of build tools and takes some minutes.",
+                confirm="Install"):
+            return
+        self.runner.start(ledpanel.install_platformio_command(SOURCE_DIR),
+                          lambda _code: self._reread_platformio())
+
     def flash_firmware(self):
         environment = self._value_for("firmware", self.firmware.get())
         if not self._ask(

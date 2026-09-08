@@ -3735,6 +3735,58 @@ class ButtonRowTest(unittest.TestCase):
         self.assertEqual(squeezed, [])
 
 
+class FirmwarePageTest(unittest.TestCase):
+    """The firmware card offers what a flash needs, before the flash.
+
+    A flash with no PlatformIO ends in a page of build output whose last line
+    says so. The card says it at the top instead, and offers the same download
+    that the installer offers.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.panel_module = _panel_module()
+
+    def setUp(self):
+        was = self.panel_module.ledpanel.modules_here
+        self.panel_module.ledpanel.modules_here = lambda home=None: ("led",)
+        self.addCleanup(setattr, self.panel_module.ledpanel, "modules_here",
+                        was)
+        self.root = tk.Tk()
+        self.addCleanup(self._destroy)
+        self.panel = self.panel_module.Panel(self.root)
+        self.root.update()
+
+    def _destroy(self):
+        if getattr(self, "root", None) is not None:
+            self.root.destroy()
+            self.root = None
+
+    def _said(self):
+        return str(self.panel.platformio_said.cget("text"))
+
+    def _button(self):
+        return str(self.panel.platformio_button.cget("text"))
+
+    def test_it_says_where_platformio_is(self):
+        was = self.panel_module.ledpanel.platformio_path
+        self.panel_module.ledpanel.platformio_path = lambda home=None: "/x/pio"
+        self.addCleanup(setattr, self.panel_module.ledpanel,
+                        "platformio_path", was)
+        self.panel._reread_platformio()
+        self.assertIn("/x/pio", self._said())
+        self.assertEqual(self._button(), "Reinstall PlatformIO")
+
+    def test_it_says_when_platformio_is_missing(self):
+        was = self.panel_module.ledpanel.platformio_path
+        self.panel_module.ledpanel.platformio_path = lambda home=None: ""
+        self.addCleanup(setattr, self.panel_module.ledpanel,
+                        "platformio_path", was)
+        self.panel._reread_platformio()
+        self.assertIn("not installed", self._said())
+        self.assertEqual(self._button(), "Install PlatformIO")
+
+
 class StripHeadTest(unittest.TestCase):
     """The three cards at the head of the LED Strip page stand in one column.
 

@@ -13,6 +13,7 @@ import getpass
 import os
 import platform
 import re
+import shutil
 import subprocess
 
 from steamos_utility_center import cec as cec_module
@@ -1040,6 +1041,41 @@ FIRMWARE_ENVS = (
     ("ESP32-S3 - GPIO16", "esp32s3"),
     ("ESP8266 D1 mini - GPIO2", "d1_mini"),
 )
+
+
+# Where PlatformIO puts itself, in the order scripts/install-platformio.sh
+# looks. The panel runs as the person who owns those directories, so it can
+# answer this without asking a script.
+PLATFORMIO_PLACES = (".platformio/penv/bin/pio", ".local/bin/pio")
+
+
+def platformio_path(home=None):
+    """Where pio is for this user, or "" when it is nowhere.
+
+    The firmware page reads this to say whether a flash can work at all.
+    Finding out at the flash is one download too late, and the message that
+    comes back from a flash with no PlatformIO is a page of build output.
+    """
+    found = shutil.which("pio")
+    if found:
+        return found
+    home = home or os.path.expanduser("~")
+    for place in PLATFORMIO_PLACES:
+        candidate = os.path.join(home, place)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return ""
+
+
+def install_platformio_command(source_dir):
+    """Returns the command that installs PlatformIO for this user.
+
+    No pkexec. PlatformIO belongs to the home directory of the person, and a
+    copy of it owned by root stops every later run they make. See the script,
+    which refuses to run as root for that reason.
+    """
+    return [os.path.join(source_dir, "scripts", "install-platformio.sh"),
+            "--force"]
 
 
 def flash_firmware_command(source_dir, environment):
