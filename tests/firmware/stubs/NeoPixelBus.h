@@ -34,6 +34,7 @@ public:
     if (index < pixels.size()) pixels[index] = color;
   }
   void Show() { g_lastShown = pixels; g_showCount++; }
+  uint16_t PixelCount() const { return (uint16_t)pixels.size(); }
   std::vector<RgbColor> pixels;
   uint8_t pin;
 };

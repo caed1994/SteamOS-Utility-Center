@@ -102,6 +102,41 @@ static inline uint8_t clampBrightness(uint8_t value) {
 #endif
 }
 
+// What is left of a channel after the last frame took its whole part.
+//
+// A channel holds eight bits, and a breath crosses them slowly. At a low
+// brightness the same integer then stands for many frames: at a tenth of
+// full strength the value has 25 steps to cross in the 300 frames of one
+// breath, so it holds for half a second and jumps. The light steps rather
+// than swells, which is what a user reported.
+//
+// So the remainder goes into the next frame instead of being rounded away.
+// A channel that wants 1.4 is 1 for three frames out of five and 2 for two
+// of them, and the eye reads the average at fifty frames a second.
+//
+// It changes nothing where the value already crosses a whole step in one
+// frame, which is three quarters of a breath at full strength: the floor of
+// the sum is the integer that rounding gives there anyway.
+static float breathCarry[3] = {0.0f, 0.0f, 0.0f};
+
+static void startBreath() {
+  breathCarry[0] = breathCarry[1] = breathCarry[2] = 0.0f;
+}
+
+// One channel of a breath, with the remainder carried.
+//
+// MAX_BRIGHTNESS is applied here and not by clampBrightness afterwards. That
+// function divides by 255 and would put back the steps that this took out.
+static uint8_t breathChannel(uint8_t peak, float level, uint8_t channel) {
+  const float wanted = (float)peak * level * (MAX_BRIGHTNESS / 255.0f)
+                       + breathCarry[channel];
+  // peak is at most 255, level at most 1, and a carry is below 1, so the sum
+  // is below 256 and its floor is a byte. It is never below zero either.
+  const float shown = floorf(wanted);
+  breathCarry[channel] = wanted - shown;
+  return (uint8_t)shown;
+}
+
 static void showFrame(const uint8_t *rgb, uint16_t count) {
   ensureStrip(count);
   if (strip == nullptr) {
@@ -329,6 +364,7 @@ static void handleMessage(uint8_t type, const uint8_t *payload, uint16_t length)
         standbyShape = payload[5];
       }
       standbyStartMs = millis();
+      startBreath();
       standby = true;
       // The strip is meant to stay lit through the silence that follows, so
       // the idle rule below has to be told this silence is expected.
@@ -484,8 +520,8 @@ static void waitingAnimation(uint32_t now) {
   }
 
   const float level = breathLevel(now - waitStartMs, WAIT_BREATH_MS);
-  strip->ClearTo(RgbColor(clampBrightness((uint8_t)(WAIT_RED * level + 0.5f)),
-                          clampBrightness((uint8_t)(WAIT_GREEN * level + 0.5f)),
+  strip->ClearTo(RgbColor(breathChannel(WAIT_RED, level, 0),
+                          breathChannel(WAIT_GREEN, level, 1),
                           0));
   strip->Show();
 }
@@ -536,9 +572,9 @@ static void standbyAnimation(uint32_t now) {
   }
 
   const float level = breathLevel(now - standbyStartMs, standbyPeriodMs);
-  strip->ClearTo(RgbColor(clampBrightness((uint8_t)(standbyRed * level + 0.5f)),
-                          clampBrightness((uint8_t)(standbyGreen * level + 0.5f)),
-                          clampBrightness((uint8_t)(standbyBlue * level + 0.5f))));
+  strip->ClearTo(RgbColor(breathChannel(standbyRed, level, 0),
+                          breathChannel(standbyGreen, level, 1),
+                          breathChannel(standbyBlue, level, 2)));
   strip->Show();
 }
 
@@ -551,6 +587,7 @@ void setup() {
 
   waitStartMs = millis();
   lastFrameMs = waitStartMs;
+  startBreath();
   sendCaps();
   sendInfo();
   sendLog("ready");

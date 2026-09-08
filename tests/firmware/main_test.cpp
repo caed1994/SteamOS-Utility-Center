@@ -37,6 +37,33 @@ static std::vector<uint8_t> hostFrame(uint8_t type, const std::vector<uint8_t> &
 
 static void pump() { loop(); }
 
+// The payload of the first frame of this type that the board sent.
+//
+// A read at a fixed offset finds whichever frame comes first, and the board
+// answers HELLO with CAPS and then INFO. See the note above the HELLO case
+// in the firmware: that order is deliberate.
+static bool sentFrame(uint8_t type, std::vector<uint8_t> &payload) {
+  size_t at = 0;
+  while (at + 8 <= Serial.tx.size()) {
+    if (Serial.tx[at] != 0xA5 || Serial.tx[at + 1] != 0x5A) {
+      at++;
+      continue;
+    }
+    const uint16_t length = (uint16_t)Serial.tx[at + 4]
+                            | ((uint16_t)Serial.tx[at + 5] << 8);
+    if (at + 8 + length > Serial.tx.size()) {
+      return false;
+    }
+    if (Serial.tx[at + 3] == type) {
+      payload.assign(Serial.tx.begin() + (long)(at + 6),
+                     Serial.tx.begin() + (long)(at + 6 + length));
+      return true;
+    }
+    at += 8 + length;
+  }
+  return false;
+}
+
 int main() {
   printf("firmware protocol tests\n");
 
@@ -152,11 +179,13 @@ int main() {
   auto hello = hostFrame(0x01, {});
   Serial.feed(hello.data(), hello.size());
   pump();
-  bool sawInfo = Serial.tx.size() > 8 && Serial.tx[0] == 0xA5 && Serial.tx[1] == 0x5A
-                 && Serial.tx[3] == 0x02;
-  check(sawInfo, "HELLO answered with INFO");
-  uint16_t advertised = (uint16_t)Serial.tx[7] | ((uint16_t)Serial.tx[8] << 8);
+  std::vector<uint8_t> info;
+  check(sentFrame(0x02, info), "HELLO answered with INFO");
+  uint16_t advertised = info.size() >= 3
+      ? (uint16_t)((uint16_t)info[1] | ((uint16_t)info[2] << 8)) : 0;
   check(advertised == MAX_LEDS, "INFO advertises MAX_LEDS");
+  std::vector<uint8_t> caps;
+  check(sentFrame(0x03, caps), "and with CAPS");
 
   // --- BLANK clears --------------------------------------------------------
   auto blank = hostFrame(0x20, {});
@@ -164,6 +193,50 @@ int main() {
   pump();
   check(g_lastShown[0].R == 0 && g_lastShown[0].G == 0 && g_lastShown[0].B == 0,
         "BLANK clears the strip");
+
+  // --- a dim breath moves each frame, rather than holding and jumping ------
+  //
+  // Reported: a standby light at a tenth of full strength looked as if it
+  // stuttered. A channel holds eight bits, so a peak of 25 has 25 steps to
+  // cross in the 300 frames of one breath. Rounded, the value stands still
+  // for half a second and then jumps. See breathChannel.
+  {
+    const uint8_t peak = 25;
+    const uint32_t period = 6000;
+    std::vector<uint8_t> dim{peak, peak, peak, (uint8_t)(period & 0xFF),
+                             (uint8_t)(period >> 8)};
+    auto frame = hostFrame(0x21, dim);
+    Serial.feed(frame.data(), frame.size());
+    pump();
+
+    int moved = 0;
+    long total = 0;
+    int count = 0;
+    int last = -1;
+    for (uint32_t at = 0; at < period; at += BREATH_FRAME_MS) {
+      g_millis += BREATH_FRAME_MS;
+      pump();
+      const int here = g_lastShown[0].R;
+      if (last >= 0 && here != last) {
+        moved++;
+      }
+      last = here;
+      total += here;
+      count++;
+    }
+    // Rounding gives 48 of these 300 frames. The carry gives about 150, and
+    // the number is asserted low enough that a change of BREATH_FLOOR or of
+    // the frame time does not make this test wrong about what it tests.
+    check(moved > 100, "a dim breath moves in more than a third of its frames");
+
+    // The average is what the carry is for: it must be the average of the
+    // raised cosine and not something the floor pulled down. The mean level
+    // of that shape is (1 + BREATH_FLOOR) / 2.
+    const double want = peak * (1.0 + BREATH_FLOOR) / 2.0;
+    const double got = (double)total / count;
+    check(got > want - 1.0 && got < want + 1.0,
+          "and its average is the average of the breath");
+  }
 
   // --- standby breathes the whole strip, not the first LED_COUNT of it -----
   //
