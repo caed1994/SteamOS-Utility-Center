@@ -33,6 +33,7 @@ LOGIN1_BUS_NAME = "org.freedesktop.login1"
 LOGIN1_PATH = "/org/freedesktop/login1"
 LOGIN1_INTERFACE = "org.freedesktop.login1.Manager"
 DEFAULT_CONFIG = "/etc/steamos-cec-toolkit.conf"
+LOCAL_SUSPEND_MARKER = "/run/steamos-cec-local-suspend"
 
 BUTTON_DEBOUNCE_SECONDS = 2
 RESUME_ACTIVATION_COOLDOWN_SECONDS = 45
@@ -47,6 +48,9 @@ CEC_DEVICE_WAIT_SECONDS = 8.0
 CEC_DEVICE_WAIT_STEP_SECONDS = 0.5
 CEC_LOGICAL_ADDRESS_WAIT_SECONDS = 12.0
 CEC_WAKE_RETRY_DELAYS = (0, 2, 3, 5, 8)
+# How long the file of the sleep hook counts as fresh. The same window as
+# steamos-cec-tv-standby-suspend. See local_suspend_in_progress.
+LOCAL_SUSPEND_WINDOW_SECONDS = 15
 RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
 CEC_ACTIVATION_MARKER = RUNTIME_DIR / "steamos-cec-activation-requested"
 
@@ -145,6 +149,9 @@ CEC_PHYSICAL_ADDRESS = CONFIG.get("CEC_PHYSICAL_ADDRESS", "")
 RESUME_CEC_DELAY_SECONDS = float(CONFIG.get("CONTROLLER_WAKE_RESUME_DELAY_SECONDS", "2"))
 
 ACTIVATION_LOCK = threading.Lock()
+# Set while logind says that this machine goes to sleep, and cleared when it
+# comes back. See prepare_for_sleep and suspend_in_progress.
+SUSPENDING = threading.Event()
 
 
 def hid_properties(path: str) -> dict[str, str]:
@@ -429,6 +436,34 @@ def source_is_active() -> bool:
     return result.returncode == 0 and result.stdout.strip() == "b true"
 
 
+def local_suspend_in_progress() -> bool:
+    """Says whether the sleep hook of this machine ran a moment ago.
+
+    steamos-cec-before-sleep makes this file at its start, and the age of the
+    file is the window. This is the fallback for a machine with no dbus_next,
+    where the signal of logind never arrives.
+    """
+    try:
+        age = time.time() - os.stat(LOCAL_SUSPEND_MARKER).st_mtime
+    except OSError:
+        return False
+    return age < LOCAL_SUSPEND_WINDOW_SECONDS
+
+
+def suspend_in_progress() -> bool:
+    """Says whether this machine goes to sleep now.
+
+    A wake tells the television to come on. To send one while the machine
+    suspends puts the television back on after the sleep hook made it dark,
+    and the machine stays asleep. This question is thus the bar of each wake.
+
+    A controller that goes quiet and speaks again looks the same as a
+    controller that a person picked up, and the suspend makes the controller
+    go quiet. The wake of such a report lands in this window.
+    """
+    return SUSPENDING.is_set() or local_suspend_in_progress()
+
+
 def mark_cec_activation_requested(reason: str) -> None:
     try:
         CEC_ACTIVATION_MARKER.write_text(f"{time.monotonic()} {reason}\n", encoding="utf-8")
@@ -438,6 +473,9 @@ def mark_cec_activation_requested(reason: str) -> None:
 
 def activate_source(reason: str) -> None:
     with ACTIVATION_LOCK:
+        if suspend_in_progress():
+            LOG.info("Not waking the display chain (%s): this machine goes to sleep", reason)
+            return
         was_active = source_is_active()
         if was_active:
             LOG.info("CEC source reports active; still sending raw wake/input activation (%s)", reason)
@@ -445,6 +483,9 @@ def activate_source(reason: str) -> None:
         for attempt, delay in enumerate(CEC_WAKE_RETRY_DELAYS, start=1):
             if delay:
                 time.sleep(delay)
+            if suspend_in_progress():
+                LOG.info("Stopping the wake (%s): this machine goes to sleep", reason)
+                return
             raw_wake()
             result = cec_wake()
             if result.returncode != 0:
@@ -466,6 +507,9 @@ def activate_source(reason: str) -> None:
 
         for delay in (2, 5, 8):
             time.sleep(delay)
+            if suspend_in_progress():
+                LOG.info("Stopping the wake (%s): this machine goes to sleep", reason)
+                return
             raw_active_source()
 
         LOG.warning("Display wake/source activation did not complete after CEC retries")
@@ -492,7 +536,11 @@ async def monitor_login1_resume() -> None:
     def prepare_for_sleep(sleeping):
         LOG.info("PrepareForSleep sleeping=%s", sleeping)
         if sleeping:
+            SUSPENDING.set()
             return
+        # Cleared before the task below, which is the wake this bar must let
+        # through.
+        SUSPENDING.clear()
         asyncio.get_running_loop().create_task(activate_after_resume_delay())
 
     manager.on_prepare_for_sleep(prepare_for_sleep)

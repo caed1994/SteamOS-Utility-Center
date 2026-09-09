@@ -115,6 +115,12 @@ The optional TV standby monitor ignores TV standby events that occur right after
 this marker is written. This avoids treating a locally initiated sleep as a new
 external TV standby event.
 
+The controller wake service reads the same marker, and also the `PrepareForSleep`
+signal of logind. Both stop it from sending One Touch Play while the machine goes
+to sleep. Without that bar, a controller that goes quiet with the machine looks
+like a controller a person picked up: the wake goes out after the before-sleep
+service made the TV dark, the TV comes on again, and the machine stays asleep.
+
 The before-sleep service defaults to sending HDMI-CEC Standby. If
 `CEC_SLEEP_TV_ACTION=inactive-source` is configured, it sends Inactive Source
 to the TV instead. That mode is intended for TVs that treat CEC Standby as a
