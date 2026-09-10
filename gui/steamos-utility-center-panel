@@ -381,9 +381,9 @@ SECTIONS = (
     # rename in every place that names the section.
     # "Keyboard, drives and Game Mode" was here. The page holds four things
     # now, and the rail measured 451 against a budget of 420 at the font of
-    # somebody else's desktop. A description and not a list: the next thing on
-    # this page must not need a new name for the section.
-    ("keyboard", "System", "Settings of the machine", "keys"),
+    # somebody else's desktop. A name for the group and not a list of what is
+    # in it: the next thing on this page must not need a new subtitle.
+    ("keyboard", "System", "System Settings", "keys"),
     # This is not a page of the LED strip, and it was a page of the strip
     # before. It reports on the *installation*: the kernel module, the
     # units, the udev rule, and the services that stay alive across Game
