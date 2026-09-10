@@ -57,6 +57,7 @@ from steamos_utility_center import power                               # noqa: E
 from steamos_utility_center import render                              # noqa: E402
 from steamos_utility_center import shim                                # noqa: E402
 from steamos_utility_center import syssettings                         # noqa: E402
+from steamos_utility_center import wake                                # noqa: E402
 from steamos_utility_center import __version__ as VERSION              # noqa: E402
 
 
@@ -378,7 +379,11 @@ SECTIONS = (
     # settings of the machine rather than of the bar. The key stays "keyboard",
     # because the code refers to a section by that key and a rename of it is a
     # rename in every place that names the section.
-    ("keyboard", "System", "Keyboard, drives and Game Mode", "keys"),
+    # "Keyboard, drives and Game Mode" was here. The page holds four things
+    # now, and the rail measured 451 against a budget of 420 at the font of
+    # somebody else's desktop. A description and not a list: the next thing on
+    # this page must not need a new name for the section.
+    ("keyboard", "System", "Settings of the machine", "keys"),
     # This is not a page of the LED strip, and it was a page of the strip
     # before. It reports on the *installation*: the kernel module, the
     # units, the udev rule, and the services that stay alive across Game
@@ -5318,24 +5323,9 @@ class Panel:
         row.pack(anchor="w", pady=(GROUP_GAP, 0))
         ttk.Button(row, text="Check again", style="Tonal.TButton",
                    command=self._reread_cec).pack(side="left")
-        # Beside the adapter rather than under the switch it serves: it is a
-        # question about the machine, like the adapter line above it, and not
-        # another thing to switch on. See ledpanel.wake_radios_command.
-        ttk.Button(row, text="Which radios can wake it", style="Text.TButton",
-                   command=self._ask_wake_radios).pack(side="left",
-                                                       padx=(ROW_GAP, 0))
         ttk.Button(row, text="Remove HDMI CEC", style="Text.TButton",
                    command=self._remove_cec).pack(side="left",
                                                   padx=(ROW_GAP, 0))
-        # Where the radio question's answer lands. Built now and packed when
-        # there is something to say, because this window has no log pane: the
-        # Runner's output goes to stderr, where a terminal and the journal
-        # have it, and a sentence meant to be read has to be on the page or it
-        # is not feedback at all.
-        self.cec_radios = ttk.Label(inner, style="Muted.TLabel",
-                                    justify="left", wraplength=CARD_WRAP)
-        self._wrapped.append(self.cec_radios)
-
         self._build_cec_features(holder)
         self._build_cec_actions(holder)
         self._build_cec_config(holder)
@@ -5715,26 +5705,6 @@ class Panel:
             return
         self.runner.start(ledpanel.module_command(SOURCE_DIR, "cec"),
                           lambda _code: self._module_changed("cec"))
-
-    def _ask_wake_radios(self):
-        """Asks which radios the toolkit found, and which of them can wake.
-
-        A machine with "Let a controller wake the machine" on, and no wake,
-        gives a person no place to look: the toolkit reports the list of
-        matched radios nowhere. This asks for it and puts the answer on the
-        page as a sentence, because the JSON of the helper goes to stderr and
-        this window has no log pane.
-        """
-        self.runner.start(
-            ledpanel.wake_radios_command(),
-            lambda _code: self._say_wake_radios(
-                "".join(self.runner.transcript)))
-
-    def _say_wake_radios(self, said):
-        text = cec.wake_radios_said(said)
-        self.cec_radios.configure(text=text)
-        self.cec_radios.pack(anchor="w", pady=(ROW_GAP, 0))
-        self.runner.sink("\n%s\n" % text)
 
     def _remove_cec(self):
         if not self._ask("HDMI CEC",
@@ -6164,12 +6134,115 @@ class Panel:
         # they leave together, so they share one offer below the keyboard.
         present = ttk.Frame(outer, style="Page.TFrame")
         self._build_module_line(present, "system")
+        self._build_wake(present)
         self._build_drives(present)
         self._build_decky(present)
         self._module_halves["system"] = (
             self._build_module_offer(outer, "system"), present)
         self._show_module("system")
         return outer
+
+    def _build_wake(self, parent):
+        """Whether a controller can wake this machine from sleep.
+
+        This was a switch on the HDMI CEC page, in somebody else's toolkit,
+        because the toolkit needed it: the Steam button cannot reach a machine
+        that sleeps. The work is one value in sysfs and sends no CEC, so it
+        belongs with the other settings of the machine. A person with no
+        television can want it, and removing HDMI CEC must not take it away.
+
+        One switch that acts at its click, and not an Apply with the others.
+        There is one of it, and a set of one is not a set of decisions a
+        person makes together. See server/steamos_utility_center/wake.py.
+        """
+        box = self._section(parent, "Controller wake", card=True)
+        row = ttk.Frame(box, style="OnCard.TFrame")
+        row.pack(fill="x")
+        row.columnconfigure(1, weight=1)
+        self._wake_on = tk.BooleanVar(value=False)
+        # The name is a label of its own and not the text of the switch, the
+        # same as every switch on the CEC page. ttk leaves no space between
+        # the picture of a switch and its own label.
+        self.wake_switch = ttk.Checkbutton(row, variable=self._wake_on,
+                                           command=self._wake_toggled)
+        self.wake_switch.grid(row=0, column=0, sticky="w")
+        named = ttk.Label(row, text="Let a controller wake the machine")
+        named.grid(row=0, column=1, sticky="w", padx=(ROW_GAP, 0))
+        explain = ttk.Label(
+            row,
+            text="Lets the Steam button of a controller wake this machine "
+                 "from sleep. It writes one value on the USB radio and sends "
+                 "nothing over HDMI.",
+            style="Muted.TLabel", justify="left",
+            wraplength=CARD_WRAP - CEC_INDENT)
+        explain.grid(row=1, column=1, sticky="w", padx=(ROW_GAP, 0),
+                     pady=(2, 0))
+        self._wrapped.append(explain)
+        self._wrap_insets[str(explain)] = named
+
+        # The question, beside the switch it serves. "The switch is on and
+        # nothing wakes the machine" needs the list of what the applier
+        # matched, and nothing else on the machine reports it.
+        buttons = ttk.Frame(box, style="OnCard.TFrame")
+        buttons.pack(anchor="w", pady=(GROUP_GAP, 0))
+        ttk.Button(buttons, text="Which radios can wake it",
+                   style="Text.TButton",
+                   command=self._ask_wake_radios).pack(side="left")
+        # Where that answer lands. Built now and packed when there is
+        # something to say, because this window has no log pane: the Runner's
+        # output goes to stderr, where a terminal and the journal have it, and
+        # a sentence meant to be read has to be on the page.
+        self.wake_radios = ttk.Label(box, style="Muted.TLabel",
+                                     justify="left", wraplength=CARD_WRAP)
+        self._wrapped.append(self.wake_radios)
+        self._show_wake()
+        return box
+
+    def _show_wake(self):
+        """Puts the state of the switch on it, read from the machine."""
+        on, _radios = ledpanel.wake_state()
+        self._wake_on.set(bool(on))
+        # Nothing to switch without the module. The offer above says so, and a
+        # switch a person can move with no effect says the opposite.
+        self.wake_switch.state(
+            ["!disabled"] if on is not None else ["disabled"])
+
+    def _wake_toggled(self):
+        """Turns it on or off at the click, then reads the machine again.
+
+        Read again and not trusted: the applier can find no radio, and then
+        the switch is on and nothing changed. See _ask_wake_radios, which is
+        the question that says which.
+        """
+        state = "on" if self._wake_on.get() else "off"
+
+        def finished(_code):
+            self._show_wake()
+            self.refresh_status()
+
+        if not self.runner.start(ledpanel.wake_switch_command(state),
+                                 finished):
+            # The Runner is busy, so nothing ran. Put the switch back, or it
+            # says something the machine does not.
+            self._show_wake()
+
+    def _ask_wake_radios(self):
+        """Asks which radios the applier found, and which of them can wake.
+
+        A machine with the switch on and no wake gives a person no place to
+        look. This asks for the list and puts the answer on the page as a
+        sentence, because the JSON goes to stderr.
+        """
+        self.runner.start(
+            ledpanel.wake_status_command(),
+            lambda _code: self._say_wake_radios(
+                "".join(self.runner.transcript)))
+
+    def _say_wake_radios(self, said):
+        text = wake.said(said)
+        self.wake_radios.configure(text=text)
+        self.wake_radios.pack(anchor="w", pady=(ROW_GAP, 0))
+        self.runner.sink("\n%s\n" % text)
 
     def _build_decky(self, parent):
         """The Game Mode plugin, and one button that installs it.

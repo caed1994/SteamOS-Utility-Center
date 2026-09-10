@@ -72,14 +72,11 @@ CEC_RESUME_RESTART_CECD=1
 CEC_RESUME_CECD_SETTLE_SECONDS=3
 CEC_LOGICAL_ADDRESS_WAIT_SECONDS=12
 
-# Optional USB wake from suspend support.
-# This enables /sys/.../power/wakeup only for USB devices whose manufacturer or
-# product names match controller/Bluetooth-related terms and do not match
-# obvious hub/keyboard/mouse/audio exclusions.
-USB_WAKE_MATCH="bluetooth|steam controller|xbox|playstation|dualsense|dualshock|8bitdo|nintendo|shield|santroller"
-USB_WAKE_EXCLUDE="hub|host controller|keyboard|mouse|touchpad|aura|audio"
-USB_WAKE_USB_IDS="8087:0032"
-USB_WAKE_BLUETOOTH_CLASS=1
+# USB wake from suspend is no longer here. It let a controller wake the
+# machine, and the work is one value in sysfs with no CEC in it. The SteamOS
+# Utility Center has it as part of its System module instead, so a machine
+# with no television can have it and removing this toolkit does not take it
+# away. See scripts/wake-apply.sh in that project.
 
 # Optional TV standby suspend service.
 TV_LOGICAL_ADDRESS=0

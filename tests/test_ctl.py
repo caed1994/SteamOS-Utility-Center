@@ -469,9 +469,9 @@ class SudoersTest(unittest.TestCase):
                 if line.startswith("deck")]
 
     def test_each_line_names_one_program_and_one_argument(self):
-        """Three appliers, and the switch that takes one of two words."""
+        """Three appliers, and the two switches that take one of two words."""
         rules = self._rules()
-        self.assertEqual(len(rules), 5)
+        self.assertEqual(len(rules), 7)
         for line in rules:
             after = line.split("NOPASSWD:")[1].split()
             self.assertEqual(len(after), 2, line)

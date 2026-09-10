@@ -8,7 +8,6 @@ SteamOS updates can reset system-level pieces that this toolkit depends on:
 - `/var/lib/steamos-cec-toolkit/*`
 - `/etc/systemd/system/steamos-cec-before-sleep.service`
 - `/etc/systemd/system/steamos-cec-permissions.service`
-- `/etc/systemd/system/steamos-cec-usb-wake.service`
 - `/etc/udev/rules.d/70-steamos-cec-toolkit.rules`
 - user service state and WirePlumber behavior
 - Decky Loader installation or plugin loading

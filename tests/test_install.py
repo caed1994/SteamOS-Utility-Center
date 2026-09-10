@@ -1037,6 +1037,62 @@ class InstallerShapeTest(unittest.TestCase):
         self.assertNotIn("pacman -Syu", self.text)
 
 
+class WakeModuleTest(unittest.TestCase):
+    """Controller wake arrives and leaves with the System module.
+
+    It came out of cec-toolkit/, where the toolkit's own installer owned it.
+    The installer of this project owns it now, and the fault that this class
+    is about is one half of that ownership being written and not the other.
+    """
+
+    def setUp(self):
+        with open(INSTALLER) as handle:
+            self.install = handle.read()
+        with open(os.path.join(HERE, "..", "uninstall.sh")) as handle:
+            self.uninstall = handle.read()
+
+    def test_the_system_module_installs_the_program(self):
+        block = self.install.split("install_system()")[1].split("\nremove_system")[0]
+        self.assertIn("scripts/wake-apply.sh", block)
+        self.assertIn("WAKE_APPLIER_PATH", block)
+
+    def test_the_system_module_installs_the_unit(self):
+        block = self.install.split("install_system()")[1].split("\nremove_system")[0]
+        self.assertIn("steamos-utility-center-wake.service", block)
+        self.assertIn("WAKE_UNIT_PATH", block)
+
+    def test_the_installer_does_not_switch_it_on(self):
+        """A unit that nobody asked for is a unit a person must examine.
+
+        The switch on the System page enables it. An installer that enabled it
+        would let a controller wake a machine whose owner never said so.
+        """
+        block = self.install.split("install_system()")[1].split("\nremove_system")[0]
+        self.assertNotIn("enable \"$(basename \"$WAKE_UNIT_PATH\")\"", block)
+        self.assertNotIn("$WAKE_APPLIER_PATH\" on", block)
+
+    def _order(self, text, marker):
+        """Where `off` runs, and where the program is deleted, in one block."""
+        return (text.index('"$WAKE_APPLIER_PATH" off'),
+                text.index(marker))
+
+    def test_removing_it_puts_the_sysfs_values_back_first(self):
+        """The program holds the record of what each device said before.
+
+        Delete it first and nothing on the machine can put those values back:
+        a radio this project allowed to wake the machine stays allowed until
+        the next restart, and one that was already allowed loses that.
+        """
+        block = self.install.split("remove_system()")[1]
+        restored, deleted = self._order(block, 'rm -f "$WAKE_UNIT_PATH"')
+        self.assertLess(restored, deleted)
+
+    def test_the_uninstaller_does_the_same(self):
+        restored, deleted = self._order(self.uninstall,
+                                        'rm -f "$WAKE_UNIT_PATH"')
+        self.assertLess(restored, deleted)
+
+
 class RetiredUserFilesTest(unittest.TestCase):
     """What an older release put in the session and this one does not.
 

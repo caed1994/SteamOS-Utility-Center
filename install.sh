@@ -597,6 +597,17 @@ install_system() {
     install -m 0755 "$SOURCE_DIR/scripts/apply-mounts.sh" \
         "$INSTALL_DIR/steamos-utility-center-mounts-apply"
 
+    # Controller wake. It was on the HDMI CEC page, in somebody else's
+    # toolkit, because the toolkit needed it: the Steam button cannot reach a
+    # machine that sleeps. There is no CEC in the work, so it is here now and
+    # a person with no television can have it. See scripts/wake-apply.sh.
+    install -m 0755 "$SOURCE_DIR/scripts/wake-apply.sh" "$WAKE_APPLIER_PATH"
+    say "Installing systemd unit to $WAKE_UNIT_PATH"
+    sed "s|@INSTALL_DIR@|$INSTALL_DIR|g" \
+        "$SOURCE_DIR/server/steamos-utility-center-wake.service" \
+        > "$WAKE_UNIT_PATH"
+    chmod 0644 "$WAKE_UNIT_PATH"
+
     # The unit writes the mount units again at every boot, for a SteamOS update
     # that did not honour the keep-list. It is enabled only on a machine that
     # has a record, because a unit that nobody asked for is a unit that a
@@ -641,6 +652,14 @@ remove_system() {
     say "Removing the drives and Game Mode module"
     systemctl disable --now "$NAME-mounts.service" 2>/dev/null || true
     rm -f "$MOUNTS_UNIT_PATH" "$MOUNTS_APPLIER_PATH"
+    # Controller wake, and the sysfs values it wrote. The applier puts each
+    # one back the way it found it, so a radio that could wake the machine
+    # before this module arrived can still do it after the module leaves.
+    # Without this the values stay written until the next restart.
+    if [[ -x "$WAKE_APPLIER_PATH" ]]; then
+        "$WAKE_APPLIER_PATH" off >/dev/null 2>&1 || true
+    fi
+    rm -f "$WAKE_UNIT_PATH" "$WAKE_APPLIER_PATH" "$WAKE_STATE_PATH"
     # The drives themselves. Without this they stay mounted until the machine
     # restarts, and nothing on the machine can unmount them any more.
     remove_mount_units

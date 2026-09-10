@@ -209,8 +209,8 @@ class FeatureStateTest(unittest.TestCase):
         # asked with `systemctl --user` and the other is not. Looking in the
         # wrong one finds nothing and reports off.
         found = status()
-        found["system_services"]["usb-wake"]["is_enabled"] = True
-        self.assertTrue(cec.feature_on(found, "usb-wake"))
+        found["system_services"]["power-standby"]["is_enabled"] = True
+        self.assertTrue(cec.feature_on(found, "power-standby"))
 
     def test_the_volume_integration_has_a_state_of_its_own(self):
         found = status(external_volume={"enabled": True})
@@ -232,7 +232,7 @@ class FeatureStateTest(unittest.TestCase):
         # An older toolkit than the vendored one, on somebody's machine from
         # before. A missing key is a feature that is not there to be on.
         self.assertFalse(cec.feature_on({"services": {}}, "steam-button"))
-        self.assertFalse(cec.feature_on({}, "usb-wake"))
+        self.assertFalse(cec.feature_on({}, "power-standby"))
         self.assertFalse(cec.feature_on({}, "external-volume"))
 
     def test_every_feature_in_the_table_can_be_read(self):
@@ -258,8 +258,8 @@ class CommandTest(unittest.TestCase):
         # It goes through a NOPASSWD helper rather than systemctl --user, so
         # the toolkit refuses the name under the other subcommand entirely.
         self.assertEqual(
-            self._tail(cec.toggle_command("usb-wake", False, self.HOME)),
-            ["set-system-service", "usb-wake", "off"])
+            self._tail(cec.toggle_command("power-standby", False, self.HOME)),
+            ["set-system-service", "power-standby", "off"])
 
     def test_the_volume_integration_takes_no_name(self):
         self.assertEqual(

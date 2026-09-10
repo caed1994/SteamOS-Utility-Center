@@ -1,0 +1,32 @@
+[Unit]
+# Lets a controller wake this machine from sleep.
+#
+# The work is one line in sysfs, on each USB device that is a controller
+# receiver:
+#
+#     /sys/bus/usb/devices/<device>/power/wakeup <- enabled
+#
+# The kernel writes "disabled" there at each boot for most devices, so this
+# unit writes it again. Without the unit the switch holds until the next
+# restart and no longer.
+#
+# It runs the same program that the panel runs, and holds no logic of its own.
+#
+# Log: journalctl -u steamos-utility-center-wake
+Description=Let a controller wake this machine from sleep
+Documentation=https://github.com/caed1994/SteamOS-Utility-Center
+# The USB devices must be on the bus before their wakeup values can be
+# written.
+After=multi-user.target
+
+[Service]
+Type=oneshot
+# The values stay written after this exits, so systemd must count the unit as
+# active. Without this, the state of the unit says nothing about the machine.
+RemainAfterExit=yes
+# "apply" and not "on": "on" enables this unit, and a unit that enables itself
+# at each boot is a unit that fights the switch which turned it off.
+ExecStart=@INSTALL_DIR@/steamos-utility-center-wake-apply apply
+
+[Install]
+WantedBy=multi-user.target

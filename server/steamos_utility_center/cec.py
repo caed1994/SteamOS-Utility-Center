@@ -61,6 +61,11 @@ RESUME_WAKE_REPORT = "resume_wake_enabled"
 
 # The eight features that this page can switch, in the order of the display.
 #
+# "Let a controller wake the machine" was here and is not a feature of this
+# page: it writes one value in sysfs and sends no CEC. It is part of the
+# System module now, so a machine with no television can have it. See
+# server/steamos_utility_center/wake.py.
+#
 # The order is the order a person sets them up in: the television follows the
 # machine, then the machine follows the television, then the volume, then the
 # three that repair particular hardware and are switched on after a fault.
@@ -92,10 +97,6 @@ FEATURES = (
      "Game Mode gets + and - instead of a slider. Needs an AV receiver or "
      "a soundbar - most televisions refuse. \u201cAsk about volume\u201d "
      "below says whether yours does."),
-    ("usb-wake", SYSTEM_SERVICE,
-     "Let a controller wake the machine",
-     "Lets a controller wake this machine from sleep, so the Steam button "
-     "can reach it."),
     ("gamescope-recovery", USER_SERVICE,
      "Recover Gamescope after a wake",
      "Restarts Gamescope if the picture comes back wrong. Leave it off "
@@ -393,50 +394,6 @@ def action_command(key, home=None, settings=None):
 
 # -- which radios can wake this machine --------------------------------------
 #
-# The one value on the CEC page that comes from a helper and not from
-# `toolkitctl status`, which says whether the usb-wake service is enabled and
-# not which radios it found.
-#
-# The question comes from "the switch is on and nothing wakes the machine".
-# The helper's own `status` lists what it matched. The toolkit's installer
-# permits it, as it does each switch on the page.
-USB_WAKE_HELPER = "/var/lib/steamos-cec-toolkit/steamos-cec-usb-wake-control"
-
-
-def wake_radios_command():
-    """Returns the command that asks the toolkit which radios it found."""
-    return ["sudo", "-n", USB_WAKE_HELPER, "status"]
-
-
-def wake_radios_said(text):
-    """Returns the meaning of that answer, in one sentence.
-
-    Three answers, separated. "Found nothing" and "found a radio that is
-    already allowed" are not the same answer to "did it find my radio?".
-    """
-    try:
-        found = json.loads(text)
-        radios = found["helper"]["devices"]
-        if not isinstance(radios, list):
-            raise TypeError
-    except (ValueError, TypeError, KeyError, IndexError):
-        return ("The toolkit's USB wake helper did not answer. Install HDMI "
-                "CEC first, or look at what the command printed above.")
-    if not radios:
-        return ("No radio on the USB bus matched. One built into the board "
-                "and not wired through USB cannot be switched on from here.")
-    named = ", ".join(str(radio.get("label", "")).strip() or "an unnamed radio"
-                      for radio in radios)
-    waking = [radio for radio in radios if radio.get("after") == "enabled"]
-    if len(waking) == len(radios):
-        return "Found %s, allowed to wake this machine." % named
-    if not waking:
-        return ("Found %s. Nothing there may wake this machine yet - turn on "
-                "\u201cLet a controller wake the machine\u201d below." % named)
-    return ("Found %s, of which %d of %d may wake this machine."
-            % (named, len(waking), len(radios)))
-
-
 def config(status):
     """Returns the toolkit's configuration, as it reported it. {} if none."""
     found = status.get("config")

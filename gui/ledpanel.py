@@ -24,6 +24,7 @@ from steamos_utility_center import modules as modules_module
 from steamos_utility_center import phone
 from steamos_utility_center import power as power_module
 from steamos_utility_center import temperature
+from steamos_utility_center import wake as wake_module
 
 INSTALL_DIR = "/var/lib/steamos-utility-center"
 BINARY = os.path.join(INSTALL_DIR, "steamos-utility-center")
@@ -1584,15 +1585,37 @@ def modules_here(home=None):
     return modules_module.here(home=home)
 
 
-def wake_radios_command():
-    """Returns the command that lists the radios that the toolkit found.
+def wake_switch_command(state):
+    """Returns the command that turns controller wake on or off."""
+    return wake_module.switch_command(state)
 
-    The command also reports whether each radio can wake the machine. It is a
-    question and not a repair. The toolkit turns wakeup on for each radio that
-    it matches, and this command is the one method to read that list. See
-    cec.wake_radios_command.
+
+def wake_status_command():
+    """Returns the command that lists the radios the applier matched.
+
+    It also says whether each of them can wake the machine. A question and no
+    repair: it reports the same list whether the switch is on or off, so a
+    person can find out that nothing matched before they turn anything on.
     """
-    return cec_module.wake_radios_command()
+    return wake_module.status_command()
+
+
+def wake_state(run=None):
+    """Asks whether a controller can wake this machine. (None, []) if not.
+
+    None for "nothing answered", which is a machine with no System module.
+    The page says something different for that than for a switch that is off.
+
+    It is a question and no repair: the applier reports the same list of
+    radios whether the switch is on or off, so a person can find out that
+    nothing matched before they turn anything on. See wake.said.
+    """
+    if not wake_module.installed():
+        return None, []
+    said = (run or _run_quietly)(wake_module.status_command())
+    if said is None:
+        return None, []
+    return wake_module.state(said)
 
 
 def cec_status(home=None, run=None):

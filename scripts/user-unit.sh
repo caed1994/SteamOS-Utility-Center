@@ -67,6 +67,14 @@ UDEV_PATH="$ROOT/etc/udev/rules.d/99-$NAME.rules"
 MOUNTS_RECORD_PATH="$INSTALL_DIR/mounts.conf"
 MOUNTS_UNIT_PATH="$UNIT_DIR/$NAME-mounts.service"
 MOUNTS_APPLIER_PATH="$INSTALL_DIR/$NAME-mounts-apply"
+# Controller wake, which comes with the same module as the drives.
+#
+# The record holds what each USB device said before this project wrote to it,
+# so "off" puts the machine back the way it was. A radio that could already
+# wake the machine keeps that. See scripts/wake-apply.sh.
+WAKE_UNIT_PATH="$UNIT_DIR/$NAME-wake.service"
+WAKE_APPLIER_PATH="$INSTALL_DIR/$NAME-wake-apply"
+WAKE_STATE_PATH="$INSTALL_DIR/wake-state"
 KEEP_LIST_PATH="$ROOT/etc/atomic-update.conf.d/$NAME.conf"
 SLEEP_HOOK_PATH="$ROOT/usr/lib/systemd/system-sleep/$NAME"
 # This name did not change with the other names, because this project does not

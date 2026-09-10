@@ -20,7 +20,6 @@ CONFIG_FILE = USER_CONFIG_FILE if USER_CONFIG_FILE.exists() else SYSTEM_CONFIG_F
 ROOT_HELPER = Path("/var/lib/steamos-cec-toolkit/steamos-cec-volume-raw")
 DEBUG_HELPER = Path("/var/lib/steamos-cec-toolkit/steamos-cec-debug-monitor")
 POWER_STANDBY_HELPER = Path("/var/lib/steamos-cec-toolkit/steamos-cec-power-standby-control")
-USB_WAKE_HELPER = Path("/var/lib/steamos-cec-toolkit/steamos-cec-usb-wake-control")
 CEC_PERMISSIONS_HELPER = Path("/var/lib/steamos-cec-toolkit/steamos-cec-permissions-apply")
 RESUME_WAKE_HELPER = Path("/var/lib/steamos-cec-toolkit/steamos-cec-resume-wake")
 RESUME_WAKE_UNIT = Path("/etc/systemd/system/steamos-cec-resume-wake.service")
@@ -101,7 +100,6 @@ USER_SERVICES = {
 
 SYSTEM_SERVICES = {
     "power-standby": "steamos-cec-before-sleep.service",
-    "usb-wake": "steamos-cec-usb-wake.service",
 }
 
 GAMEPAD_NAME_HINTS = (
@@ -711,7 +709,6 @@ def status() -> dict[str, Any]:
         "root_helper_exists": ROOT_HELPER.exists(),
         "debug_helper_exists": DEBUG_HELPER.exists(),
         "power_standby_helper_exists": POWER_STANDBY_HELPER.exists(),
-        "usb_wake_helper_exists": USB_WAKE_HELPER.exists(),
         "cec_permissions_helper_exists": CEC_PERMISSIONS_HELPER.exists(),
         "resume_wake_helper_exists": RESUME_WAKE_HELPER.exists(),
         "resume_wake_unit_exists": RESUME_WAKE_UNIT.exists(),
@@ -763,7 +760,6 @@ def set_service(name: str, enabled: bool) -> dict[str, Any]:
 def set_system_service(name: str, enabled: bool) -> dict[str, Any]:
     helpers = {
         "power-standby": POWER_STANDBY_HELPER,
-        "usb-wake": USB_WAKE_HELPER,
     }
     if name not in helpers:
         return {"ok": False, "error": f"Unknown system service: {name}"}

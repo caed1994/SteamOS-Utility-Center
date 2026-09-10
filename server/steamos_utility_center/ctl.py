@@ -64,6 +64,10 @@ APPLY_MOUNTS = os.path.join(INSTALL_DIR, "steamos-utility-center-mounts-apply")
 # so it needs a program of its own with a rule of its own. See
 # scripts/resume-wake.sh, which says why it is not scripts/install-cec.sh.
 RESUME_WAKE = os.path.join(INSTALL_DIR, "steamos-utility-center-resume-wake")
+# The switch that lets a controller wake this machine. It writes sysfs and
+# enables a unit of root, so it needs a rule of the same shape as the one
+# above. It arrives with the System module. See scripts/wake-apply.sh.
+APPLY_WAKE = os.path.join(INSTALL_DIR, "steamos-utility-center-wake-apply")
 
 # Which applier belongs to which area. The panel reads this to build the same
 # command that this file runs, so the two never name different programs.
@@ -728,6 +732,12 @@ def sudoers_text(user, present=None):
     # It arrives with the power module, so it is asked for on its own.
     if present(RESUME_WAKE):
         permitted.extend((RESUME_WAKE, state) for state in ("on", "off"))
+    # The switch for controller wake, the same two words for the same reason.
+    #
+    # "status" is not here and needs no line: it reads sysfs, which everybody
+    # can read, and asks systemd a question that needs no rights.
+    if present(APPLY_WAKE):
+        permitted.extend((APPLY_WAKE, state) for state in ("on", "off"))
     if not permitted:
         return ""
     lines = [

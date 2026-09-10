@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "gui"))
 import appsettings                                          # noqa: E402
 import kdetheme                                             # noqa: E402
 import ledpanel                                             # noqa: E402
+from steamos_utility_center import ctl                       # noqa: E402
 from steamos_utility_center import modules                   # noqa: E402
 from steamos_utility_center import syssettings              # noqa: E402
 from steamos_utility_center import cec                                 # noqa: E402
@@ -2295,11 +2296,11 @@ class CecPageTest(unittest.TestCase):
         self.assertEqual(command[1:], ["set-service", "tv-standby", "on"])
 
     def test_a_system_service_goes_the_other_way_round(self):
-        self.panel._cec_vars["usb-wake"].set(True)
-        self.panel._cec_toggled("usb-wake")
+        self.panel._cec_vars["power-standby"].set(True)
+        self.panel._cec_toggled("power-standby")
         self.panel._apply_cec_features()
         self.assertEqual(self.ran[-1][0][1:],
-                         ["set-system-service", "usb-wake", "on"])
+                         ["set-system-service", "power-standby", "on"])
 
     def test_a_switch_put_back_before_applying_is_no_change_at_all(self):
         # Compared with the machine rather than counted from the clicks, so
@@ -2325,15 +2326,15 @@ class CecPageTest(unittest.TestCase):
         """
         self.panel._cec_vars["tv-standby"].set(True)
         self.panel._cec_toggled("tv-standby")
-        self.panel._cec_vars["usb-wake"].set(True)
-        self.panel._cec_toggled("usb-wake")
+        self.panel._cec_vars["power-standby"].set(True)
+        self.panel._cec_toggled("power-standby")
         self.panel._apply_cec_features()
         self.assertEqual(len(self.ran), 1, "both went at once")
         first = self.ran[-1][0][2]
         self._finish(code=0)
         started = [one[0][2] for one in self.ran]
         self.assertIn("tv-standby", started)
-        self.assertIn("usb-wake", started)
+        self.assertIn("power-standby", started)
         self.assertNotEqual(started[0], started[1], first)
 
     def test_settling_the_switches_does_not_set_them_all_going(self):
@@ -3289,9 +3290,12 @@ class StatusShapeTest(unittest.TestCase):
 class WakeRadioButtonTest(unittest.TestCase):
     """The button that answers "which radios can wake this machine?".
 
-    A question, not a repair. The toolkit switches wakeup on for the radios it
-    matches and reports that nowhere the page reads, so "the switch is on and
-    it still does not wake" was a state with nowhere at all to look.
+    A question, not a repair. The applier switches wakeup on for the radios it
+    matches and reports that nowhere else, so "the switch is on and it still
+    does not wake" was a state with nowhere at all to look.
+
+    It is on the System page. It was on the HDMI CEC page, and the work it
+    asks about writes one value in sysfs and sends no CEC.
     """
 
     @classmethod
@@ -3299,21 +3303,17 @@ class WakeRadioButtonTest(unittest.TestCase):
         cls.panel_module = _panel_module()
 
     def setUp(self):
-        was = cec.installed
-        cec.installed = lambda home=None: True
-        self.addCleanup(lambda: setattr(cec, "installed", was))
-        self.panel_module.ledpanel.cec_status = (
-            lambda home=None, run=None: {
-                "cec_device": {"device": "/dev/cec0", "exists": True,
-                               "readable": True, "writable": True},
-                "services": {}, "system_services": {},
-                "external_volume": {"enabled": False},
-                "config": {"CEC_DEVICE": "/dev/cec0"}})
+        was = modules.installed
+        modules.installed = (
+            lambda name, home=None, present=None: name == modules.SYSTEM)
+        self.addCleanup(lambda: setattr(modules, "installed", was))
+        self.panel_module.ledpanel.wake_state = (
+            lambda run=None: (False, []))
         self.root = tk.Tk()
         self.addCleanup(self._destroy)
         self.panel = self.panel_module.Panel(self.root)
         self.root.update()
-        self.panel._open_section("cec")
+        self.panel._open_section("keyboard")
         for _ in range(4):
             self.root.update_idletasks()
             self.root.update()
@@ -3325,6 +3325,7 @@ class WakeRadioButtonTest(unittest.TestCase):
 
     def _buttons(self):
         found = []
+
         def walk(widget):
             for child in widget.winfo_children():
                 try:
@@ -3339,15 +3340,24 @@ class WakeRadioButtonTest(unittest.TestCase):
     def test_the_page_offers_it(self):
         self.assertIn("Which radios can wake it", self._buttons())
 
-    def test_it_asks_the_toolkits_own_helper(self):
+    def test_the_cec_page_does_not_offer_it_any_more(self):
+        """It moved. Two buttons for one question is one of them stale."""
+        self.panel._open_section("cec")
+        for _ in range(4):
+            self.root.update_idletasks()
+            self.root.update()
+        self.assertNotIn("Which radios can wake it", self._buttons())
+
+    def test_it_asks_the_applier_of_this_project(self):
         started = []
         self.panel.runner.start = lambda command, then=None: (
             started.append(list(command)), True)[1]
         self.panel._ask_wake_radios()
         self.assertEqual(started[0][-1], "status")
-        # No password: the toolkit's installer writes a NOPASSWD rule for
-        # exactly this program, so the button asks for nothing.
-        self.assertEqual(started[0][:2], ["sudo", "-n"])
+        self.assertTrue(started[0][0].startswith(ctl.INSTALL_DIR))
+        # A question that asks for a password is a question a person does not
+        # ask. It reads sysfs and asks systemd, and neither needs rights.
+        self.assertNotIn("sudo", started[0])
         self.assertNotIn("pkexec", started[0])
 
     def _answer(self, json_text):
@@ -3357,7 +3367,7 @@ class WakeRadioButtonTest(unittest.TestCase):
             then(0) if then else None, True)[1]
         self.panel._ask_wake_radios()
         self.root.update_idletasks()
-        return str(self.panel.cec_radios.cget("text"))
+        return str(self.panel.wake_radios.cget("text"))
 
     def test_the_answer_lands_on_the_page(self):
         """This window has no log pane.
@@ -3367,20 +3377,81 @@ class WakeRadioButtonTest(unittest.TestCase):
         panel from a terminal. That was shipped once and is what this checks.
         """
         said = self._answer(
-            '{"helper":{"devices":[{"label":"MediaTek (0e8d:0616)",'
-            '"after":"enabled"}]}}')
+            '{"is_enabled":true,"found":{"devices":[{"label":'
+            '"MediaTek (0e8d:0616)","after":"enabled"}]}}')
         self.assertIn("0e8d:0616", said)
         self.assertIn("wake this machine", said)
-        self.assertTrue(self.panel.cec_radios.winfo_ismapped())
+        self.assertTrue(self.panel.wake_radios.winfo_ismapped())
 
     def test_nothing_is_shown_before_it_is_asked(self):
-        self.assertFalse(self.panel.cec_radios.winfo_ismapped())
+        self.assertFalse(self.panel.wake_radios.winfo_ismapped())
 
-    def test_a_helper_that_did_not_answer_is_said_too(self):
+    def test_an_applier_that_did_not_answer_is_said_too(self):
         """The empty answer is the one somebody most needs a sentence for."""
         said = self._answer("sudo: a password is required")
         self.assertIn("did not answer", said)
-        self.assertTrue(self.panel.cec_radios.winfo_ismapped())
+        self.assertTrue(self.panel.wake_radios.winfo_ismapped())
+
+
+class WakeSwitchTest(unittest.TestCase):
+    """The switch itself, which acts at its click."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.panel_module = _panel_module()
+
+    def _build(self, here=True, on=False):
+        was = modules.installed
+        modules.installed = (
+            lambda name, home=None, present=None: here and name == modules.SYSTEM)
+        self.addCleanup(lambda: setattr(modules, "installed", was))
+        self.panel_module.ledpanel.wake_state = (
+            lambda run=None: ((on, []) if here else (None, [])))
+        self.root = tk.Tk()
+        self.addCleanup(self.root.destroy)
+        self.panel = self.panel_module.Panel(self.root)
+        self.root.update()
+        self.panel._open_section("keyboard")
+        for _ in range(4):
+            self.root.update_idletasks()
+            self.root.update()
+
+    def test_it_shows_what_the_machine_says(self):
+        self._build(on=True)
+        self.assertTrue(self.panel._wake_on.get())
+
+    def test_a_click_runs_the_switch_and_not_an_apply(self):
+        """There is one of it. A set of one is not a set of decisions."""
+        self._build(on=False)
+        started = []
+        self.panel.runner.start = lambda command, then=None: (
+            started.append(list(command)), True)[1]
+        self.panel._wake_on.set(True)
+        self.panel._wake_toggled()
+        self.assertEqual(started[0][-1], "on")
+        self.assertEqual(started[0][:2], ["sudo", "-n"])
+
+    def test_switching_it_back_sends_the_other_word(self):
+        self._build(on=True)
+        started = []
+        self.panel.runner.start = lambda command, then=None: (
+            started.append(list(command)), True)[1]
+        self.panel._wake_on.set(False)
+        self.panel._wake_toggled()
+        self.assertEqual(started[0][-1], "off")
+
+    def test_a_machine_without_the_module_cannot_move_it(self):
+        """A switch a person can move with no effect says the opposite."""
+        self._build(here=False)
+        self.assertIn("disabled", self.panel.wake_switch.state())
+
+    def test_a_runner_that_is_busy_puts_the_switch_back(self):
+        """Nothing ran, so the switch must not say that something did."""
+        self._build(on=False)
+        self.panel.runner.start = lambda command, then=None: False
+        self.panel._wake_on.set(True)
+        self.panel._wake_toggled()
+        self.assertFalse(self.panel._wake_on.get())
 
 
 class AdapterGoneNoticeTest(unittest.TestCase):

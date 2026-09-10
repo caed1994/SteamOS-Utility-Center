@@ -33,7 +33,7 @@ before this fork. The sixth came from a report after it.
 | `steamos-cec-boot-wake` is `Type=oneshot` and takes 26 seconds by design - it settles, then retries four times. | `default.target` was not reached until it finished, so installing the toolkit added ~26 s to every boot. | `Type=simple` in `systemd/user/steamos-cec-boot-wake.service`. It sends exactly what it sent before, beside the session instead of in front of it. |
 | `steamos-cec-permissions.service` runs at `multi-user.target` and the adapter is often not enumerated yet, so it repairs nothing and `cecd` gets `EACCES` - permanently, because it reads the device once. | CEC worked after a replug and not after a boot. | `--wait SECONDS` in `bin/steamos-cec-permissions-apply`, passed by the unit. The register helper also restarts `cecd` when nothing holds an address. |
 | The installer never ran `discover-cec`, so `CEC_PHYSICAL_ADDRESS` stayed empty - and every wake path skips `<Active Source>` when it is empty. | The television turned on and stayed on the input it was already on. | `bin/steamos-cec-register` writes it, at install time and at every session start. |
-| USB wake matched Bluetooth radios by **device** class. Every wifi-and-Bluetooth combo chip reports class `ef/02/01` (Interface Association) and puts its real classes in its interfaces, so the check could not match one. | `steamos-cec-usb-wake-apply` reported `"matched":0` and a controller could not wake the machine. | `bin/steamos-cec-usb-wake-apply` looks at `bInterfaceClass` as well. |
+| USB wake matched Bluetooth radios by **device** class. Every wifi-and-Bluetooth combo chip reports class `ef/02/01` (Interface Association) and puts its real classes in its interfaces, so the check could not match one. | `steamos-cec-usb-wake-apply` reported `"matched":0` and a controller could not wake the machine. | The check reads `bInterfaceClass` as well. The code left this tree afterwards: see "USB wake is not here" below. |
 | `power-standby` installed the standby helper twice: as `steamos-cec-before-sleep.service`, and as a program in `/etc/systemd/system-sleep`. systemd ran the unit before `sleep.target` and then the hook from `systemd-suspend.service`. | Each suspend sent the standby twice and waited for it twice, approximately 8.5 s. Each shutdown waited approximately 4.25 s, and a `cecd` that stopped answering added 50 s more. | The unit only, in `bin/steamos-cec-power-standby-control`. `TV_STANDBY_SETTLE_SECONDS` is 0.5 s and not 2 s, and the two `busctl` calls carry `--timeout=2`. |
 
 This fork changes nothing else. The tree does not follow the style of the
@@ -60,8 +60,7 @@ or afterwards from `steamos-cec-toolkitctl`:
   --enable-tv-standby-suspend \
   --enable-input-inactive-suspend \
   --enable-gamescope-recovery \
-  --enable-before-sleep \
-  --enable-usb-wake
+  --enable-before-sleep
 ```
 
 Then restart Steam/Game Mode or reboot. To remove it:
@@ -107,11 +106,9 @@ Root files:
 /var/lib/steamos-cec-toolkit/steamos-cec-volume-raw
 /var/lib/steamos-cec-toolkit/steamos-cec-before-sleep
 /var/lib/steamos-cec-toolkit/steamos-cec-permissions-apply
-/var/lib/steamos-cec-toolkit/steamos-cec-usb-wake-apply
 /etc/systemd/system/steamos-cec-before-sleep.service
 /etc/systemd/system/steamos-cec-resume-wake.service
 /etc/systemd/system/steamos-cec-permissions.service
-/etc/systemd/system/steamos-cec-usb-wake.service
 /etc/udev/rules.d/70-steamos-cec-toolkit.rules
 ```
 
@@ -148,7 +145,6 @@ bug reports.
 ~/.local/bin/steamos-cec-toolkitctl set-service input-away-suspend on
 ~/.local/bin/steamos-cec-toolkitctl set-service gamescope-recovery on
 ~/.local/bin/steamos-cec-toolkitctl set-system-service power-standby on
-~/.local/bin/steamos-cec-toolkitctl set-system-service usb-wake on
 ~/.local/bin/steamos-cec-toolkitctl set-external-volume on
 ~/.local/bin/steamos-cec-toolkitctl restart-external-volume
 ~/.local/bin/steamos-cec-toolkitctl repair-cec-permissions
@@ -232,25 +228,25 @@ Most **televisions** refuse System Audio Control. They return a
 CEC needs an amplifier that supports it. No configuration changes the answer
 of a television that refuses.
 
-## Waking the machine with a controller
+## USB wake is not here
 
-`--enable-usb-wake` turns on USB wakeup for the radio that a controller uses.
-It matches on three items:
+This toolkit had a switch that let a controller wake the machine. It is not
+here now.
 
-- an exact `vendor:product` list
-- a regular expression for the name of the device
-- the USB class for Bluetooth
+The work is one value in sysfs, on the USB device that receives the
+controller:
 
-This fork reads that class on the interfaces and on the device. A combination
-wifi and Bluetooth chip needs the interfaces.
+    /sys/bus/usb/devices/<device>/power/wakeup <- enabled
 
-What it can do ends at the hardware. A radio that cannot wake the board from
-S3, or a kernel that will not arm it, is not something a `power/wakeup` file
-can fix. To see what it matched:
+There is no CEC in that. It was here because this toolkit needed it, and not
+because it belongs to a television: the Steam button cannot reach a machine
+that sleeps. A person with no television can want a controller that wakes the
+machine, and a person who removes this toolkit must not lose it.
 
-```bash
-sudo /var/lib/steamos-cec-toolkit/steamos-cec-usb-wake-apply status
-```
+The SteamOS Utility Center has it as part of its System module instead. See
+`scripts/wake-apply.sh` and `server/steamos_utility_center/wake.py` in that
+project. Its rule for it names the two words `on` and `off`, where the rule
+here named the program and a `*`.
 
 ## Logs
 
@@ -274,7 +270,6 @@ Passwordless sudo is granted for fixed helpers only:
 /var/lib/steamos-cec-toolkit/steamos-cec-volume-raw *
 /var/lib/steamos-cec-toolkit/steamos-cec-debug-monitor *
 /var/lib/steamos-cec-toolkit/steamos-cec-power-standby-control *
-/var/lib/steamos-cec-toolkit/steamos-cec-usb-wake-control *
 /var/lib/steamos-cec-toolkit/steamos-cec-permissions-apply
 ```
 

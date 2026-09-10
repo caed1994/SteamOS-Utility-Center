@@ -92,12 +92,14 @@ SAYS = {
         "needs": "a CEC adapter, and a television that answers on it.",
     },
     SYSTEM: {
-        "title": "Drives and Game Mode",
-        "does": "Mounts the drives you choose at each boot, and puts the "
-                "plugin for Game Mode into Decky Loader. The keyboard "
-                "layout above works without this module.",
-        "brings": "a program that writes the mount units, a unit that writes "
-                  "them again at each boot, and the Decky plugin.",
+        "title": "Drives, controller wake and Game Mode",
+        "does": "Mounts the drives you choose at each boot, lets a controller "
+                "wake this machine from sleep, and puts the plugin for Game "
+                "Mode into Decky Loader. The keyboard layout above works "
+                "without this module.",
+        "brings": "a program that writes the mount units, a program that "
+                  "lets a controller wake the machine, a unit for each of "
+                  "them that runs again at each boot, and the Decky plugin.",
         "needs": "Decky Loader, for the Game Mode plugin only.",
     },
 }

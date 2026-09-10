@@ -43,11 +43,9 @@ systemctl --user restart wireplumber.service 2>/dev/null || true
 
 sudo systemctl disable --now steamos-cec-before-sleep.service 2>/dev/null || true
 sudo systemctl disable --now steamos-cec-permissions.service 2>/dev/null || true
-sudo systemctl disable --now steamos-cec-usb-wake.service 2>/dev/null || true
 sudo systemctl disable --now steamos-cec-resume-wake.service 2>/dev/null || true
 sudo rm -f /etc/systemd/system/steamos-cec-before-sleep.service
 sudo rm -f /etc/systemd/system/steamos-cec-permissions.service
-sudo rm -f /etc/systemd/system/steamos-cec-usb-wake.service
 sudo rm -f /etc/systemd/system/steamos-cec-resume-wake.service
 sudo rm -f /etc/systemd/system-sleep/steamos-cec-before-sleep
 sudo rm -f /etc/udev/rules.d/70-steamos-cec-toolkit.rules

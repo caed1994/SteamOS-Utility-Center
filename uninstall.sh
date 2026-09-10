@@ -181,6 +181,18 @@ systemctl disable --now "$NAME-mounts.service" 2>/dev/null || true
 rm -f "$MOUNTS_UNIT_PATH" "$MOUNTS_APPLIER_PATH"
 remove_mount_units
 
+# Controller wake, and the sysfs values it wrote.
+#
+# `off` before the file goes: the applier holds the record of what each USB
+# device said before this project wrote to it, and it is the only thing that
+# can put those values back. Without this the values stay written until the
+# machine restarts.
+if [[ -x "$WAKE_APPLIER_PATH" ]]; then
+  "$WAKE_APPLIER_PATH" off >/dev/null 2>&1 || true
+fi
+systemctl disable --now "$NAME-wake.service" 2>/dev/null || true
+rm -f "$WAKE_UNIT_PATH" "$WAKE_APPLIER_PATH" "$WAKE_STATE_PATH"
+
 # And the file that asked SteamOS to keep all of the above.
 rm -f "$KEEP_LIST_PATH"
 

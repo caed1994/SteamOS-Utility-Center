@@ -502,6 +502,12 @@ PROJECT_FILES = (
     "/etc/systemd/system/steamos-utility-center-mounts.service",
     "/etc/systemd/system/multi-user.target.wants/"
     "steamos-utility-center-mounts.service",
+    # Controller wake. The link is what says the switch is on, so a update
+    # that keeps the unit and loses the link is a machine that no longer
+    # wakes for a controller. See scripts/wake-apply.sh.
+    "/etc/systemd/system/steamos-utility-center-wake.service",
+    "/etc/systemd/system/multi-user.target.wants/"
+    "steamos-utility-center-wake.service",
     "/etc/udev/rules.d/99-steamos-utility-center.rules",
     # The rule that lets the control command apply a change with no password.
     # Without it in this list, a SteamOS update leaves a machine on which the

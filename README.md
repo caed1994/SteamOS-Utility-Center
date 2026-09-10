@@ -15,7 +15,7 @@ the Quick Access menu of Game Mode.
 4. [Notifications](#notifications)
 5. [CPU and GPU power](#cpu-and-gpu-power)
 6. [HDMI CEC](#hdmi-cec)
-7. [Keyboard layout and drives](#keyboard-layout-and-drives)
+7. [Keyboard, controller wake and drives](#keyboard-controller-wake-and-drives)
 8. [The control panel](#the-control-panel)
 9. [Game Mode](#game-mode)
 10. [The command that speaks JSON](#the-command-that-speaks-json)
@@ -366,13 +366,15 @@ Each feature has a switch that takes effect at the click:
 | **Sleep when the television does** | suspends this machine when the TV broadcasts standby |
 | **Sleep when the television switches away** | suspends after the TV is on another input for some time |
 | **Volume buttons control the television** | Game Mode shows `+` and `-`, and they change the receiver volume. It needs a reboot to appear, and an amplifier |
-| **Let a controller wake the machine** | lets Bluetooth radios and controller receivers wake the machine from suspend |
 | **Recover Gamescope after a wake** | restarts Gamescope if the display comes back in a bad state |
 
 **Try it** sends one wake, standby or volume command and leaves nothing behind.
-**Which radios can wake it** asks the toolkit which Bluetooth radios it
-matched. **Discover** fills in the adapter, the device that carries the volume,
-and the HDMI sound card.
+**Discover** fills in the adapter, the device that carries the volume, and the
+HDMI sound card.
+
+**Let a controller wake the machine** was on this page and is on the **System**
+page now. It writes one value in sysfs and sends no CEC, so a machine with no
+television can have it. See [Controller wake](#controller-wake).
 
 The other forty settings are in `/etc/steamos-cec-toolkit.conf`, each with its
 own paragraph.
@@ -389,7 +391,7 @@ Caution: Do not repair an installation with the release installer of the
 upstream project. It replaces the programs with the versions that have the five
 faults this fork corrects.
 
-## Keyboard layout and drives
+## Keyboard, controller wake and drives
 
 ### Keyboard layout
 
@@ -411,6 +413,40 @@ echo "XKB_DEFAULT_LAYOUT=kz" > ~/.config/environment.d/10-keyboard.conf
 ```
 
 A list with a comma (`de,us`) changes between two layouts.
+
+### Controller wake
+
+Lets the Steam button of a controller wake this machine from sleep. Without it
+the button reaches a machine that is awake only, and a machine that sleeps
+needs its power button.
+
+The work is one value in sysfs, on the USB device that receives the
+controller:
+
+```text
+/sys/bus/usb/devices/<device>/power/wakeup <- enabled
+```
+
+The kernel writes `disabled` there at each boot for most devices, so a unit of
+this project writes it again. Without the unit the switch holds until the next
+restart and no longer.
+
+It finds a radio in three ways: an exact `vendor:product` list, the name of the
+device, and the USB class for Bluetooth. The class check reads the interfaces
+and the device, because each wifi and Bluetooth combination chip reports class
+`ef/02/01` ("my classes are in my interfaces") and a check of the device class
+alone never matches one.
+
+**Which radios can wake it** says what it found and which of them can wake the
+machine. Ask it when the switch is on and the machine does not wake: a radio
+built into the board and not wired through USB cannot be switched on from
+here, and no `power/wakeup` file can change that.
+
+This was a switch on the **HDMI CEC Mods** page, in the toolkit under
+`cec-toolkit/`. That toolkit needed it, because the Steam button cannot reach
+a machine that sleeps. There is no CEC in the work, so it is part of the
+System module now: a person with no television can have it, and to remove
+HDMI CEC does not take it away.
 
 ### Drives
 
