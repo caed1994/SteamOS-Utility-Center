@@ -73,10 +73,35 @@ LOG = logging.getLogger("steamos-utility-center-pegboard")
 RETRY_DELAY = 2.0
 RETRY_CEILING = 30.0
 
-# How much of one frame to give the board to say that the frame arrived. The
-# answer takes about a millisecond, so this is generous and still leaves the
-# frame rate alone. See Board.show, which says what the wait is for.
-SETTLE_SHARE = 0.8
+# How long to give the board to say that a frame arrived.
+#
+# A fixed wait and not a share of the frame, which is what it was. At sixty
+# frames a second a share of 0.8 was 13.3 ms of a 16.6 ms budget, so one slow
+# answer took the whole frame and the next one went out with no gap at all.
+# The answer takes about a millisecond, so five is generous and can never eat
+# a frame.
+SETTLE_SECONDS = 0.005
+
+# The least time between the last report of one frame and the first of the
+# next.
+#
+# A frame that runs over its budget must still leave this. Two frames sent
+# back to back are eight reports in a burst, and a burst is what makes the
+# board lose its place in the stream. See run().
+MIN_GAP_SECONDS = 0.002
+
+# The most frames a second this board takes.
+#
+# Measured on one: 60 flashed single LEDs and 30 was clean. The ceiling is
+# somewhere between the two and nobody bisected it. The rate that works is
+# the one this permits.
+#
+# It is not a limit of the link. The endpoints poll every millisecond and a
+# frame is four reports, so the wire carries 250. It is what the board does
+# with a frame after it arrives, and it answers before it draws the frame:
+# the answer comes for every frame at 60 as well, and the LEDs are still
+# wrong.
+MAX_FPS = 30
 
 # How many frames with no answer before this says so in the log. One second at
 # sixty frames a second.
@@ -265,7 +290,7 @@ DEFAULTS = {
     "TEMPERATURE_MIN": 40.0,
     "TEMPERATURE_MAX": 80.0,
     "TEMPERATURE_SENSOR": "auto",
-    "FPS": 60,
+    "FPS": MAX_FPS,
     "IDLE_FPS": 4,
     "LOG_LEVEL": "info",
 }
@@ -337,8 +362,10 @@ def validate(values):
         raise PegboardError("SPEED must be between 0.05 and 20")
     if not 0.1 <= values["GAMMA"] <= 5.0:
         raise PegboardError("GAMMA must be between 0.1 and 5")
-    if not 1 <= values["FPS"] <= 240:
-        raise PegboardError("FPS must be between 1 and 240")
+    if not 1 <= values["FPS"] <= MAX_FPS:
+        raise PegboardError("FPS must be between 1 and %d. A board measured "
+                            "at 60 flashed single LEDs, and 30 was clean."
+                            % MAX_FPS)
     if not 1 <= values["IDLE_FPS"] <= values["FPS"]:
         raise PegboardError("IDLE_FPS must be between 1 and FPS")
     return values
@@ -537,9 +564,6 @@ def run(values, board=None, stop=None, now=None):
     # board holds the last frame, and a service that sends nothing cannot be
     # told from a service that stopped.
     interval = 1.0 / (values["FPS"] if animated else values["IDLE_FPS"])
-    # Most of one frame, so a board that says nothing still draws at the rate
-    # that was asked for rather than stopping to wait for it.
-    settle = interval * SETTLE_SHARE
     owned = board is None
     if owned:
         board = Board()
@@ -548,18 +572,20 @@ def run(values, board=None, stop=None, now=None):
         while stop is None or not stop():
             due = now() + interval
             payload = renderer.render(snapshot, now() - started, shows)
-            if board.show(frame(payload, values["SHAPE"]), settle=settle):
+            if board.show(frame(payload, values["SHAPE"]),
+                          settle=SETTLE_SECONDS):
                 quiet = 0
             else:
                 quiet += 1
                 # Once, and not for each frame: a board that stopped
-                # answering would otherwise write sixty lines a second.
+                # answering would otherwise write a line for every frame.
                 if quiet == QUIET_FRAMES:
                     LOG.warning("the board has not answered for %d frames; "
                                 "it is drawing without an answer", quiet)
-            rest = due - now()
-            if rest > 0:
-                time.sleep(rest)
+            # The gap even when the frame ran over. Without it a late frame
+            # is followed at once by the next, and the board reads eight
+            # reports where it expected four.
+            time.sleep(max(due - now(), MIN_GAP_SECONDS))
     finally:
         try:
             board.blank()

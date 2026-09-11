@@ -1581,6 +1581,21 @@ class PanelSettingsTest(unittest.TestCase):
         for key in self._settings():
             self.assertIn(key, known, key)
 
+    def test_the_frame_sliders_stop_where_the_board_does(self):
+        """The table holds the number and the module holds the rule.
+
+        Written out because this file reads the table as text. A test is what
+        keeps the two the same, which is how every other copy in this window
+        is held. See pegboard.MAX_FPS, and what it was measured against.
+        """
+        panel = self._panel()
+        table = self._assignments(panel).get("PEGBOARD")
+        tops = {row.elts[0].value: row.elts[4].value
+                for group in table.elts for row in group.elts[1].elts
+                if row.elts[2].value == "int"}
+        self.assertEqual(tops["PEGBOARD_FPS"], pegboard.MAX_FPS)
+        self.assertEqual(tops["PEGBOARD_IDLE_FPS"], pegboard.MAX_FPS)
+
     def test_the_pegboard_page_names_the_settings_pegboard_owns(self):
         """Both directions, the way the System page is pinned to its module.
 

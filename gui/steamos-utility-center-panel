@@ -372,8 +372,12 @@ PEGBOARD = [
          None, None, None),
     ]),
     ("Frames", [
-        ("PEGBOARD_FPS", "Frames a second", "int", 1, 120, 1),
-        ("PEGBOARD_IDLE_FPS", "While nothing moves", "int", 1, 60, 1),
+        # 30 is what the board takes and not what the link carries. The
+        # number is written out because the tests read this table as text
+        # and a name is not a number to them; it is pinned to
+        # pegboard.MAX_FPS by a test of its own. See test_gui.py.
+        ("PEGBOARD_FPS", "Frames a second", "int", 1, 30, 1),
+        ("PEGBOARD_IDLE_FPS", "While nothing moves", "int", 1, 30, 1),
     ]),
 ]
 

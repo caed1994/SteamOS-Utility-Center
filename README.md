@@ -344,11 +344,15 @@ A frame is 195 bytes and a report is 64, so each frame goes in four writes.
 The endpoints poll every millisecond, and a measurement on a board carried 60
 frames a second with an answer for each one.
 
-The service waits for that answer before it draws the next frame. Four reports
-a frame, sent with no pause, made the board lose its place in the stream: the
-answer then did not come, the frame after it was read from the wrong offset,
-and single LEDs flashed with a byte meant for another one. The answer takes
-about a millisecond, so the wait costs the frame rate nothing.
+The answer means the message arrived and not that the LEDs are drawn. At 60
+frames a second every frame was answered and single LEDs still flashed with a
+byte meant for another one. So 30 is the most this module sends, and it
+refuses more: the ceiling is somewhere between the two and nobody bisected it, and 30 is the rate a board was measured drawing cleanly.
+
+The service also leaves a gap between the last report of one frame and the
+first of the next, even when a frame ran over its budget. Two frames sent back
+to back are eight reports in a burst, and a burst is what makes the board lose
+its place in the stream.
 
 The service runs as root and needs no udev rule. The panel never opens the
 device: it reads sysfs to say whether a board is plugged in, and the service

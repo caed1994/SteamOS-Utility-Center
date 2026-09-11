@@ -212,6 +212,12 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(pegboard.PegboardError):
             pegboard.read(self._write("EFFECT=disco\n"))
 
+    def test_a_rate_the_board_cannot_draw_is_refused(self):
+        """60 flashed single LEDs on a board. 30 was clean."""
+        with self.assertRaises(pegboard.PegboardError):
+            pegboard.read(self._write("FPS=60\n"))
+        self.assertEqual(pegboard.DEFAULTS["FPS"], pegboard.MAX_FPS)
+
     def test_the_idle_rate_cannot_exceed_the_active_one(self):
         with self.assertRaises(pegboard.PegboardError):
             pegboard.read(self._write("FPS=10\nIDLE_FPS=20\n"))
@@ -283,22 +289,40 @@ class DrawingTest(unittest.TestCase):
         self.assertEqual(wire[0], wire[-1])
         self.assertEqual(wire[31], wire[32])
 
-    def test_it_waits_for_the_board_between_frames(self):
-        """The wait is what paces this, and it is why the LEDs stopped
-        flashing at nothing: four reports a frame, sent with no pause, made
-        the board lose its place in the stream."""
+    def test_the_wait_for_an_answer_cannot_eat_a_frame(self):
+        """It was a share of the frame, and at 60 that share was 13 of 16 ms.
+
+        One slow answer then took the whole budget, the sleep after it was
+        skipped, and the next frame went out with no gap: eight reports where
+        the board expected four. That is what made single LEDs flash.
+        """
         board = self.Fake()
         ticks = iter([n * 0.01 for n in range(40)])
         seen = []
-        pegboard.run(dict(pegboard.DEFAULTS, FPS=60),
-                     board=board, now=lambda: next(ticks),
+        pegboard.run(dict(pegboard.DEFAULTS), board=board,
+                     now=lambda: next(ticks),
                      stop=lambda: (seen.append(1), len(seen) > 2)[1])
         self.assertTrue(board.settles)
         for settle in board.settles:
             self.assertGreater(settle, 0)
-            # Under one frame, so a board that says nothing still draws at
-            # the rate that was asked for.
-            self.assertLess(settle, 1.0 / 60)
+            self.assertLess(settle, 1.0 / pegboard.MAX_FPS / 2)
+
+    def test_a_frame_that_ran_over_still_leaves_a_gap(self):
+        """The clock here jumps a whole frame at each reading, so every frame
+        is late. The board must still get its gap."""
+        board = self.Fake()
+        slept = []
+        real = pegboard.time.sleep
+        pegboard.time.sleep = slept.append
+        self.addCleanup(setattr, pegboard.time, "sleep", real)
+        late = iter([n * 1.0 for n in range(40)])
+        seen = []
+        pegboard.run(dict(pegboard.DEFAULTS), board=board,
+                     now=lambda: next(late),
+                     stop=lambda: (seen.append(1), len(seen) > 2)[1])
+        self.assertTrue(slept)
+        for rest in slept:
+            self.assertGreaterEqual(rest, pegboard.MIN_GAP_SECONDS)
 
     def test_a_board_that_answers_nothing_still_draws(self):
         """A quiet board is not a reason to stop lighting it."""
