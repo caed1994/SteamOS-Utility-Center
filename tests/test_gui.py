@@ -1618,6 +1618,16 @@ class PanelSettingsTest(unittest.TestCase):
             labels = dict((value, label) for label, value in entries)
             self.assertEqual(labels["rainbow"], "Rainbow")
 
+    def test_the_colour_row_follows_the_effects_that_use_one(self):
+        """The panel holds the names and the module holds the rule.
+
+        Written out because this file reads the panel as text. The same shape
+        as every other copy in that window: a test keeps the two equal.
+        """
+        assigned = self._assignments()
+        _key, names = ast.literal_eval(assigned["PEGBOARD_TAKES_COLOUR"])
+        self.assertEqual(sorted(names), sorted(pegboard.TAKES_COLOUR))
+
     def test_the_board_s_own_effect_has_a_name_a_person_reads(self):
         """capitalize() would make "rainbow-wave" into "Rainbow-wave".
 

@@ -311,7 +311,9 @@ module leaves the board lit. You pick one effect and it draws it.
 
 The same effects as the rainbow slot of the LED bar: rainbow, fire, aurora,
 ooze and the temperature gauge. They come from the same renderer, so an effect
-added to one is on the other.
+added to one is on the other. **Patrol** is there too, with a colour you pick
+and a number of dots; it is an effect of Steam's own rather than one of the
+slot, so it reaches the board by a different route and not by that list.
 
 Two exceptions. The load gauge is not here: it draws two bars of a fixed
 colour that grow with the counters, which reads as a meter on a strip behind a

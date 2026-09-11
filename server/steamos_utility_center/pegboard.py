@@ -60,6 +60,7 @@ import signal
 import sys
 import time
 
+from . import notify
 from . import render
 from . import shim
 from . import temperature
@@ -223,13 +224,37 @@ def answer_of(piece):
 # MIRRORED and fold().
 SHOWS_RAINBOW_WAVE = "rainbow-wave"
 
+# The dots that run along the board and back.
+#
+# It is not an effect of the rainbow slot, which is where the other names come
+# from. Steam has it as an effect of its own, and the renderer picks it from
+# the `effect` field of the snapshot. See EFFECT_OF.
+SHOWS_PATROL = "patrol"
+
 # The effects that are drawn on half the board and mirrored onto the other
 # side. Everything else takes the chain, LED 0 to LED 63.
 MIRRORED = frozenset({SHOWS_RAINBOW_WAVE})
 
 # Which effect of the renderer draws each of these. Only the wave needs an
 # entry: it is the rainbow with the fold, and not an effect of its own.
-DRAWN_BY = {SHOWS_RAINBOW_WAVE: render.SHOWS_RAINBOW}
+# The patrol is here for a second reason: the renderer takes the name of a
+# slot effect whether it consults the slot or not, and "patrol" is not one of
+# them. It draws by the effect field, so the name is unread and any valid one
+# does.
+DRAWN_BY = {SHOWS_RAINBOW_WAVE: render.SHOWS_RAINBOW,
+            SHOWS_PATROL: render.SHOWS_RAINBOW}
+
+# What the `effect` field of the snapshot says for each of these.
+#
+# The renderer reads that field first and the rainbow slot after it: a
+# snapshot whose effect is not EFFECT_RAINBOW draws by the field and the slot
+# is not consulted. So an effect of Steam's own, like the patrol, arrives
+# here and not in DRAWN_BY. See render.render_logical.
+EFFECT_OF = {SHOWS_PATROL: shim.EFFECT_PATROL}
+
+# The effects that draw in one colour, which a person sets. The rest make
+# their own colours and COLOR does nothing for them.
+TAKES_COLOUR = frozenset({SHOWS_PATROL})
 
 # What the board can draw: every effect of the renderer except the load gauge,
 # and the wave.
@@ -241,7 +266,7 @@ DRAWN_BY = {SHOWS_RAINBOW_WAVE: render.SHOWS_RAINBOW}
 # by itself.
 EFFECTS = tuple(sorted(
     {name for name in render.RAINBOW_CHOICES if name != render.SHOWS_LOAD}
-    | {SHOWS_RAINBOW_WAVE}))
+    | {SHOWS_RAINBOW_WAVE, SHOWS_PATROL}))
 
 # A name for each, for a menu. It is here and not in the window, because the
 # window is not the only thing that shows this list: Game Mode asks the
@@ -252,6 +277,7 @@ EFFECTS = tuple(sorted(
 LABELS = {
     "rainbow": "Rainbow",
     SHOWS_RAINBOW_WAVE: "Rainbow wave",
+    SHOWS_PATROL: "Patrol",
     "fire": "Fire",
     "aurora": "Aurora",
     "ooze": "Ooze",
@@ -321,6 +347,10 @@ DEFAULTS = {
     # The hue window of the effects that have one. It is the value that the
     # colour picker of Steam gives the bar, and here a person sets it.
     "COLOR_SHIFT": 0,
+    # The colour of an effect that draws in one. See TAKES_COLOUR.
+    "COLOR": "#ffffff",
+    # How many dots run along the board at one time.
+    "PATROL_DOTS": 1,
     "TEMPERATURE_MIN": 40.0,
     "TEMPERATURE_MAX": 80.0,
     "TEMPERATURE_SENSOR": "auto",
@@ -389,6 +419,12 @@ def validate(values):
         raise PegboardError("BRIGHTNESS must be between 0 and 255")
     if not 0 <= values["COLOR_SHIFT"] <= 255:
         raise PegboardError("COLOR_SHIFT must be between 0 and 255")
+    try:
+        notify.parse_color(values["COLOR"])
+    except ValueError as exc:
+        raise PegboardError("COLOR: %s" % exc)
+    if not 1 <= values["PATROL_DOTS"] <= 8:
+        raise PegboardError("PATROL_DOTS must be between 1 and 8")
     if not 0.05 <= values["SPEED"] <= 20.0:
         raise PegboardError("SPEED must be between 0.05 and 20")
     if not 0.1 <= values["GAMMA"] <= 5.0:
@@ -555,6 +591,7 @@ def build_renderer(values):
             if shows == render.SHOWS_TEMPERATURE else None),
         temperature_range=(values["TEMPERATURE_MIN"],
                            values["TEMPERATURE_MAX"]),
+        patrol_dots=values["PATROL_DOTS"],
         rainbow_shows=shows)
 
 
@@ -564,9 +601,14 @@ def build_snapshot(values):
     UNTOUCHED_SEQ is not used here. That number means "Steam wrote nothing
     yet", and this board never waits for Steam.
     """
+    red, green, blue = (int(round(one))
+                        for one in notify.parse_color(values["COLOR"]))
     return shim.Snapshot(
         seq=1, monotonic_ns=0, enabled=bool(values["ENABLED"]),
-        effect=shim.EFFECT_RAINBOW,
+        # The field first, and the rainbow slot after it. An effect of
+        # Steam's own is named here; everything else asks for the rainbow and
+        # replaces what the slot draws. See EFFECT_OF.
+        effect=EFFECT_OF.get(values["EFFECT"], shim.EFFECT_RAINBOW),
         brightness_scale=values["BRIGHTNESS"],
         # render.DELAY_DEFAULT and not 0. Zero is a value that Steam writes
         # and it means "as fast as possible": the cycle of every effect then
@@ -576,9 +618,11 @@ def build_snapshot(values):
         delay=render.DELAY_DEFAULT,
         breath_offset=0, breath_level=0, patrol_num=0,
         color_shift=values["COLOR_SHIFT"],
-        # What a static effect shows. White, because a person who picks one
-        # sets the colour with COLOR_SHIFT and not with this.
-        pixels=[(255, 255, 255)] * shim.LOGICAL_LEDS)
+        # Four values for each LED and not three. PIXEL_SIZE is 4: the
+        # fourth is the brightness of that LED, and base_color() unpacks all
+        # four. Three raised ValueError there, and nothing noticed because no
+        # effect of this board called it until the patrol arrived.
+        pixels=[(red, green, blue, 255)] * shim.LOGICAL_LEDS)
 
 
 def run(values, board=None, stop=None, now=None):

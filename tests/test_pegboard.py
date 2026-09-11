@@ -33,6 +33,7 @@ from steamos_utility_center import modules                   # noqa: E402
 from steamos_utility_center import mounts                    # noqa: E402
 from steamos_utility_center import pegboard                  # noqa: E402
 from steamos_utility_center import render                    # noqa: E402
+from steamos_utility_center import shim                      # noqa: E402
 
 
 def triples(payload):
@@ -105,11 +106,26 @@ class FoldTest(unittest.TestCase):
             self.assertEqual(pegboard.logical_leds(name), 64, name)
 
     def test_the_wave_is_the_rainbow_and_the_rest_are_themselves(self):
+        """Two names go to the rainbow. The wave is the rainbow with a fold.
+
+        The patrol is there for a different reason: the renderer takes the
+        name of a slot effect whether it reads the slot or not, and "patrol"
+        is not one of them. It draws by the snapshot's effect field, so the
+        name is unread.
+        """
         self.assertEqual(pegboard.drawn_by(self.WAVE), render.SHOWS_RAINBOW)
+        self.assertEqual(pegboard.drawn_by(pegboard.SHOWS_PATROL),
+                         render.SHOWS_RAINBOW)
         for name in pegboard.EFFECTS:
-            if name == self.WAVE:
+            if name in (self.WAVE, pegboard.SHOWS_PATROL):
                 continue
             self.assertEqual(pegboard.drawn_by(name), name, name)
+
+    def test_every_name_the_renderer_is_given_is_one_it_knows(self):
+        """Which is what drawn_by is for. A name it does not know raises."""
+        for name in pegboard.EFFECTS:
+            self.assertIn(pegboard.drawn_by(name), render.RAINBOW_CHOICES,
+                          name)
 
     def test_the_wave_puts_the_bottom_in_both_bottom_corners(self):
         """LED 0 is the bottom left and LED 63 the bottom right."""
@@ -219,18 +235,58 @@ class ConfigTest(unittest.TestCase):
     def test_the_effects_are_the_renderer_s_without_the_load_gauge(self):
         """Derived and not written down, so a new effect reaches the board.
 
-        Two exceptions. The gauge draws two bars of a fixed colour on a
+        Three exceptions. The gauge draws two bars of a fixed colour on a
         strip, which reads as a meter behind a case and as two coloured stubs
         on a board. The wave is the board's own, because the fold it needs is
-        the geometry of this board and not an effect.
+        the geometry of this board and not an effect. The patrol is an effect
+        of Steam's own and not one of the slot, so the list it comes from
+        does not hold it.
         """
         self.assertEqual(
             set(pegboard.EFFECTS),
             (set(render.RAINBOW_CHOICES) - {render.SHOWS_LOAD})
-            | {pegboard.SHOWS_RAINBOW_WAVE})
+            | {pegboard.SHOWS_RAINBOW_WAVE, pegboard.SHOWS_PATROL})
         for name in pegboard.EFFECTS:
             values = dict(pegboard.DEFAULTS, EFFECT=name)
             self.assertEqual(pegboard.validate(values)["EFFECT"], name)
+
+    def test_the_patrol_is_on_the_board(self):
+        """It is not an effect of the rainbow slot. Steam has it as an effect
+        of its own, and the renderer reads that from the snapshot's field."""
+        self.assertIn(pegboard.SHOWS_PATROL, pegboard.EFFECTS)
+        self.assertNotIn(pegboard.SHOWS_PATROL, render.RAINBOW_CHOICES)
+        snapshot = pegboard.build_snapshot(
+            dict(pegboard.DEFAULTS, EFFECT=pegboard.SHOWS_PATROL))
+        self.assertEqual(snapshot.effect, shim.EFFECT_PATROL)
+
+    def test_every_other_effect_asks_for_the_rainbow_slot(self):
+        for name in pegboard.EFFECTS:
+            if name == pegboard.SHOWS_PATROL:
+                continue
+            snapshot = pegboard.build_snapshot(
+                dict(pegboard.DEFAULTS, EFFECT=name))
+            self.assertEqual(snapshot.effect, shim.EFFECT_RAINBOW, name)
+
+    def test_a_pixel_carries_the_four_values_a_pixel_has(self):
+        """PIXEL_SIZE is 4, and the fourth is that LED's brightness.
+
+        base_color() unpacks all four, and three raised ValueError there.
+        Nothing noticed until the patrol arrived: it is the first effect of
+        this board that asks a snapshot for its colour.
+        """
+        snapshot = pegboard.build_snapshot(
+            dict(pegboard.DEFAULTS, COLOR="#ff6e00"))
+        self.assertEqual(len(snapshot.pixels[0]), shim.PIXEL_SIZE)
+        self.assertEqual(snapshot.base_color(), (255, 110, 0))
+
+    def test_a_colour_it_cannot_read_is_refused(self):
+        with self.assertRaises(pegboard.PegboardError):
+            pegboard.validate(dict(pegboard.DEFAULTS, COLOR="chartreuse"))
+
+    def test_the_dots_are_between_one_and_eight(self):
+        for dots in (0, 9):
+            with self.assertRaises(pegboard.PegboardError):
+                pegboard.validate(dict(pegboard.DEFAULTS, PATROL_DOTS=dots))
 
     def test_the_load_gauge_is_refused_and_its_settings_are_gone(self):
         with self.assertRaises(pegboard.PegboardError):
@@ -337,6 +393,37 @@ class DrawingTest(unittest.TestCase):
         wire = triples(board.sent[0][3:])
         self.assertEqual(wire[0], wire[-1])
         self.assertEqual(wire[31], wire[32])
+
+    def test_the_patrol_lights_dots_and_not_the_whole_board(self):
+        board = self._run(dict(pegboard.DEFAULTS,
+                               EFFECT=pegboard.SHOWS_PATROL,
+                               COLOR="#ff6e00", BRIGHTNESS=255))
+        wire = triples(board.sent[0][3:])
+        lit = sum(1 for pixel in wire if any(pixel))
+        self.assertGreater(lit, 0)
+        self.assertLess(lit, len(wire) // 2)
+
+    def test_more_dots_light_more_of_it(self):
+        def bright(dots):
+            board = self._run(dict(pegboard.DEFAULTS,
+                                   EFFECT=pegboard.SHOWS_PATROL,
+                                   PATROL_DOTS=dots, COLOR="#ff6e00",
+                                   BRIGHTNESS=255))
+            return sum(1 for pixel in triples(board.sent[0][3:])
+                       if max(pixel) > 128)
+        self.assertGreater(bright(4), bright(1))
+
+    def test_the_patrol_draws_in_the_colour_it_was_given(self):
+        """The other effects make their own, and COLOR does nothing there."""
+        board = self._run(dict(pegboard.DEFAULTS,
+                               EFFECT=pegboard.SHOWS_PATROL,
+                               COLOR="#0000ff", BRIGHTNESS=255))
+        wire = triples(board.sent[0][3:])
+        # GRB on the wire, so blue is the third byte and the first two are 0.
+        brightest = max(wire, key=max)
+        self.assertEqual(brightest[0], 0)
+        self.assertEqual(brightest[1], 0)
+        self.assertGreater(brightest[2], 128)
 
     def test_the_plain_rainbow_is_not(self):
         """Which is the whole difference between the two entries."""
