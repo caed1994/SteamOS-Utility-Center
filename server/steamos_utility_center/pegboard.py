@@ -59,8 +59,6 @@ import signal
 import sys
 import time
 
-from . import load
-from . import notify
 from . import render
 from . import shim
 from . import temperature
@@ -231,6 +229,15 @@ SHAPE_CHAIN = "chain"
 
 SHAPES = (SHAPE_MIRROR, SHAPE_CHAIN)
 
+# What the board can draw. Every effect of the renderer except the load gauge.
+#
+# That gauge draws two bars of a fixed colour that grow and shrink with the
+# counters. On a strip behind a case it reads as a meter. On a board it reads
+# as two coloured stubs, and the numbers it shows are on the Status page in
+# words. Derived from the renderer, so a new effect still arrives by itself.
+EFFECTS = tuple(name for name in sorted(render.RAINBOW_CHOICES)
+                if name != render.SHOWS_LOAD)
+
 
 def logical_leds(shape):
     """How many LEDs the renderer draws.
@@ -284,9 +291,6 @@ DEFAULTS = {
     # The hue window of the effects that have one. It is the value that the
     # colour picker of Steam gives the bar, and here a person sets it.
     "COLOR_SHIFT": 0,
-    "LOAD_CPU_COLOR": "#ff6e00",
-    "LOAD_GPU_COLOR": "#1a9fff",
-    "LOAD_SWAP": False,
     "TEMPERATURE_MIN": 40.0,
     "TEMPERATURE_MAX": 80.0,
     "TEMPERATURE_SENSOR": "auto",
@@ -351,9 +355,8 @@ def validate(values):
     """Refuses a setting that would draw nothing, or draw it wrong."""
     if values["SHAPE"] not in SHAPES:
         raise PegboardError("SHAPE must be one of %s" % ", ".join(SHAPES))
-    if values["EFFECT"] not in render.RAINBOW_CHOICES:
-        raise PegboardError("EFFECT must be one of %s"
-                            % ", ".join(sorted(render.RAINBOW_CHOICES)))
+    if values["EFFECT"] not in EFFECTS:
+        raise PegboardError("EFFECT must be one of %s" % ", ".join(EFFECTS))
     if not 0 <= values["BRIGHTNESS"] <= 255:
         raise PegboardError("BRIGHTNESS must be between 0 and 255")
     if not 0 <= values["COLOR_SHIFT"] <= 255:
@@ -521,14 +524,7 @@ def build_renderer(values):
             if shows == render.SHOWS_TEMPERATURE else None),
         temperature_range=(values["TEMPERATURE_MIN"],
                            values["TEMPERATURE_MAX"]),
-        load=load.LoadSource() if shows == render.SHOWS_LOAD else None,
-        rainbow_shows=shows,
-        # parse_color and not the string: the renderer takes a colour that
-        # a caller parsed, because the form of one is the work of notify and
-        # notify imports from render. See render._as_colour.
-        load_cpu_colour=notify.parse_color(values["LOAD_CPU_COLOR"]),
-        load_gpu_colour=notify.parse_color(values["LOAD_GPU_COLOR"]),
-        load_swap=values["LOAD_SWAP"])
+        rainbow_shows=shows)
 
 
 def build_snapshot(values):
@@ -541,7 +537,13 @@ def build_snapshot(values):
         seq=1, monotonic_ns=0, enabled=bool(values["ENABLED"]),
         effect=shim.EFFECT_RAINBOW,
         brightness_scale=values["BRIGHTNESS"],
-        delay=0, breath_offset=0, breath_level=0, patrol_num=0,
+        # render.DELAY_DEFAULT and not 0. Zero is a value that Steam writes
+        # and it means "as fast as possible": the cycle of every effect then
+        # comes out at MIN_CYCLE_SECONDS, whatever SPEED says. The ooze ran
+        # its 14 seconds in 0.8, and the speed slider moved nothing. See
+        # render._cycle, whose first paragraph says so.
+        delay=render.DELAY_DEFAULT,
+        breath_offset=0, breath_level=0, patrol_num=0,
         color_shift=values["COLOR_SHIFT"],
         # What a static effect shows. White, because a person who picks one
         # sets the colour with COLOR_SHIFT and not with this.

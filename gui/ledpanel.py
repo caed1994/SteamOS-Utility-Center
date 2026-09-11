@@ -1266,7 +1266,7 @@ def rainbow_choices(names):
     wording lives here, because "load" on its own does not say load of what.
     """
     labels = {
-        "rainbow": "Steam's rainbow",
+        "rainbow": "Rainbow",
         "temperature": "Temperature",
         "load": "CPU and GPU load",
         "fire": "Fire",
@@ -1282,15 +1282,15 @@ def desktop_choices(names):
     The service holds the list, and only the text is here. "steam" needs the
     most text: the bar keeps the effect of the last Game Mode session.
 
-    The four effects of this project use the words of the rainbow slot, and
-    "rainbow" is Steam's own name. Here the five are separate scenes, so
-    "Rainbow" beside "Fire" must not read as one entry twice.
+    It was "Steam's rainbow" here, to say which rainbow among a list of
+    effects. "Leave it to Steam" is at the top of that same list and already
+    says what Steam does, so the long name said it a second time.
     """
     labels = {
         "steam": "Leave it to Steam",
         "off": "Off",
         "color": "One colour",
-        "rainbow": "Steam's rainbow",
+        "rainbow": "Rainbow",
         "load": "CPU and GPU load",
     }
     return tuple((labels.get(name, name.capitalize()), name) for name in names)

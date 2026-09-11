@@ -349,21 +349,16 @@ PEGBOARD = [
          ledpanel.pegboard_shapes(), None, None),
     ]),
     ("What it draws", [
+        # The board's own list and not the bar's: the load gauge is two
+        # coloured stubs on a board. See pegboard.EFFECTS.
         ("PEGBOARD_EFFECT", "Effect", "named",
-         ledpanel.rainbow_choices(config_module.RAINBOW_CHOICES), None, None),
+         ledpanel.rainbow_choices(pegboard.EFFECTS), None, None),
         ("PEGBOARD_BRIGHTNESS", "Brightness", "int", 0, 255, 1),
         ("PEGBOARD_SPEED", "Effect speed", "float", 0.1, 4.0, 0.1),
         # What the colour picker of Steam gives the bar. The board has no
         # Steam, so it is a slider here.
         ("PEGBOARD_COLOR_SHIFT", "Colour shift", "int", 0, 255, 1),
         ("PEGBOARD_GAMMA", "Gamma", "float", 0.1, 3.0, 0.1),
-    ]),
-    ("The load gauge", [
-        ("PEGBOARD_LOAD_CPU_COLOR", "CPU half", "named",
-         ledpanel.load_colours(), None, None),
-        ("PEGBOARD_LOAD_GPU_COLOR", "GPU half", "named",
-         ledpanel.load_colours(), None, None),
-        ("PEGBOARD_LOAD_SWAP", "Swap the halves", "bool", None, None, None),
     ]),
     ("The temperature gauge", [
         ("PEGBOARD_TEMPERATURE_MIN", "Green up to (degrees)", "float",

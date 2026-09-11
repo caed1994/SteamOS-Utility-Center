@@ -1605,6 +1605,19 @@ class PanelSettingsTest(unittest.TestCase):
         self.assertEqual(sorted(set(pegboard.DEFAULTS) - shown),
                          ["FPS", "IDLE_FPS", "LOG_LEVEL"])
 
+    def test_the_rainbow_is_called_rainbow(self):
+        """It was "Steam's rainbow" in both menus.
+
+        This is pinned because of how the rename went: four tests in
+        test_panel_live.py set the old label, and an unknown label resolves
+        to none of the effects, which was what those tests expected anyway.
+        They passed and tested nothing until the label was corrected.
+        """
+        for entries in (ledpanel.rainbow_choices(config_module.RAINBOW_CHOICES),
+                        ledpanel.desktop_choices(desktop.SCENES)):
+            labels = dict((value, label) for label, value in entries)
+            self.assertEqual(labels["rainbow"], "Rainbow")
+
     def test_no_page_offers_a_frame_rate(self):
         """Neither the board nor the bar. The rate is a number that has to be
         right, and a slider invites a person to find that out the hard way."""

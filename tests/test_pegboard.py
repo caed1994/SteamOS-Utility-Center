@@ -202,11 +202,42 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(pegboard.PegboardError):
             pegboard.read(self._write("LEDS=32\n"))
 
-    def test_the_effects_are_the_ones_the_renderer_has(self):
-        """Derived and not written down, so a new effect reaches the board."""
-        for name in render.RAINBOW_CHOICES:
+    def test_the_effects_are_the_renderer_s_without_the_load_gauge(self):
+        """Derived and not written down, so a new effect reaches the board.
+
+        The gauge is the one exception. It draws two bars of a fixed colour
+        on a strip, which reads as a meter behind a case and as two coloured
+        stubs on a board.
+        """
+        self.assertEqual(set(pegboard.EFFECTS),
+                         set(render.RAINBOW_CHOICES) - {render.SHOWS_LOAD})
+        for name in pegboard.EFFECTS:
             values = dict(pegboard.DEFAULTS, EFFECT=name)
             self.assertEqual(pegboard.validate(values)["EFFECT"], name)
+
+    def test_the_load_gauge_is_refused_and_its_settings_are_gone(self):
+        with self.assertRaises(pegboard.PegboardError):
+            pegboard.validate(dict(pegboard.DEFAULTS,
+                                   EFFECT=render.SHOWS_LOAD))
+        for key in ("LOAD_CPU_COLOR", "LOAD_GPU_COLOR", "LOAD_SWAP"):
+            self.assertNotIn(key, pegboard.DEFAULTS)
+
+    def test_the_effects_run_at_the_speed_that_is_asked_for(self):
+        """SPEED moved nothing, and every effect ran at the fastest cycle.
+
+        The snapshot carried delay 0, which Steam writes and which means "as
+        fast as possible": render._cycle then returns MIN_CYCLE_SECONDS
+        whatever SPEED says. The ooze ran its fourteen seconds in under one.
+        """
+        snapshot = pegboard.build_snapshot(dict(pegboard.DEFAULTS))
+        self.assertEqual(snapshot.delay, render.DELAY_DEFAULT)
+        at_one = render._cycle(snapshot, render.OOZE_CYCLE, 1.0)
+        self.assertAlmostEqual(at_one, render.OOZE_CYCLE)
+        # And the slider divides it.
+        self.assertAlmostEqual(
+            render._cycle(snapshot, render.OOZE_CYCLE, 2.0), at_one / 2)
+        self.assertGreater(
+            render._cycle(snapshot, render.OOZE_CYCLE, 0.5), at_one)
 
     def test_an_effect_that_does_not_exist_is_refused(self):
         with self.assertRaises(pegboard.PegboardError):

@@ -282,7 +282,7 @@ class LiveWindowTest(unittest.TestCase):
         #                                temperature  load
         for label, wanted in (("Temperature", (True, False)),
                               ("CPU and GPU load", (False, True)),
-                              ("Steam's rainbow", (False, False)),
+                              ("Rainbow", (False, False)),
                               ("Fire", (False, False))):
             slot.set(label)
             self.root.update()
@@ -317,7 +317,7 @@ class LiveWindowTest(unittest.TestCase):
 
         for label, wanted in (("Temperature", (True, False)),
                               ("CPU and GPU load", (False, True)),
-                              ("Steam's rainbow", (False, False)),
+                              ("Rainbow", (False, False)),
                               ("Breath", (False, False))):
             scene.set(label)
             self.root.update()
@@ -399,7 +399,7 @@ class LiveWindowTest(unittest.TestCase):
         self.root.update()
         scene = self.panel.vars["DESKTOP_SCENE"][0]
         for label, wanted in (("One colour", False), ("Breath", False),
-                              ("Patrol", False), ("Steam's rainbow", True),
+                              ("Patrol", False), ("Rainbow", True),
                               ("Fire", True), ("Aurora", True),
                               ("Temperature", True), ("CPU and GPU load", True),
                               ("Off", True), ("Leave it to Steam", True)):
@@ -424,7 +424,7 @@ class LiveWindowTest(unittest.TestCase):
         for label, wanted in (("One colour", (False, False, True)),
                               ("Breath", (False, False, False)),
                               ("Patrol", (False, False, False)),
-                              ("Steam's rainbow", (True, False, False)),
+                              ("Rainbow", (True, False, False)),
                               ("Fire", (True, False, False)),
                               ("Aurora", (True, False, False)),
                               ("Temperature", (True, False, True)),
@@ -514,7 +514,7 @@ class LiveWindowTest(unittest.TestCase):
         self.panel.notebook.select(self._page_named("Desktop mode"))
         scene = self.panel.vars["DESKTOP_SCENE"][0]
         field = self.panel._widgets["DESKTOP_COLOR"]
-        scene.set("Steam's rainbow")
+        scene.set("Rainbow")
         self.root.update()
         scene.set("Breath")
         self.root.update()

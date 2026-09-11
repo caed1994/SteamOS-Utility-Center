@@ -310,8 +310,12 @@ module leaves the board lit. You pick one effect and it draws it.
 ### What it draws
 
 The same effects as the rainbow slot of the LED bar: rainbow, fire, aurora,
-ooze, and the temperature and load gauges. They come from the same renderer,
-so an effect added to one is on the other.
+ooze and the temperature gauge. They come from the same renderer, so an effect
+added to one is on the other.
+
+The load gauge is the exception. It draws two bars of a fixed colour that grow
+with the counters, which reads as a meter on a strip behind a case and as two
+coloured stubs on a board.
 
 ### The two sides
 
