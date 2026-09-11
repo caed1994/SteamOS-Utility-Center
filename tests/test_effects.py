@@ -645,6 +645,136 @@ class OozeTest(unittest.TestCase):
         self.assertEqual(flat, 0, "the bar goes flat %d times" % flat)
 
 
+class DetailTest(unittest.TestCase):
+    """How fine the picture is, on a strip longer than the bar.
+
+    The fault this answers: the fire, the aurora and the ooze draw a fixed
+    number of features over the whole strip, whatever its length. The
+    Nanoleaf board has 64 LEDs and got the same 10, 4 and 3 features as a bar
+    of 17, each one about four times as wide, and a quarter of the bar's step
+    from one LED to the next. The colour range was the same, so it was not
+    less colour: it was the same colour over a longer distance, which is what
+    a person reads as one flat picture.
+    """
+
+    BOARD = 64
+    SHAPED = (render.SHOWS_FIRE, render.SHOWS_AURORA, render.SHOWS_OOZE)
+
+    def _frames(self, shows, count, detail, ticks=60):
+        renderer = render.Renderer(led_count=count, rainbow_shows=shows,
+                                   detail=detail)
+        snapshot = _rainbow_snapshot()
+        return [renderer.render_logical(snapshot, tick * 0.25)
+                for tick in range(ticks)]
+
+    @staticmethod
+    def _levels(frame):
+        return [0.2126 * red + 0.7152 * green + 0.0722 * blue
+                for red, green, blue in frame]
+
+    def _features(self, frames):
+        """The hills and the valleys of the brightness, on average."""
+        total = 0
+        for frame in frames:
+            levels = self._levels(frame)
+            steps = [after - before
+                     for before, after in zip(levels, levels[1:])]
+            total += sum(1 for before, after in zip(steps, steps[1:])
+                         if before * after < 0)
+        return total / float(len(frames))
+
+    def _neighbour(self, frames):
+        """The average step in brightness from one LED to the next."""
+        total = 0.0
+        for frame in frames:
+            levels = self._levels(frame)
+            steps = [abs(after - before)
+                     for before, after in zip(levels, levels[1:])]
+            total += sum(steps) / len(steps)
+        return total / len(frames)
+
+    def test_the_bar_asks_for_nothing_and_gets_what_it_had(self):
+        renderer = _renderer()
+        self.assertEqual(renderer.detail, 1.0)
+        self.assertEqual(renderer.logical_count, shim.LOGICAL_LEDS)
+
+    def test_a_longer_strip_gets_as_many_features_as_it_is_long(self):
+        fine = self.BOARD / float(shim.LOGICAL_LEDS)
+        for shows in self.SHAPED:
+            bar = self._features(self._frames(shows, shim.LOGICAL_LEDS, 1.0))
+            board = self._features(self._frames(shows, self.BOARD, fine))
+            # Not "more": as many for each LED as the bar has. Below three
+            # times is the effect still spread over the longer strip.
+            self.assertGreater(board, bar * 3.0,
+                               "%s: %.1f against %.1f" % (shows, board, bar))
+
+    def test_and_the_same_step_from_one_led_to_the_next(self):
+        """The measure of a flat picture, and the one this was built for."""
+        fine = self.BOARD / float(shim.LOGICAL_LEDS)
+        for shows in self.SHAPED:
+            bar = self._neighbour(self._frames(shows, shim.LOGICAL_LEDS, 1.0))
+            board = self._neighbour(self._frames(shows, self.BOARD, fine))
+            self.assertGreater(board, bar * 0.8,
+                               "%s: %.1f against %.1f" % (shows, board, bar))
+
+    def test_it_is_drawn_at_the_count_that_carries_it(self):
+        """More features on the same 17 samples give an alias, not detail.
+
+        At the board's detail the fastest wave of the fire has 21 humps, and
+        17 samples carry 8. So the count of the samples grows with the
+        features, and the stretch then has nothing left to do.
+        """
+        fine = self.BOARD / float(shim.LOGICAL_LEDS)
+        renderer = render.Renderer(led_count=self.BOARD, detail=fine)
+        self.assertEqual(renderer.logical_count, self.BOARD)
+        for shows in self.SHAPED:
+            frame = self._frames(shows, self.BOARD, fine, ticks=1)[0]
+            self.assertEqual(len(frame), self.BOARD, shows)
+
+    def test_the_rainbow_and_the_gauges_do_not_take_it(self):
+        """One sweep of the hue along the strip is the effect.
+
+        Four sweeps is not a finer rainbow, it is a different one. A reading
+        is not a texture either.
+        """
+        fine = self.BOARD / float(shim.LOGICAL_LEDS)
+        plain = self._frames(render.SHOWS_RAINBOW, self.BOARD, 1.0, ticks=8)
+        asked = self._frames(render.SHOWS_RAINBOW, self.BOARD, fine, ticks=8)
+        self.assertEqual(plain, asked)
+
+    def test_the_blobs_of_the_ooze_are_repeated_along_it(self):
+        """Three blobs on 64 LEDs are three lamps with dark between them."""
+        self.assertEqual(len(render.ooze_blobs(1.0)), len(render.OOZE_BLOBS))
+        many = render.ooze_blobs(self.BOARD / float(shim.LOGICAL_LEDS))
+        self.assertEqual(len(many), len(render.OOZE_BLOBS) * 4)
+        starts = sorted(start for start, _speed, _hot in many)
+        for start in starts:
+            self.assertGreaterEqual(start, 0.0)
+            self.assertLess(start, 1.0)
+
+    def test_and_never_two_repeats_in_step(self):
+        """Copies at one speed hold their arrangement and the repeat shows."""
+        many = render.ooze_blobs(self.BOARD / float(shim.LOGICAL_LEDS))
+        speeds = [speed for _start, speed, _hot in many]
+        self.assertEqual(len(set(speeds)), len(speeds))
+        # And around the speed of the bar, so the ooze creeps as it crept.
+        for original in render.OOZE_BLOBS:
+            copies = [speed for start, speed, hot in many
+                      if hot == original[2]]
+            self.assertAlmostEqual(sum(copies) / len(copies), original[1],
+                                   places=6)
+
+    def test_the_answer_for_one_detail_is_made_one_time(self):
+        # A frame that built this list would build it for every frame.
+        self.assertIs(render.ooze_blobs(3.76), render.ooze_blobs(3.76))
+
+    def test_there_is_a_limit_on_how_fine_it_gets(self):
+        self.assertEqual(
+            render.Renderer(led_count=17, detail=1000.0).detail,
+            render.DETAIL_MAX)
+        self.assertEqual(render.Renderer(led_count=17, detail=0.1).detail, 1.0)
+
+
 class ColourScaleTest(unittest.TestCase):
     """The shared stop-mixing both the temperature scale and fire use."""
 

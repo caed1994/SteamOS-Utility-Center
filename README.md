@@ -325,6 +325,40 @@ At the default speed the dot moves one LED for each frame, which is the
 fastest a single dot moves and still lights every LED on the way. `SPEED`
 above 1 steps over LEDs, and below 1 it rests on each one.
 
+### Drawn as fine as the board is long
+
+The fire, the aurora and the ooze draw a fixed number of features along the
+strip, whatever its length. The fire is three waves of 0.9, 2.3 and 5.7 humps.
+The ooze is three blobs. This board has 64 LEDs, so it got the same three
+blobs as a bar of 17, and each one was about four times as wide.
+
+Measured over 60 frames:
+
+| | hills and valleys | step from one LED to the next |
+| --- | --- | --- |
+| fire on the bar | 9.9 | 42.9 |
+| fire on the board, before | 10.0 | 10.1 |
+| fire on the board, now | 40.9 | 43.0 |
+| ooze on the bar | 3.0 | 31.4 |
+| ooze on the board, before | 3.2 | 8.0 |
+| ooze on the board, now | 13.2 | 29.1 |
+
+The colour range was the same in each row, so it was not less colour. It was
+the same colour over a longer distance. That is what a person reads as one
+flat picture.
+
+The board asks for a picture as fine as it is long now. The waves get as many
+humps as it has LEDs for, and the blobs of the ooze are repeated around it.
+Each repeat creeps at its own speed, so the repeats drift apart rather than
+turn as one pattern.
+
+Two things take no part in this. The rainbow is one sweep of the hue along the
+strip, and four sweeps is a different effect and not a finer one. The
+temperature gauge is a reading, and a reading is not a texture.
+
+The LED bar is unchanged. It asks for nothing and gets what it always gave,
+and the frames it draws are the same byte for byte at 17, 30 and 60 LEDs.
+
 Two exceptions. The load gauge is not here: it draws two bars of a fixed
 colour that grow with the counters, which reads as a meter on a strip behind a
 case and as two coloured stubs on a board. And **Rainbow wave** is the board's

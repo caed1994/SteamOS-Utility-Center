@@ -42,6 +42,14 @@ MAPPING_REPEAT = "repeat"
 MAPPING_CROP = "crop"
 MAPPINGS = (MAPPING_STRETCH, MAPPING_REPEAT, MAPPING_CROP)
 
+# The finest picture a caller can ask for. See Renderer.detail.
+#
+# Sixteen times the bar is a strip of over two hundred and seventy LEDs. The
+# effects are sums of waves over the whole length, so a frame costs what the
+# length is. This is where that cost stops, rather than a limit that a real
+# strip meets.
+DETAIL_MAX = 16.0
+
 
 def hsv_to_rgb(hue, saturation, value):
     """Takes hue, saturation and value from 0 to 1. Returns 0 to 255."""
@@ -342,14 +350,18 @@ def _fire(snapshot, elapsed, options):
     """
     period = _cycle(snapshot, FIRE_CYCLE, options.speed_scale)
     phase = elapsed / period
-    span = float(shim.LOGICAL_LEDS)
+    # The count of the caller and not the bar's, because the waves below are
+    # as many humps as the detail asks for. See Renderer.detail.
+    count = options.logical_count
+    span = float(count)
 
     frame = []
-    for index in range(shim.LOGICAL_LEDS):
+    for index in range(count):
         heat = 0.0
         for humps, speed in FIRE_WAVES:
             heat += math.sin(2.0 * math.pi
-                             * (index / span * humps + phase * speed))
+                             * (index / span * humps * options.detail
+                                + phase * speed))
         # The three waves give a sum from -3 to 3. The centre is high, so the
         # strip mostly burns and goes to the embers only sometimes.
         heat = 0.58 + heat / 6.4
@@ -381,20 +393,23 @@ def _aurora(snapshot, elapsed, options):
     """Draws slow green and violet curtains."""
     period = _cycle(snapshot, AURORA_CYCLE, options.speed_scale)
     phase = elapsed / period
-    span = float(shim.LOGICAL_LEDS)
+    count = options.logical_count
+    span = float(count)
     # Steam's colour picker still moves it, the same way it shifts the
     # rainbow: the effect keeps its character, you choose where it sits.
     shift = snapshot.color_shift / 255.0
 
     frame = []
-    for index in range(shim.LOGICAL_LEDS):
+    for index in range(count):
         drift = 0.0
         for humps, speed in AURORA_HUE_WAVES:
             drift += math.sin(2.0 * math.pi
-                              * (index / span * humps + phase * speed))
+                              * (index / span * humps * options.detail
+                                 + phase * speed))
         humps, speed = AURORA_LEVEL_WAVE
         swell = math.sin(2.0 * math.pi
-                         * (index / span * humps + phase * speed))
+                         * (index / span * humps * options.detail
+                            + phase * speed))
         level = AURORA_FLOOR + (1.0 - AURORA_FLOOR) * (0.5 + swell * 0.5)
         frame.append(hsv_to_rgb(AURORA_HUE + shift + AURORA_SPREAD * drift / 2.0,
                                 0.9, level))
@@ -433,6 +448,44 @@ OOZE_BLOBS = ((0.00, -0.87, 0.95), (0.35, -0.41, 0.10), (0.70, 0.53, 0.50))
 OOZE_REACH = 0.15
 OOZE_FLOOR = 0.06           # the gaps are dark, and not black
 
+# How much the speed of one repeat differs from the speed of the next.
+#
+# Copies at one speed hold their arrangement for ever, and the repeat then
+# reads as one pattern that turns. A small difference lets them drift apart
+# and meet again, which is what the three blobs of one bar already do.
+OOZE_COPY_DRIFT = 0.08
+
+_OOZE_BLOBS_AT = {}
+
+
+def ooze_blobs(detail):
+    """The blobs of one bar, repeated along a strip that is longer.
+
+    Three blobs on sixty-four LEDs are three lamps with dark between them.
+    The count grows with the detail, so that a blob is as wide and as far
+    from its neighbour as it is on the bar. See Renderer.detail.
+
+    The answer for a detail is always the same, so it is made one time. A
+    frame that built this list would build it for every frame.
+    """
+    copies = max(1, int(round(detail)))
+    known = _OOZE_BLOBS_AT.get(copies)
+    if known is not None:
+        return known
+    if copies == 1:
+        made = OOZE_BLOBS
+    else:
+        made = []
+        for copy in range(copies):
+            # Near one and never equal, and around one, so that the effect
+            # creeps at the speed it creeps at on the bar.
+            drift = 1.0 + (copy - (copies - 1) / 2.0) * OOZE_COPY_DRIFT
+            for start, speed, hot in OOZE_BLOBS:
+                made.append(((start + copy) / copies, speed * drift, hot))
+        made = tuple(made)
+    _OOZE_BLOBS_AT[copies] = made
+    return made
+
 
 def _ooze(snapshot, elapsed, options):
     """Draws thick yellow-green blobs that creep and merge."""
@@ -442,18 +495,22 @@ def _ooze(snapshot, elapsed, options):
     # the effect keeps its character, you choose which hazard it is.
     shift = snapshot.color_shift / 255.0
 
+    count = options.logical_count
+    blobs = ooze_blobs(options.detail)
+    reach = OOZE_REACH / options.detail
+
     frame = []
-    for index in range(shim.LOGICAL_LEDS):
-        where = index / float(shim.LOGICAL_LEDS)
+    for index in range(count):
+        where = index / float(count)
         level = 0.0
         thickness = 0.0
-        for start, speed, hot in OOZE_BLOBS:
+        for start, speed, hot in blobs:
             centre = (start + phase * speed) % 1.0
             # Round the bar, so a blob leaves one end and returns at the other
             # rather than turning back at a wall that is not there.
             gap = abs(where - centre)
             gap = min(gap, 1.0 - gap)
-            near = math.exp(-(gap / OOZE_REACH) ** 2)
+            near = math.exp(-(gap / reach) ** 2)
             level += near
             thickness += hot * near
         # The blobs add up, so where two meet it is brighter and its colour is
@@ -551,7 +608,8 @@ class Renderer:
 
     def __init__(self, led_count, mapping=MAPPING_STRETCH, reverse=False,
                  max_brightness=255, min_brightness=0, gamma=1.0,
-                 speed_scale=1.0, patrol_dots=1, temperature=None,
+                 speed_scale=1.0, patrol_dots=1, detail=1.0,
+                 temperature=None,
                  temperature_range=DEFAULT_TEMPERATURE_RANGE, load=None,
                  rainbow_shows=None, load_cpu_colour=None,
                  load_gpu_colour=None, load_swap=False):
@@ -574,6 +632,38 @@ class Renderer:
         self.min_brightness = max(0, min(int(min_brightness), 255))
         self.speed_scale = speed_scale
         self.patrol_dots = max(1, min(int(patrol_dots), 8))
+        # How fine the picture is, against the seventeen LEDs of the bar.
+        #
+        # The effects that have a shape draw a fixed number of features over
+        # the whole strip: fire is three waves of 0.9, 2.3 and 5.7 humps, and
+        # ooze is three blobs. A strip with four times the LEDs thus got the
+        # same three blobs over four times the length, and each one was four
+        # times as wide. Measured on the Nanoleaf board at 64 LEDs: the same
+        # 10, 4 and 3 features as the bar, and a quarter of the step from one
+        # LED to the next. The colour range was the same, so it was not less
+        # colour. It was the same colour over a longer distance, which is
+        # what a person reads as one flat picture.
+        #
+        # This multiplies the count of those features, so that a feature is
+        # as many LEDs wide as it is on the bar. The rainbow and the gauges
+        # ignore it: one sweep of the hue along the strip is the effect, and
+        # a reading is not a texture.
+        #
+        # The default of 1.0 is the bar. A caller that draws a longer strip
+        # asks for more, and nothing changes for a caller that does not ask.
+        self.detail = max(1.0, min(float(detail), DETAIL_MAX))
+        # And how many samples those effects draw.
+        #
+        # The two go together and cannot be set apart. More features on the
+        # same seventeen samples give an alias and not detail. At the detail
+        # of the Nanoleaf board the fastest wave of the fire has 21 humps,
+        # and seventeen samples carry eight. So a caller that asks for a
+        # finer picture is drawn at the count that carries it, and the
+        # stretch in _map_to_strip then has nothing left to do.
+        #
+        # At the default this is exactly shim.LOGICAL_LEDS, so every effect
+        # gives the bar what it always gave.
+        self.logical_count = int(round(shim.LOGICAL_LEDS * self.detail))
         # An object with .celsius(), or None if nothing reads a sensor.
         self.temperature = temperature
         self.temperature_range = temperature_range

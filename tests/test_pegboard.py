@@ -415,6 +415,40 @@ class DrawingTest(unittest.TestCase):
         self.assertEqual(wire[0], wire[-1])
         self.assertEqual(wire[31], wire[32])
 
+    def test_the_board_asks_for_a_picture_as_fine_as_it_is_long(self):
+        """The effects have a fixed number of features over the strip.
+
+        This board got the same three blobs as a bar of seventeen, each one
+        four times as wide, which is what a person reads as one flat colour.
+        See render.Renderer.detail.
+        """
+        values = dict(pegboard.DEFAULTS, EFFECT="fire")
+        renderer = pegboard.build_renderer(values)
+        self.assertAlmostEqual(renderer.detail,
+                               pegboard.LEDS / float(shim.LOGICAL_LEDS),
+                               places=6)
+        self.assertEqual(renderer.logical_count, pegboard.LEDS)
+
+    def test_a_folded_effect_asks_for_the_half_it_draws(self):
+        """The wave is drawn on 32 LEDs, and fold() puts the other 32 on."""
+        values = dict(pegboard.DEFAULTS, EFFECT=pegboard.SHOWS_RAINBOW_WAVE)
+        renderer = pegboard.build_renderer(values)
+        self.assertAlmostEqual(
+            renderer.detail,
+            pegboard.LEDS / 2.0 / float(shim.LOGICAL_LEDS), places=6)
+
+    def test_the_shaped_effects_have_more_to_look_at_than_the_bar(self):
+        """Measured on the wire, and not on the renderer on its own."""
+        def hills(effect):
+            board = self._run(dict(pegboard.DEFAULTS, EFFECT=effect,
+                                   BRIGHTNESS=255))
+            wire = triples(board.sent[0][3:])
+            levels = [max(pixel) for pixel in wire]
+            steps = [b - a for a, b in zip(levels, levels[1:])]
+            return sum(1 for a, b in zip(steps, steps[1:]) if a * b < 0)
+        for effect in ("fire", "aurora", "ooze"):
+            self.assertGreater(hills(effect), 6, effect)
+
     def test_the_patrol_puts_one_lit_led_on_the_wire(self):
         """The service loop, and not patrol_pixels on its own.
 

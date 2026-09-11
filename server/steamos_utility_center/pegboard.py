@@ -655,6 +655,14 @@ def build_renderer(values):
         led_count=logical_leds(values["EFFECT"]),
         gamma=values["GAMMA"],
         speed_scale=values["SPEED"],
+        # The picture is as fine as the board is long.
+        #
+        # The effects that have a shape draw a fixed number of features over
+        # the whole strip, so this board got the same three blobs as a bar of
+        # seventeen and each one was four times as wide. Measured over sixty
+        # frames: the same 10, 4 and 3 features as the bar, and a quarter of
+        # its step from one LED to the next. See render.Renderer.detail.
+        detail=logical_leds(values["EFFECT"]) / float(shim.LOGICAL_LEDS),
         temperature=(temperature.TemperatureSource(
             path=values["TEMPERATURE_SENSOR"])
             if shows == render.SHOWS_TEMPERATURE else None),
