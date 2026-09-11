@@ -645,6 +645,33 @@ class Board:
 # file.
 
 
+# The curve that two of the effects draw through, on top of GAMMA.
+#
+# Each of those two keeps a floor: AURORA_FLOOR is 0.35, so the curtain thins
+# and does not go out, and the blobs of the ooze overlap, so the gaps between
+# them rarely come near OOZE_FLOOR. On a bar behind a case that floor is the
+# effect. On this board the two sides light each other, so the floor never
+# reads as dark and both effects sit in their bright half.
+#
+# Measured over 120 frames at full brightness. The dark tenth of the aurora
+# is at 38 of 255 and its bright tenth at 184, a ratio of 4.8. At 2.5 the two
+# are 6 and 156, a ratio of 26. The ooze goes from 7.0 to 59.
+#
+# The fire keeps 1.0. It has hard colour stops and no floor, and 2.5 takes its
+# mean from 106 to 59 and its bright tenth from 165 to 105. It goes dim and
+# not deep.
+#
+# A gamma is an exponent, so two of them are one multiplication. GAMMA still
+# works on top of this: it moves these two, and it moves every effect that
+# this table leaves out.
+TONE_GAMMA = {render.SHOWS_AURORA: 2.5, render.SHOWS_OOZE: 2.5}
+
+
+def tone_gamma(effect):
+    """The curve of that effect, before the GAMMA of the board."""
+    return TONE_GAMMA.get(effect, 1.0)
+
+
 def build_renderer(values):
     """The renderer for the board, at the count its effect asks for."""
     shows = drawn_by(values["EFFECT"])
@@ -653,7 +680,7 @@ def build_renderer(values):
         # the renderer draws. They differ for the wave: it is drawn by the
         # rainbow, on half the LEDs, and fold() puts the other half on.
         led_count=logical_leds(values["EFFECT"]),
-        gamma=values["GAMMA"],
+        gamma=values["GAMMA"] * tone_gamma(values["EFFECT"]),
         speed_scale=values["SPEED"],
         # The picture is as fine as the board is long.
         #

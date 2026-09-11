@@ -449,6 +449,75 @@ class DrawingTest(unittest.TestCase):
         for effect in ("fire", "aurora", "ooze"):
             self.assertGreater(hills(effect), 6, effect)
 
+    def _tones(self, effect, gamma=1.0, shots=120):
+        """The dark tenth, the bright tenth and the mean of the luminance."""
+        values = dict(pegboard.DEFAULTS, EFFECT=effect, GAMMA=gamma,
+                      BRIGHTNESS=255)
+        renderer = pegboard.build_renderer(values)
+        snapshot = pegboard.build_snapshot(values)
+        dark = bright = mean = 0.0
+        for tick in range(shots):
+            wire = triples(renderer.render(snapshot, tick * 0.25,
+                                           pegboard.drawn_by(effect)))
+            levels = sorted(0.2126 * red + 0.7152 * green + 0.0722 * blue
+                            for red, green, blue in wire)
+            count = len(levels)
+            dark += levels[int(count * 0.1)]
+            bright += levels[int(count * 0.9)]
+            mean += sum(levels) / count
+        return dark / shots, bright / shots, mean / shots
+
+    def test_the_two_soft_effects_draw_through_a_steeper_curve(self):
+        """Each of those two keeps a floor, and on this board it never reads
+        as dark: the two sides light each other. See pegboard.TONE_GAMMA."""
+        for effect in (render.SHOWS_AURORA, render.SHOWS_OOZE):
+            self.assertEqual(pegboard.tone_gamma(effect), 2.5, effect)
+            dark, bright, _mean = self._tones(effect)
+            self.assertGreater(bright / dark, 15.0,
+                               "%s: %.1f to %.1f" % (effect, dark, bright))
+
+    def test_the_fire_and_the_rainbow_keep_their_own(self):
+        """The fire has hard colour stops and no floor. At 2.5 its mean went
+        from 106 to 59 and its bright tenth from 165 to 105, so it went dim
+        and not deep."""
+        for effect in (render.SHOWS_FIRE, render.SHOWS_RAINBOW):
+            self.assertEqual(pegboard.tone_gamma(effect), 1.0, effect)
+            self.assertNotIn(effect, pegboard.TONE_GAMMA, effect)
+            dark, bright, _mean = self._tones(effect)
+            self.assertLess(bright / dark, 8.0,
+                            "%s: %.1f to %.1f" % (effect, dark, bright))
+
+    def test_the_curve_is_the_gamma_of_the_board_times_its_own(self):
+        """A gamma is an exponent, so two of them are one multiplication.
+
+        GAMMA thus still works: it moves these two, and it moves every
+        effect that the table leaves out.
+        """
+        values = dict(pegboard.DEFAULTS, EFFECT=render.SHOWS_AURORA,
+                      BRIGHTNESS=255)
+        mine = pegboard.build_renderer(values)
+        same = render.Renderer(
+            led_count=pegboard.LEDS,
+            gamma=pegboard.TONE_GAMMA[render.SHOWS_AURORA],
+            speed_scale=values["SPEED"],
+            detail=pegboard.LEDS / float(shim.LOGICAL_LEDS),
+            rainbow_shows=render.SHOWS_AURORA)
+        snapshot = pegboard.build_snapshot(values)
+        for tick in range(8):
+            self.assertEqual(mine.render(snapshot, tick * 0.4,
+                                         render.SHOWS_AURORA),
+                             same.render(snapshot, tick * 0.4,
+                                         render.SHOWS_AURORA))
+
+    def test_the_setting_of_the_board_still_moves_those_two(self):
+        plain = self._tones(render.SHOWS_AURORA, gamma=1.0, shots=40)
+        steep = self._tones(render.SHOWS_AURORA, gamma=2.0, shots=40)
+        self.assertLess(steep[2], plain[2])
+
+    def test_the_board_ships_with_no_curve_of_its_own(self):
+        """Or a person who reads the file adds this curve a second time."""
+        self.assertEqual(pegboard.DEFAULTS["GAMMA"], 1.0)
+
     def test_the_patrol_puts_one_lit_led_on_the_wire(self):
         """The service loop, and not patrol_pixels on its own.
 
