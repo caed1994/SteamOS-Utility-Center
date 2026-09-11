@@ -349,7 +349,7 @@ PEGBOARD = [
         # The board's own list and not the bar's: the load gauge is two
         # coloured stubs on a board. See pegboard.EFFECTS.
         ("PEGBOARD_EFFECT", "Effect", "named",
-         ledpanel.rainbow_choices(pegboard.EFFECTS), None, None),
+         ledpanel.pegboard_effects(), None, None),
         ("PEGBOARD_BRIGHTNESS", "Brightness", "int", 0, 255, 1),
         ("PEGBOARD_SPEED", "Effect speed", "float", 0.1, 4.0, 0.1),
         # What the colour picker of Steam gives the bar. The board has no

@@ -600,6 +600,7 @@ Quick Access menu.
 | Section | What it holds |
 | ------- | ------------- |
 | LED bar | the rainbow slot, the desktop scene, notifications |
+| Nanoleaf | the effect of the board, and whether to light it |
 | CPU power | the governor and the energy preference |
 | Graphics card | the power limit, the offsets, the clock limits and Cooling Boost |
 | Television | each switch of the HDMI CEC toolkit |
@@ -614,6 +615,12 @@ is in this repository.
 
 The graphics card takes two presses: one button sends the sliders to the card,
 and a second keeps them. **Cooling Boost** takes one press and confirms itself.
+
+No section here has a slider that writes while it moves. Every write puts a
+file on disk and restarts a service, and the steps a slider passes are a
+hundred writes: systemd refuses the sixth start of a unit in ten seconds. So
+the brightness and the speed of the board are on its page in Desktop Mode,
+where one Apply sends them.
 **Take ownership** stays in the panel.
 
 To build the page again after a change:

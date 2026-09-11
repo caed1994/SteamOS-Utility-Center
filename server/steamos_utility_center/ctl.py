@@ -48,6 +48,7 @@ from . import config as config_module
 from . import lact
 from . import modules
 from . import mounts
+from . import pegboard
 from . import power
 from . import shim
 from . import syssettings
@@ -291,6 +292,39 @@ def power_write(updates, may_prompt=False, run=None, home=None):
         os.unlink(staged)
 
 
+def pegboard_read(home=None):
+    """The settings of the Nanoleaf board, which its service reads at start."""
+    return pegboard.read()
+
+
+def pegboard_offers():
+    """What the board can draw, and whether one is plugged in.
+
+    The list comes from the module, so an effect added there reaches Game
+    Mode with no change here. "here" is the answer to the first question a
+    person asks when the board stays dark, and it costs one read of sysfs.
+    """
+    return {
+        "EFFECT": [{"value": value, "label": label}
+                   for label, value in pegboard.choices()],
+        "here": pegboard.find_device() is not None,
+        "leds": pegboard.LEDS,
+        "max_fps": pegboard.MAX_FPS,
+    }
+
+
+def pegboard_write(updates, may_prompt=False, run=None, home=None):
+    """Writes the settings of the board and puts them into effect."""
+    values = pegboard_read()
+    values.update(updates)
+    pegboard.validate(values)           # raises PegboardError
+    staged = stage(pegboard.text(values), STAGED["pegboard"])
+    try:
+        return privileged([APPLY_PEGBOARD, staged], may_prompt, run)
+    finally:
+        os.unlink(staged)
+
+
 def keyboard_read(home=None):
     """The keyboard layout, which is in the home directory of the user."""
     return syssettings.read(home)
@@ -470,6 +504,8 @@ AREA = {
               "write": strip_write, "keys": tuple(config_module.DEFAULTS)},
     "power": {"read": power_read, "offers": power_offers,
               "write": power_write, "keys": tuple(power.DEFAULTS)},
+    "pegboard": {"read": pegboard_read, "offers": pegboard_offers,
+                 "write": pegboard_write, "keys": tuple(pegboard.DEFAULTS)},
     "keyboard": {"read": keyboard_read, "offers": keyboard_offers,
                  "write": keyboard_write, "keys": tuple(syssettings.DEFAULTS)},
     "drives": {"read": drives_read, "offers": drives_offers,

@@ -1272,9 +1272,6 @@ def rainbow_choices(names):
         "fire": "Fire",
         "aurora": "Aurora",
         "ooze": "Ooze",
-        # The Nanoleaf board only. It is the rainbow on half the board, put
-        # on both sides. capitalize() would make it "Rainbow-wave".
-        "rainbow-wave": "Rainbow wave",
     }
     return tuple((labels.get(name, name.capitalize()), name) for name in names)
 
@@ -1418,6 +1415,16 @@ def read_power_config(path=None):
 # The text of the CPU settings file. It is in the power module, because the
 # program that applies the file and steamos-utility-centerctl write it also.
 power_config_text = power_module.text
+
+
+def pegboard_effects():
+    """The effects of the Nanoleaf board, each with its name.
+
+    From the module and not from a table here: Game Mode shows the same list,
+    through the control command, and it reads the same table. See
+    pegboard.LABELS.
+    """
+    return pegboard_module.choices()
 
 
 def read_pegboard_config(path=None):

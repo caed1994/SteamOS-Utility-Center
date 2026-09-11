@@ -84,6 +84,25 @@ function words(value: string): string {
   return SCENE_WORDS[value] ?? value;
 }
 
+// The same, for a list that arrives with its own labels.
+//
+// SCENE_WORDS above is this file's copy of the words for the scenes of the
+// LED bar. The Nanoleaf board does not get a second copy: the command sends
+// {value, label} for its effects, from the one table that the panel also
+// reads. See pegboard.LABELS.
+function labelled(offered: unknown): { data: string; label: string }[] {
+  if (!Array.isArray(offered)) {
+    return [];
+  }
+  return offered
+    .filter((one) => one && typeof one === "object")
+    .map((one) => one as { value?: unknown; label?: unknown })
+    .map((one) => ({
+      data: String(one.value ?? ""),
+      label: String(one.label ?? one.value ?? ""),
+    }));
+}
+
 function options(offered: unknown): { data: string; label: string }[] {
   if (!Array.isArray(offered)) {
     return [];
@@ -143,6 +162,7 @@ function Choice(props: {
 const held = {
   status: null as Status | null,
   strip: null as Area | null,
+  pegboard: null as Area | null,
   power: null as Area | null,
   cec: null as Area | null,
   gpu: null as Area | null,
@@ -185,18 +205,20 @@ function Content() {
   // seconds it replaced the full answer with one that had none, and every
   // switch on the page went to off by itself.
   const refresh = async () => {
-    const [whole, one, two, three, four] = await Promise.all([
+    const [whole, one, two, three, four, five] = await Promise.all([
       getFullStatus(),
       getArea("strip"),
       getArea("power"),
       getArea("cec"),
       getArea("gpu"),
+      getArea("pegboard"),
     ]);
     held.status = whole;
     held.strip = one;
     held.power = two;
     held.cec = three;
     held.gpu = four;
+    held.pegboard = five;
     draw();
   };
 
@@ -257,6 +279,8 @@ function Content() {
     () => options(held.strip?.offers?.RAINBOW_SHOWS), [held.strip]);
   const sceneOptions = useMemo(
     () => options(held.strip?.offers?.DESKTOP_SCENE), [held.strip]);
+  const effectOptions = useMemo(
+    () => labelled(held.pegboard?.offers?.EFFECT), [held.pegboard]);
   const governorOptions = useMemo(
     () => options((held.power?.offers ?? {}).governors), [held.power]);
   const eppOptions = useMemo(
@@ -347,6 +371,7 @@ function Content() {
   };
 
   const settings = (held.strip?.settings ?? {}) as Record<string, unknown>;
+  const board = (held.pegboard?.settings ?? {}) as Record<string, unknown>;
   const cpu = (held.power?.settings ?? {}) as Record<string, unknown>;
   const offered = (held.power?.offers ?? {}) as Record<string, unknown>;
   const switches = held.status?.cec_features ?? {};
@@ -373,6 +398,11 @@ function Content() {
                         "rainbow");
   const scene = shown("strip", "DESKTOP_SCENE", settings.DESKTOP_SCENE,
                       "steam");
+  const effect = shown("pegboard", "EFFECT", board.EFFECT, "rainbow");
+  // Whether a board answered on the USB bus. The settings are kept either
+  // way, and a person in Game Mode cannot look in /sys to find out why the
+  // board is dark.
+  const boardHere = Boolean(held.pegboard?.offers?.here);
   const governor = shown("power", "CPU_GOVERNOR", cpu.CPU_GOVERNOR);
   const preference = shown("power", "CPU_EPP", cpu.CPU_EPP);
 
@@ -439,6 +469,36 @@ function Content() {
             checked={Boolean(settings.NOTIFY)}
             disabled={held.busy || !held.strip?.ok}
             onChange={(on: boolean) => write("strip", { NOTIFY: on })}
+          />
+        </PanelSectionRow>
+      </PanelSection>
+      )}
+
+      {has("pegboard") && (
+      <PanelSection title="Nanoleaf">
+        {!boardHere && (
+          <PanelSectionRow>
+            <div style={{ fontSize: "0.8em", opacity: 0.75 }}>
+              No board answered on the USB bus. What you set here is kept, and
+              the board draws it when you plug one in.
+            </div>
+          </PanelSectionRow>
+        )}
+        <PanelSectionRow>
+          <Choice
+            label="Effect"
+            options={effectOptions}
+            value={effect}
+            disabled={held.busy || !held.pegboard?.ok}
+            onPick={(value) => pick("pegboard", "EFFECT", value)}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ToggleField
+            label="Light the board"
+            checked={Boolean(board.ENABLED)}
+            disabled={held.busy || !held.pegboard?.ok}
+            onChange={(on: boolean) => write("pegboard", { ENABLED: on })}
           />
         </PanelSectionRow>
       </PanelSection>

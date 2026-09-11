@@ -273,6 +273,40 @@ class PageTest(unittest.TestCase):
             self.assertNotIn("write(", one, one[:300])
             self.assertNotIn("setArea(", one, one[:300])
 
+    def test_the_board_has_a_section_of_its_own(self):
+        """The Nanoleaf board, behind the module that brings it.
+
+        A section for a module that is not installed is a row of controls
+        that can apply nothing, and Game Mode is the one screen where nobody
+        can look in /var/lib to find out why.
+        """
+        self.assertIn('has("pegboard")', self.text)
+        self.assertIn('title="Nanoleaf"', self.text)
+        self.assertIn('pick("pegboard", "EFFECT", value)', self.text)
+
+    def test_the_board_has_no_slider_either(self):
+        """Its brightness and its speed are on the page in Desktop Mode.
+
+        The same reason as every other slider here: each write restarts the
+        service, and the steps a slider passes are a hundred writes. The
+        board is on the page of the panel, where a slider costs one Apply.
+        """
+        self.assertNotIn("PEGBOARD", self.text)
+        for part in self.text.split("<SliderField")[1:]:
+            one = part[:part.index("/>")]
+            self.assertNotIn("pegboard", one, one[:200])
+
+    def test_the_board_names_its_effects_from_the_command(self):
+        """And not from a table in this file.
+
+        SCENE_WORDS here is this file's copy of the words for the scenes of
+        the LED bar. The board does not get a second copy: the command sends
+        a label with each effect, from the one table the panel reads.
+        """
+        self.assertIn("labelled(held.pegboard?.offers?.EFFECT)", self.text)
+        for name in ("Rainbow wave", "rainbow-wave"):
+            self.assertNotIn(name, self.text)
+
     def test_the_card_is_sent_by_a_button_and_kept_by_a_second_one(self):
         """LACT's own safety, and it must not be worked around.
 

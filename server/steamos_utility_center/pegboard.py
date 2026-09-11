@@ -243,6 +243,27 @@ EFFECTS = tuple(sorted(
     {name for name in render.RAINBOW_CHOICES if name != render.SHOWS_LOAD}
     | {SHOWS_RAINBOW_WAVE}))
 
+# A name for each, for a menu. It is here and not in the window, because the
+# window is not the only thing that shows this list: Game Mode asks the
+# control command for it, and two copies of a name become two names.
+#
+# capitalize() covers a name that this table leaves out, which is right for
+# every one word name and wrong for "rainbow-wave".
+LABELS = {
+    "rainbow": "Rainbow",
+    SHOWS_RAINBOW_WAVE: "Rainbow wave",
+    "fire": "Fire",
+    "aurora": "Aurora",
+    "ooze": "Ooze",
+    "temperature": "Temperature",
+}
+
+
+def choices():
+    """The effects of the board, each with the name a person reads."""
+    return tuple((LABELS.get(name, name.capitalize()), name)
+                 for name in EFFECTS)
+
 
 def drawn_by(effect):
     """Which effect of the renderer draws this one."""

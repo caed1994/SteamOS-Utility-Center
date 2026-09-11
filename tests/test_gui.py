@@ -1619,10 +1619,17 @@ class PanelSettingsTest(unittest.TestCase):
             self.assertEqual(labels["rainbow"], "Rainbow")
 
     def test_the_board_s_own_effect_has_a_name_a_person_reads(self):
-        """capitalize() would make "rainbow-wave" into "Rainbow-wave"."""
+        """capitalize() would make "rainbow-wave" into "Rainbow-wave".
+
+        The names come from pegboard.LABELS and not from a table in the
+        window, because Game Mode shows the same list through the control
+        command and two copies of a name become two names.
+        """
         labels = dict((value, label) for label, value
-                      in ledpanel.rainbow_choices(pegboard.EFFECTS))
+                      in ledpanel.pegboard_effects())
         self.assertEqual(labels[pegboard.SHOWS_RAINBOW_WAVE], "Rainbow wave")
+        self.assertEqual(labels, dict((value, label) for label, value
+                                      in pegboard.choices()))
 
     def test_no_page_offers_a_frame_rate(self):
         """Neither the board nor the bar. The rate is a number that has to be
