@@ -92,16 +92,16 @@ MIN_GAP_SECONDS = 0.002
 
 # The most frames a second this board takes.
 #
-# Measured on one: 60 flashed single LEDs and 30 was clean. The ceiling is
-# somewhere between the two and nobody bisected it. The rate that works is
-# the one this permits.
+# Measured on one, by raising the rate until the LEDs flashed again: 40 is
+# the last clean value and 45 is not. The rate that works is the one this
+# permits.
 #
 # It is not a limit of the link. The endpoints poll every millisecond and a
 # frame is four reports, so the wire carries 250. It is what the board does
 # with a frame after it arrives, and it answers before it draws the frame:
 # the answer comes for every frame at 60 as well, and the LEDs are still
 # wrong.
-MAX_FPS = 30
+MAX_FPS = 40
 
 # How many frames with no answer before this says so in the log. One second at
 # sixty frames a second.
@@ -363,9 +363,9 @@ def validate(values):
     if not 0.1 <= values["GAMMA"] <= 5.0:
         raise PegboardError("GAMMA must be between 0.1 and 5")
     if not 1 <= values["FPS"] <= MAX_FPS:
-        raise PegboardError("FPS must be between 1 and %d. A board measured "
-                            "at 60 flashed single LEDs, and 30 was clean."
-                            % MAX_FPS)
+        raise PegboardError("FPS must be between 1 and %d. Above that a "
+                            "board flashed single LEDs, and %d was the last "
+                            "clean rate measured on one." % (MAX_FPS, MAX_FPS))
     if not 1 <= values["IDLE_FPS"] <= values["FPS"]:
         raise PegboardError("IDLE_FPS must be between 1 and FPS")
     return values

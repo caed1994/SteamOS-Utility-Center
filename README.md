@@ -346,8 +346,10 @@ frames a second with an answer for each one.
 
 The answer means the message arrived and not that the LEDs are drawn. At 60
 frames a second every frame was answered and single LEDs still flashed with a
-byte meant for another one. So 30 is the most this module sends, and it
-refuses more: the ceiling is somewhere between the two and nobody bisected it, and 30 is the rate a board was measured drawing cleanly.
+byte meant for another one. The rate was raised until the flashing came back:
+40 is the last clean one. `FPS` is capped there, and the panel offers no
+slider for it, because a rate above it does not look different. It looks
+broken.
 
 The service also leaves a gap between the last report of one frame and the
 first of the next, even when a frame ran over its budget. Two frames sent back
@@ -683,7 +685,7 @@ Each option is also a command line option and an environment variable
 | `BAUD` | `230400` | the preferred baud rate |
 | `BAUD_AUTODETECT` | `1` | try the other firmware baud rates when there is no reply |
 | `DEVICE` | `/dev/valve-leds-shim` | the character device of the kernel module |
-| `FPS` / `IDLE_FPS` | `60` / `4` | the frame rate during an animation and when idle |
+| `FPS` / `IDLE_FPS` | `60` / `4` | the frame rate during an animation and when idle. In the file only: the panel has no slider for either |
 | `LOG_LEVEL` | `info` | `debug` writes each state change to the log |
 
 | Notification option | Default | Meaning |

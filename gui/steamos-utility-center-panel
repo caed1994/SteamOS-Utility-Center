@@ -274,8 +274,6 @@ ADVANCED = [
         # Whole seconds. This is the time before the bar shows the same
         # notification again, and a user does not think in half seconds.
         ("NOTIFY_REPEAT_GAP", "Notify repeat cooldown (s)", "int", 0, 120, 1),
-        ("FPS", "Frames per second", "int", 1, 240, 1),
-        ("IDLE_FPS", "Frames per second when idle", "int", 1, 240, 1),
         ("LOG_LEVEL", "Log level", "choice",
          ("debug", "info", "warning", "error"), None, None),
     ]),
@@ -334,6 +332,10 @@ POWER = [
 PEGBOARD_NOTE = (
     "The board runs on its own. Nothing that Steam shows on the LED bar "
     "reaches it, and removing the LED bar module leaves it lit.\n\n"
+    "The frame rate is in the settings file and not on this page. It is not "
+    "a matter of taste: above 40 a board draws single LEDs with the wrong "
+    "byte, and a slider that goes there is a slider that breaks the "
+    "picture.\n\n"
     "The two sides: Mirror shows the same on each side, from the bottom "
     "upwards, which is what makes the fire rise on both of them. Chain uses "
     "the 64 LEDs in the order the hardware gives them, up the left side and "
@@ -370,14 +372,6 @@ PEGBOARD = [
          60, 90, 5),
         ("PEGBOARD_TEMPERATURE_SENSOR", "Temperature sensor", "sensor",
          None, None, None),
-    ]),
-    ("Frames", [
-        # 30 is what the board takes and not what the link carries. The
-        # number is written out because the tests read this table as text
-        # and a name is not a number to them; it is pinned to
-        # pegboard.MAX_FPS by a test of its own. See test_gui.py.
-        ("PEGBOARD_FPS", "Frames a second", "int", 1, 30, 1),
-        ("PEGBOARD_IDLE_FPS", "While nothing moves", "int", 1, 30, 1),
     ]),
 ]
 
@@ -4207,15 +4201,6 @@ class Panel:
                            else self._value_for(key, raw)
                            if kind in ("sensor", "named", "power", "theme")
                            else str(raw))
-        # The idle rate cannot exceed the active one, which two independent
-        # sliders cannot express. Pulling FPS below IDLE_FPS is an obvious
-        # intention, so follow it rather than refuse the adjustment.
-        if values["IDLE_FPS"] > values["FPS"]:
-            values["IDLE_FPS"] = values["FPS"]
-            self.vars["IDLE_FPS"][0].set(float(values["FPS"]))
-            self._write("Idle frame rate lowered to %d to stay under the "
-                        "active rate.\n" % values["FPS"])
-
         merged = dict(self.config)
         merged.update(values)
         config_module.validate(merged)      # raises ConfigError

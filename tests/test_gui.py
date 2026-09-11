@@ -1581,21 +1581,6 @@ class PanelSettingsTest(unittest.TestCase):
         for key in self._settings():
             self.assertIn(key, known, key)
 
-    def test_the_frame_sliders_stop_where_the_board_does(self):
-        """The table holds the number and the module holds the rule.
-
-        Written out because this file reads the table as text. A test is what
-        keeps the two the same, which is how every other copy in this window
-        is held. See pegboard.MAX_FPS, and what it was measured against.
-        """
-        panel = self._panel()
-        table = self._assignments(panel).get("PEGBOARD")
-        tops = {row.elts[0].value: row.elts[4].value
-                for group in table.elts for row in group.elts[1].elts
-                if row.elts[2].value == "int"}
-        self.assertEqual(tops["PEGBOARD_FPS"], pegboard.MAX_FPS)
-        self.assertEqual(tops["PEGBOARD_IDLE_FPS"], pegboard.MAX_FPS)
-
     def test_the_pegboard_page_names_the_settings_pegboard_owns(self):
         """Both directions, the way the System page is pinned to its module.
 
@@ -1613,7 +1598,18 @@ class PanelSettingsTest(unittest.TestCase):
             self.assertTrue(key.startswith("PEGBOARD_"), key)
             self.assertIn(key[len("PEGBOARD_"):], pegboard.DEFAULTS, key)
         shown = {key[len("PEGBOARD_"):] for key in keys}
-        self.assertEqual(sorted(set(pegboard.DEFAULTS) - shown), ["LOG_LEVEL"])
+        # LOG_LEVEL is for a person reading the journal. The two frame rates
+        # are in the file because above MAX_FPS the board draws single LEDs
+        # with the wrong byte, and a slider that reaches there breaks the
+        # picture. See pegboard.MAX_FPS.
+        self.assertEqual(sorted(set(pegboard.DEFAULTS) - shown),
+                         ["FPS", "IDLE_FPS", "LOG_LEVEL"])
+
+    def test_no_page_offers_a_frame_rate(self):
+        """Neither the board nor the bar. The rate is a number that has to be
+        right, and a slider invites a person to find that out the hard way."""
+        for key in self._settings():
+            self.assertNotIn("FPS", key, key)
 
     def test_the_system_page_names_the_settings_syssettings_owns(self):
         """The System page is written out; this is what pins it to the module.
@@ -1674,15 +1670,6 @@ class PanelSettingsTest(unittest.TestCase):
             for edge in (low, high):
                 candidate = dict(config_module.DEFAULTS)
                 candidate[key] = int(edge) if kind == "int" else float(edge)
-                # The two frame rates depend on each other, and the panel
-                # corrects that with a change to the idle rate. So this test
-                # uses the same rule and does not treat the limits as
-                # independent.
-                if key == "IDLE_FPS":
-                    candidate["FPS"] = max(candidate["FPS"], candidate[key])
-                if key == "FPS":
-                    candidate["IDLE_FPS"] = min(candidate["IDLE_FPS"],
-                                                candidate[key])
                 try:
                     config_module.validate(candidate)
                 except config_module.ConfigError as exc:
