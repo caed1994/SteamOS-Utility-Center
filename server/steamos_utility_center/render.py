@@ -720,9 +720,19 @@ class Renderer:
         of the output. A gauge whose brightness is its reading does not take
         the setting that dims each other effect. See rainbow_takes.
         """
-        frame = self._map_to_strip(
-            self.render_logical(snapshot, elapsed, shows))
+        return self.payload(
+            self._map_to_strip(self.render_logical(snapshot, elapsed, shows)),
+            snapshot, shows)
 
+    def payload(self, frame, snapshot, shows=None):
+        """Returns the RGB bytes of one frame of pixels.
+
+        The brightness, the gamma and the clamp are here. A caller that draws
+        its own frame at the count of its own strip thus asks for this and
+        not for render(): the 17 logical LEDs and the stretch are in there,
+        and a dot that is one LED wide does not survive them. See
+        pegboard.patrol_pixels.
+        """
         if not snapshot.enabled or snapshot.effect == shim.EFFECT_OFF:
             level = 0
         elif (self._substitute(snapshot, shows) is not None

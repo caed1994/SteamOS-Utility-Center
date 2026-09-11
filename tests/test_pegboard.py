@@ -230,8 +230,9 @@ class ConfigTest(unittest.TestCase):
         layout of its own and not only a number of its own."""
         self.assertEqual(pegboard.LEDS, 64)
         self.assertNotIn("LEDS", pegboard.DEFAULTS)
-        with self.assertRaises(pegboard.PegboardError):
-            pegboard.read(self._write("LEDS=32\n"))
+        # And a file that still names it is read. See RETIRED.
+        self.assertEqual(pegboard.read(self._write("LEDS=32\n"))["FPS"],
+                         pegboard.DEFAULTS["FPS"])
 
     def test_the_effects_are_the_renderer_s_without_the_load_gauge(self):
         """Derived and not written down, so a new effect reaches the board.
@@ -284,10 +285,29 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(pegboard.PegboardError):
             pegboard.validate(dict(pegboard.DEFAULTS, COLOR="chartreuse"))
 
-    def test_the_dots_are_between_one_and_eight(self):
-        for dots in (0, 9):
-            with self.assertRaises(pegboard.PegboardError):
-                pegboard.validate(dict(pegboard.DEFAULTS, PATROL_DOTS=dots))
+    def test_the_patrol_is_one_dot_and_not_a_number_of_them(self):
+        self.assertNotIn("PATROL_DOTS", pegboard.DEFAULTS)
+        self.assertIn("PATROL_DOTS", pegboard.RETIRED)
+
+    def test_a_setting_this_board_dropped_is_read_and_ignored(self):
+        """A file keeps the line a person wrote in it.
+
+        A version that refuses to start because of an option it dropped
+        itself turns its own change into a board that stays dark, and the
+        message names a key that no documentation mentions any more.
+        """
+        values = pegboard.read(self._write(
+            "BRIGHTNESS=200\nPATROL_DOTS=4\nSHAPE=mirror\n"
+            "LOAD_SWAP=1\nLOAD_CPU_COLOR=#ff6e00\n"
+            "LOAD_GPU_COLOR=#1a9fff\n"))
+        self.assertEqual(values["BRIGHTNESS"], 200)
+        for gone in pegboard.RETIRED:
+            self.assertNotIn(gone, values, gone)
+
+    def test_a_name_that_was_never_a_setting_is_still_refused(self):
+        """A typed name is a fault, and silence about it is worse."""
+        with self.assertRaises(pegboard.PegboardError):
+            pegboard.read(self._write("BRIGTHNESS=200\n"))
 
     def test_the_load_gauge_is_refused_and_its_settings_are_gone(self):
         with self.assertRaises(pegboard.PegboardError):
@@ -395,24 +415,67 @@ class DrawingTest(unittest.TestCase):
         self.assertEqual(wire[0], wire[-1])
         self.assertEqual(wire[31], wire[32])
 
-    def test_the_patrol_lights_dots_and_not_the_whole_board(self):
+    def test_the_patrol_puts_one_lit_led_on_the_wire(self):
+        """The service loop, and not patrol_pixels on its own.
+
+        The loop picks the drawing of this module for the effects in
+        DRAWN_HERE and the renderer for the rest. A patrol that goes through
+        the renderer is a dot 20 LEDs wide.
+        """
         board = self._run(dict(pegboard.DEFAULTS,
                                EFFECT=pegboard.SHOWS_PATROL,
                                COLOR="#ff6e00", BRIGHTNESS=255))
         wire = triples(board.sent[0][3:])
-        lit = sum(1 for pixel in wire if any(pixel))
-        self.assertGreater(lit, 0)
-        self.assertLess(lit, len(wire) // 2)
+        self.assertEqual(len(wire), pegboard.LEDS)
+        self.assertEqual(sum(1 for pixel in wire if any(pixel)), 1)
 
-    def test_more_dots_light_more_of_it(self):
-        def bright(dots):
-            board = self._run(dict(pegboard.DEFAULTS,
-                                   EFFECT=pegboard.SHOWS_PATROL,
-                                   PATROL_DOTS=dots, COLOR="#ff6e00",
-                                   BRIGHTNESS=255))
-            return sum(1 for pixel in triples(board.sent[0][3:])
-                       if max(pixel) > 128)
-        self.assertGreater(bright(4), bright(1))
+    def test_the_patrol_lights_one_led_and_no_more(self):
+        """One dot, and one LED wide.
+
+        The renderer draws 17 logical LEDs and stretches them to the strip,
+        which made this dot 20 LEDs wide. At the middle of the chain that
+        blur lit the top of both sides at one time, and a board reads that as
+        two dots. See pegboard.patrol_pixels.
+        """
+        values = dict(pegboard.DEFAULTS, EFFECT=pegboard.SHOWS_PATROL,
+                      COLOR="#ff6e00", BRIGHTNESS=255)
+        for elapsed in (0.0, 0.37, 0.8, 1.19, 1.6, 2.41, 3.0):
+            pixels = pegboard.patrol_pixels(values, elapsed)
+            lit = [index for index, pixel in enumerate(pixels) if any(pixel)]
+            self.assertEqual(len(lit), 1, "%s at %.2f" % (lit, elapsed))
+
+    def test_the_dot_walks_the_whole_chain_and_comes_back(self):
+        """Every LED, end to end, and no jump at the turn."""
+        values = dict(pegboard.DEFAULTS, EFFECT=pegboard.SHOWS_PATROL,
+                      COLOR="#ff6e00", BRIGHTNESS=255)
+        period = pegboard.patrol_period(values)
+        steps = 400
+        walk = []
+        for step in range(steps + 1):
+            pixels = pegboard.patrol_pixels(values, period * step / steps)
+            walk.append(next(index for index, pixel in enumerate(pixels)
+                             if any(pixel)))
+        self.assertEqual(min(walk), 0)
+        self.assertEqual(max(walk), pegboard.LEDS - 1)
+        self.assertEqual(set(walk), set(range(pegboard.LEDS)))
+        # One run out and one run back, and never two LEDs at a time.
+        self.assertLessEqual(max(abs(b - a) for a, b in zip(walk, walk[1:])),
+                             1)
+        self.assertEqual(walk[0], 0)
+        self.assertEqual(walk[-1], 0)
+
+    def test_the_dot_moves_one_led_for_each_frame_at_the_default_speed(self):
+        """The fastest a single dot moves and still lights every LED.
+
+        Above that rate it steps over LEDs, which is what SPEED is for.
+        """
+        values = dict(pegboard.DEFAULTS, EFFECT=pegboard.SHOWS_PATROL)
+        one_way = pegboard.patrol_period(values) / 2.0
+        self.assertAlmostEqual(one_way * values["FPS"], pegboard.LEDS,
+                               places=6)
+        self.assertAlmostEqual(
+            pegboard.patrol_period(dict(values, SPEED=2.0)),
+            pegboard.patrol_period(values) / 2.0, places=6)
 
     def test_the_patrol_draws_in_the_colour_it_was_given(self):
         """The other effects make their own, and COLOR does nothing there."""

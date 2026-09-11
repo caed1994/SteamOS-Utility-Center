@@ -224,11 +224,12 @@ def answer_of(piece):
 # MIRRORED and fold().
 SHOWS_RAINBOW_WAVE = "rainbow-wave"
 
-# The dots that run along the board and back.
+# The one dot that runs along the board and back.
 #
 # It is not an effect of the rainbow slot, which is where the other names come
-# from. Steam has it as an effect of its own, and the renderer picks it from
-# the `effect` field of the snapshot. See EFFECT_OF.
+# from. Steam has it as an effect of its own. This module draws it as well,
+# because the renderer draws a dot of the bar and this board needs a dot of
+# its own. See DRAWN_HERE and patrol_pixels.
 SHOWS_PATROL = "patrol"
 
 # The effects that are drawn on half the board and mirrored onto the other
@@ -237,10 +238,10 @@ MIRRORED = frozenset({SHOWS_RAINBOW_WAVE})
 
 # Which effect of the renderer draws each of these. Only the wave needs an
 # entry: it is the rainbow with the fold, and not an effect of its own.
-# The patrol is here for a second reason: the renderer takes the name of a
-# slot effect whether it consults the slot or not, and "patrol" is not one of
-# them. It draws by the effect field, so the name is unread and any valid one
-# does.
+# The patrol is here for a second reason: a Renderer is built for it as well,
+# for the brightness and the gamma, and its constructor takes the name of a
+# slot effect whether anything reads the slot or not. "patrol" is not one of
+# those names, so this gives it a valid one that nothing reads.
 DRAWN_BY = {SHOWS_RAINBOW_WAVE: render.SHOWS_RAINBOW,
             SHOWS_PATROL: render.SHOWS_RAINBOW}
 
@@ -328,6 +329,54 @@ def frame(payload, effect):
     return message(TYPE_COLOUR, on_the_wire(fold(payload, effect)))
 
 
+def patrol_period(values):
+    """Seconds for one run of the dot, from end to end and back.
+
+    One LED for each frame is the fastest a single dot moves and still lights
+    every LED on the way. That rate is the default, and SPEED scales it:
+    above 1 the dot steps over LEDs, and below 1 it rests on each one.
+
+    The renderer has its own period for the bar, and it is a length of time
+    and not a rate. The bar is 17 LEDs and this board is 64, so the same
+    seconds here move the dot about four LEDs at each frame and the run reads
+    as a jump.
+    """
+    seconds = 2.0 * LEDS / float(values["FPS"]) / values["SPEED"]
+    return max(seconds, render.MIN_CYCLE_SECONDS)
+
+
+def patrol_pixels(values, elapsed):
+    """One lit LED, from one end of the chain to the other and back.
+
+    The chain is one line: LED 0 is at the bottom left, LED 31 at the top
+    left, LED 32 at the top right and LED 63 at the bottom right. So one dot
+    that walks from 0 to 63 goes up one side of the board and down the other.
+
+    It returns the pixels and not the bytes. Renderer.payload makes those,
+    which is where the brightness and the gamma of this board are.
+    """
+    span = LEDS - 1
+    phase = (elapsed / patrol_period(values)) % 1.0
+    # A triangle wave: to the far end and back again. The dot moves in time
+    # and not in position, so it does not return to LED 0 for one frame at
+    # the turn.
+    at = int(round(phase * 2.0 * span if phase < 0.5
+                   else (2.0 - phase * 2.0) * span))
+    colour = tuple(notify.parse_color(values["COLOR"]))
+    dark = (0.0, 0.0, 0.0)
+    return [colour if index == at else dark for index in range(LEDS)]
+
+
+# The effects that this module draws itself, at the count of the board.
+#
+# The renderer draws each effect on 17 logical LEDs and stretches that picture
+# to the strip. For a gradient that is right and it is why the bar and the
+# board can share the effects. For a dot it is not: one dot of the bar covers
+# 20 LEDs here, and at the middle of the chain it lights the top of both
+# columns at one time, which reads as two dots on one board.
+DRAWN_HERE = {SHOWS_PATROL: patrol_pixels}
+
+
 # -- the configuration -------------------------------------------------------
 
 CONFIG_PATH = "/etc/steamos-utility-center-pegboard.conf"
@@ -349,8 +398,6 @@ DEFAULTS = {
     "COLOR_SHIFT": 0,
     # The colour of an effect that draws in one. See TAKES_COLOUR.
     "COLOR": "#ffffff",
-    # How many dots run along the board at one time.
-    "PATROL_DOTS": 1,
     "TEMPERATURE_MIN": 40.0,
     "TEMPERATURE_MAX": 80.0,
     "TEMPERATURE_SENSOR": "auto",
@@ -358,6 +405,26 @@ DEFAULTS = {
     "IDLE_FPS": 4,
     "LOG_LEVEL": "info",
 }
+
+# The settings this module had and does not have now.
+#
+# A file on a machine keeps the line that a person wrote in it. A version that
+# refuses to start because of an option it dropped itself turns its own change
+# into a board that stays dark, and the message names a key that no
+# documentation mentions any more. Each name here is read and dropped, with
+# one line in the journal. See read().
+RETIRED = frozenset({
+    # The count is 64 and not a choice: it is what the board has.
+    "LEDS",
+    # The chain is the shape. The fold is a property of the one effect that
+    # gains from it. See MIRRORED.
+    "SHAPE",
+    # The load gauge. Two coloured stubs on a board, and the numbers are on
+    # the Status page in words.
+    "LOAD_CPU_COLOR", "LOAD_GPU_COLOR", "LOAD_SWAP",
+    # One dot. See patrol_pixels.
+    "PATROL_DOTS",
+})
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -402,6 +469,10 @@ def read(path=CONFIG_PATH):
         name = name.strip().upper()
         if not sign:
             raise PegboardError("%s:%d: expected KEY=value" % (path, number))
+        if name in RETIRED:
+            LOG.info("%s:%d: %s is not a setting of this board any more. "
+                     "The line is ignored.", path, number, name)
+            continue
         if name not in DEFAULTS:
             raise PegboardError("%s:%d: unknown option %r"
                                 % (path, number, name))
@@ -423,8 +494,6 @@ def validate(values):
         notify.parse_color(values["COLOR"])
     except ValueError as exc:
         raise PegboardError("COLOR: %s" % exc)
-    if not 1 <= values["PATROL_DOTS"] <= 8:
-        raise PegboardError("PATROL_DOTS must be between 1 and 8")
     if not 0.05 <= values["SPEED"] <= 20.0:
         raise PegboardError("SPEED must be between 0.05 and 20")
     if not 0.1 <= values["GAMMA"] <= 5.0:
@@ -591,7 +660,6 @@ def build_renderer(values):
             if shows == render.SHOWS_TEMPERATURE else None),
         temperature_range=(values["TEMPERATURE_MIN"],
                            values["TEMPERATURE_MAX"]),
-        patrol_dots=values["PATROL_DOTS"],
         rainbow_shows=shows)
 
 
@@ -638,8 +706,11 @@ def run(values, board=None, stop=None, now=None):
     # the effect the board was asked for. They differ for the wave.
     effect = values["EFFECT"]
     shows = drawn_by(effect)
+    # The effects of this module draw their own pixels at the count of the
+    # board. The renderer then makes the bytes. See DRAWN_HERE.
+    draw = DRAWN_HERE.get(effect)
     started = now()
-    animated = renderer.is_animated(snapshot, shows)
+    animated = draw is not None or renderer.is_animated(snapshot, shows)
     # A still effect needs no sixty frames a second. It still needs some: the
     # board holds the last frame, and a service that sends nothing cannot be
     # told from a service that stopped.
@@ -651,7 +722,10 @@ def run(values, board=None, stop=None, now=None):
     try:
         while stop is None or not stop():
             due = now() + interval
-            payload = renderer.render(snapshot, now() - started, shows)
+            elapsed = now() - started
+            payload = (renderer.payload(draw(values, elapsed), snapshot)
+                       if draw
+                       else renderer.render(snapshot, elapsed, shows))
             if board.show(frame(payload, effect),
                           settle=SETTLE_SECONDS):
                 quiet = 0

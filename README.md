@@ -311,9 +311,19 @@ module leaves the board lit. You pick one effect and it draws it.
 
 The same effects as the rainbow slot of the LED bar: rainbow, fire, aurora,
 ooze and the temperature gauge. They come from the same renderer, so an effect
-added to one is on the other. **Patrol** is there too, with a colour you pick
-and a number of dots; it is an effect of Steam's own rather than one of the
-slot, so it reaches the board by a different route and not by that list.
+added to one is on the other.
+
+**Patrol** is the board's own. One LED in the colour you pick runs the whole
+chain from one bottom corner to the other and back, up one side and down the
+other. It is one dot and not a number of them, and it is drawn here rather
+than by that renderer: the renderer draws 17 logical LEDs and stretches them
+to the strip, which turns one dot into 20 LEDs on this board. At the middle
+of the chain that blur lights the top of both sides at one time, which reads
+as two dots.
+
+At the default speed the dot moves one LED for each frame, which is the
+fastest a single dot moves and still lights every LED on the way. `SPEED`
+above 1 steps over LEDs, and below 1 it rests on each one.
 
 Two exceptions. The load gauge is not here: it draws two bars of a fixed
 colour that grow with the counters, which reads as a meter on a strip behind a
