@@ -35,7 +35,7 @@
 
 UNIT="steamos-utility-center-pegboard.service"
 
-# A machine with no such unit is a machine with no Pegboard module. That is
+# A machine with no such unit is a machine with no Nanoleaf module. That is
 # not a failure, and is-enabled answers without starting anything.
 systemctl list-unit-files "$UNIT" >/dev/null 2>&1 || exit 0
 

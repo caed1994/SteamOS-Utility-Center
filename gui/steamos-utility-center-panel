@@ -439,7 +439,12 @@ APP_KEYS = frozenset(appsettings.DEFAULTS)
 # SidebarEntry holds the icon names.
 SECTIONS = (
     ("strip", "LED Strip", "Configure the lighting", "strip"),
-    ("pegboard", "Pegboard", "The Nanoleaf board", "strip"),
+    # It was "Pegboard". The key stays "pegboard": the code names a section
+    # by its key, and the settings file, the units and the applier on every
+    # installed machine carry that name. The title is the maker, because a
+    # second Nanoleaf device belongs on this page and not on a page of its
+    # own. The subtitle names the device that is here now.
+    ("pegboard", "Nanoleaf", "Pegboard Desk Dock", "strip"),
     ("power", "CPU & GPU power", "Governor, EPP and the card", "bolt"),
     ("cec", "HDMI CEC Mods", "Control and tweaks", "screen"),
     # It was "Keyboard Layout". The drives are here too now, and both are

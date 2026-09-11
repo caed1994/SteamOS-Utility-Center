@@ -74,7 +74,7 @@ SAYS = {
         "needs": "an ESP board on USB, with a WS2812 strip on it.",
     },
     PEGBOARD: {
-        "title": "Pegboard",
+        "title": "Nanoleaf",
         "does": "Lights the Nanoleaf Pegboard Desk Dock, which has no "
                 "program for Linux of its own. It draws one effect that you "
                 "pick, and it runs on its own: nothing that Steam shows on "

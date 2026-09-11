@@ -605,7 +605,7 @@ remove_cec() {
 # -- pegboard: the Nanoleaf board ---------------------------------------------
 
 install_pegboard() {
-    say "Installing the Pegboard module"
+    say "Installing the Nanoleaf module"
     install -m 0755 "$SOURCE_DIR/scripts/apply-pegboard.sh" \
         "$PEGBOARD_APPLIER_PATH"
     install -m 0755 "$SOURCE_DIR/server/steamos-utility-center-pegboard" \
@@ -659,7 +659,7 @@ install_pegboard() {
 }
 
 remove_pegboard() {
-    say "Removing the Pegboard module"
+    say "Removing the Nanoleaf module"
     # Stop it before the files go. The service sends a dark frame when it
     # stops, and the board holds the last frame it was given: a service that
     # is killed with its files leaves the board lit with nothing to turn it

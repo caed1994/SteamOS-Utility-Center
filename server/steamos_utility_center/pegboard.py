@@ -516,7 +516,7 @@ def text(values):
     lines = [
         "# The Nanoleaf Pegboard Desk Dock, for the SteamOS Utility Center.",
         "#",
-        "# Written by the Pegboard page of the control panel, and read by",
+        "# Written by the Nanoleaf page of the control panel, and read by",
         "# steamos-utility-center-pegboard.service.",
         "#",
         "# The board runs on its own. Nothing that Steam shows on the LED bar",

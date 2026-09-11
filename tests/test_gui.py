@@ -1334,7 +1334,7 @@ class PanelSettingsTest(unittest.TestCase):
         # "System" and no longer "Keyboard Layout". The drives are on that
         # page as well now, and both are settings of the machine.
         self.assertEqual([entry[1] for entry in sections],
-                         ["LED Strip", "Pegboard", "CPU & GPU power",
+                         ["LED Strip", "Nanoleaf", "CPU & GPU power",
                           "HDMI CEC Mods", "System", "Status",
                           "App Settings"])
         self.assertEqual(ast.literal_eval(assigned["ABOUT"])[0], "about")
