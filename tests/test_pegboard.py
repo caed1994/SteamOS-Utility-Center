@@ -90,10 +90,10 @@ class ShapeTest(unittest.TestCase):
     DRAWN = bytes([1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4])   # bottom to top
 
     def test_the_mirror_draws_half_the_leds(self):
-        self.assertEqual(pegboard.logical_leds(64, pegboard.SHAPE_MIRROR), 32)
+        self.assertEqual(pegboard.logical_leds(pegboard.SHAPE_MIRROR), 32)
 
     def test_the_chain_draws_all_of_them(self):
-        self.assertEqual(pegboard.logical_leds(64, pegboard.SHAPE_CHAIN), 64)
+        self.assertEqual(pegboard.logical_leds(pegboard.SHAPE_CHAIN), 64)
 
     def test_the_mirror_puts_the_bottom_in_both_bottom_corners(self):
         """LED 0 is the bottom left and LED 63 the bottom right."""
@@ -115,9 +115,6 @@ class ShapeTest(unittest.TestCase):
         self.assertEqual(pegboard.fold(self.DRAWN, pegboard.SHAPE_CHAIN),
                          self.DRAWN)
 
-    def test_a_board_of_one_led_is_refused(self):
-        with self.assertRaises(pegboard.PegboardError):
-            pegboard.logical_leds(1, pegboard.SHAPE_MIRROR)
 
 
 class AnswerTest(unittest.TestCase):
@@ -178,8 +175,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(pegboard.read("/nowhere/at/all"), pegboard.DEFAULTS)
 
     def test_it_reads_the_types_the_defaults_have(self):
-        values = pegboard.read(self._write("LEDS=32\nSPEED=2.5\nENABLED=0\n"))
-        self.assertEqual(values["LEDS"], 32)
+        values = pegboard.read(self._write("FPS=30\nSPEED=2.5\nENABLED=0\n"))
+        self.assertEqual(values["FPS"], 30)
         self.assertEqual(values["SPEED"], 2.5)
         self.assertIs(values["ENABLED"], False)
 
@@ -197,13 +194,13 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(pegboard.PegboardError):
             pegboard.read(self._write("SHAPE=diagonal\n"))
 
-    def test_the_mirror_needs_an_even_number_of_leds(self):
-        """The two sides of one board are equal, so an odd count cannot fold."""
+    def test_the_count_of_leds_is_not_a_setting(self):
+        """One board is 64. A different count is a different board, with a
+        layout of its own and not only a number of its own."""
+        self.assertEqual(pegboard.LEDS, 64)
+        self.assertNotIn("LEDS", pegboard.DEFAULTS)
         with self.assertRaises(pegboard.PegboardError):
-            pegboard.read(self._write("SHAPE=mirror\nLEDS=33\n"))
-        # The chain has no such rule.
-        self.assertEqual(
-            pegboard.read(self._write("SHAPE=chain\nLEDS=33\n"))["LEDS"], 33)
+            pegboard.read(self._write("LEDS=32\n"))
 
     def test_the_effects_are_the_ones_the_renderer_has(self):
         """Derived and not written down, so a new effect reaches the board."""
@@ -220,7 +217,7 @@ class ConfigTest(unittest.TestCase):
             pegboard.read(self._write("FPS=10\nIDLE_FPS=20\n"))
 
     def test_what_it_writes_it_can_read_again(self):
-        values = dict(pegboard.DEFAULTS, LEDS=32, SHAPE=pegboard.SHAPE_CHAIN,
+        values = dict(pegboard.DEFAULTS, SHAPE=pegboard.SHAPE_CHAIN,
                       EFFECT="ooze", ENABLED=False)
         again = pegboard.read(self._write(pegboard.text(values)))
         self.assertEqual(again, values)
@@ -232,19 +229,25 @@ class DrawingTest(unittest.TestCase):
     class Fake:
         node = "/dev/fake"
 
+        answering = True
+
         def __init__(self):
             self.sent = []
+            self.settles = []
             self.frames = 0
 
-        def show(self, text):
+        def show(self, text, settle=0.0):
             self.sent.append(text)
+            self.settles.append(settle)
             self.frames += 1
+            return ([(pegboard.TYPE_COLOUR, b"\x00")] if self.answering
+                    else [])
 
         def drain(self):
             return []
 
-        def blank(self, leds):
-            self.sent.append(("blank", leds))
+        def blank(self):
+            self.sent.append("blank")
 
         def close(self):
             pass
@@ -271,7 +274,7 @@ class DrawingTest(unittest.TestCase):
         """The board holds the last frame. A service that stops without this
         leaves it lit and nothing on the machine can turn it off."""
         board = self._run(dict(pegboard.DEFAULTS))
-        self.assertEqual(board.sent[-1], ("blank", 64))
+        self.assertEqual(board.sent[-1], "blank")
 
     def test_the_mirror_really_is_symmetrical_on_the_wire(self):
         board = self._run(dict(pegboard.DEFAULTS, SHAPE=pegboard.SHAPE_MIRROR,
@@ -279,6 +282,34 @@ class DrawingTest(unittest.TestCase):
         wire = triples(board.sent[0][3:])
         self.assertEqual(wire[0], wire[-1])
         self.assertEqual(wire[31], wire[32])
+
+    def test_it_waits_for_the_board_between_frames(self):
+        """The wait is what paces this, and it is why the LEDs stopped
+        flashing at nothing: four reports a frame, sent with no pause, made
+        the board lose its place in the stream."""
+        board = self.Fake()
+        ticks = iter([n * 0.01 for n in range(40)])
+        seen = []
+        pegboard.run(dict(pegboard.DEFAULTS, FPS=60),
+                     board=board, now=lambda: next(ticks),
+                     stop=lambda: (seen.append(1), len(seen) > 2)[1])
+        self.assertTrue(board.settles)
+        for settle in board.settles:
+            self.assertGreater(settle, 0)
+            # Under one frame, so a board that says nothing still draws at
+            # the rate that was asked for.
+            self.assertLess(settle, 1.0 / 60)
+
+    def test_a_board_that_answers_nothing_still_draws(self):
+        """A quiet board is not a reason to stop lighting it."""
+        board = self.Fake()
+        board.answering = False
+        ticks = iter([n * 0.01 for n in range(40)])
+        seen = []
+        pegboard.run(dict(pegboard.DEFAULTS), board=board,
+                     now=lambda: next(ticks),
+                     stop=lambda: (seen.append(1), len(seen) > 3)[1])
+        self.assertGreaterEqual(board.frames, 3)
 
     def test_a_board_that_is_switched_off_is_drawn_dark(self):
         """ENABLED=0 is a person who wants the board off, not a fault.

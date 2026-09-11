@@ -73,6 +73,15 @@ LOG = logging.getLogger("steamos-utility-center-pegboard")
 RETRY_DELAY = 2.0
 RETRY_CEILING = 30.0
 
+# How much of one frame to give the board to say that the frame arrived. The
+# answer takes about a millisecond, so this is generous and still leaves the
+# frame rate alone. See Board.show, which says what the wait is for.
+SETTLE_SHARE = 0.8
+
+# How many frames with no answer before this says so in the log. One second at
+# sixty frames a second.
+QUIET_FRAMES = 60
+
 # -- the device --------------------------------------------------------------
 
 VENDOR = 0x37FA
@@ -81,8 +90,11 @@ PRODUCT = 0x8201
 # From the report descriptor. Not a guess, and not a number to tune.
 REPORT_BYTES = 64
 
-# What one board holds. A person with two of them sets LEDS.
-DEFAULT_LEDS = 64
+# What one board holds: two strips of 32, one on each side. It was a setting
+# and it is a constant, because it is not a choice a person has. A board with
+# a different count is a different board, and the rest of this file would need
+# its layout and not only its number.
+LEDS = 64
 
 TYPE_COLOUR = 0x02
 ANSWER_BIT = 0x80
@@ -195,15 +207,13 @@ SHAPE_CHAIN = "chain"
 SHAPES = (SHAPE_MIRROR, SHAPE_CHAIN)
 
 
-def logical_leds(leds, shape):
-    """How many LEDs the renderer draws for that many on the board.
+def logical_leds(shape):
+    """How many LEDs the renderer draws.
 
     Half of them in the mirror, because the second half is the first one
     backwards.
     """
-    if leds < 2:
-        raise PegboardError("a board has at least two LEDs")
-    return leds // 2 if shape == SHAPE_MIRROR else leds
+    return LEDS // 2 if shape == SHAPE_MIRROR else LEDS
 
 
 def fold(payload, shape):
@@ -241,7 +251,6 @@ CONFIG_PATH = "/etc/steamos-utility-center-pegboard.conf"
 # mean the same thing. A person who knows one page knows the other.
 DEFAULTS = {
     "ENABLED": True,
-    "LEDS": DEFAULT_LEDS,
     "SHAPE": SHAPE_MIRROR,
     "EFFECT": render.SHOWS_RAINBOW,
     "BRIGHTNESS": 128,
@@ -320,11 +329,6 @@ def validate(values):
     if values["EFFECT"] not in render.RAINBOW_CHOICES:
         raise PegboardError("EFFECT must be one of %s"
                             % ", ".join(sorted(render.RAINBOW_CHOICES)))
-    if not 2 <= values["LEDS"] <= 1024:
-        raise PegboardError("LEDS must be between 2 and 1024")
-    if values["SHAPE"] == SHAPE_MIRROR and values["LEDS"] % 2:
-        raise PegboardError("SHAPE=mirror needs an even LEDS, because the "
-                            "two sides of the board are equal")
     if not 0 <= values["BRIGHTNESS"] <= 255:
         raise PegboardError("BRIGHTNESS must be between 0 and 255")
     if not 0 <= values["COLOR_SHIFT"] <= 255:
@@ -387,16 +391,57 @@ class Board:
             os.close(self.handle)
             self.handle = -1
 
-    def show(self, text):
-        """Writes one TLV message, in reports.
+    def show(self, text, settle=0.0):
+        """Writes one TLV message, in reports, and waits to be told it landed.
 
         Linux hidraw wants the report number in the first byte of a write.
         This board has no numbered reports, so that byte is 0 and each write
         is one byte longer than the report itself.
+
+        `settle` is the wait for the answer, and it is what paces this. One
+        frame is four reports, and at sixty frames a second that is 240 of
+        them. Sent with no pause, the board loses its place in the stream:
+        the answer to a frame then does not come, and the frame after it is
+        read from the wrong offset. Some LEDs take a byte meant for another
+        one, which looks like one LED flashing at nothing.
+
+        The board answers in about a millisecond, so the wait costs a frame
+        almost nothing and stops this from sending into a board that is still
+        reading the last one. It returns the answers it collected.
         """
         for piece in reports(text):
-            os.write(self.handle, b"\x00" + piece)
+            wanted = b"\x00" + piece
+            wrote = os.write(self.handle, wanted)
+            if wrote != len(wanted):
+                raise PegboardError("wrote %d of %d bytes to %s"
+                                    % (wrote, len(wanted), self.node))
         self.frames += 1
+        return self.wait(settle) if settle else []
+
+    def wait(self, seconds):
+        """The answers the board sends, for that long or until one arrives.
+
+        It stops at the first one. One frame is answered one time, so a
+        further wait is a wait for nothing.
+        """
+        heard = []
+        until = time.monotonic() + seconds
+        while not heard:
+            left = until - time.monotonic()
+            if left <= 0:
+                break
+            ready, _, _ = select.select([self.handle], [], [], left)
+            if not ready:
+                break
+            try:
+                piece = os.read(self.handle, REPORT_BYTES)
+            except (BlockingIOError, InterruptedError):
+                break
+            self.answers += 1
+            said = answer_of(piece)
+            if said is not None:
+                heard.append(said)
+        return heard
 
     def drain(self):
         """Reads the answers that are there. It waits for none of them."""
@@ -414,9 +459,9 @@ class Board:
             if said is not None:
                 heard.append(said)
 
-    def blank(self, leds):
+    def blank(self):
         """Every LED dark. The service sends this before it stops."""
-        self.show(message(TYPE_COLOUR, bytes(3 * leds)))
+        self.show(message(TYPE_COLOUR, bytes(3 * LEDS)))
 
     def __enter__(self):
         return self
@@ -441,7 +486,7 @@ def build_renderer(values):
     """The renderer for the board, at the count its shape asks for."""
     shows = values["EFFECT"]
     return render.Renderer(
-        led_count=logical_leds(values["LEDS"], values["SHAPE"]),
+        led_count=logical_leds(values["SHAPE"]),
         gamma=values["GAMMA"],
         speed_scale=values["SPEED"],
         temperature=(temperature.TemperatureSource(
@@ -492,21 +537,32 @@ def run(values, board=None, stop=None, now=None):
     # board holds the last frame, and a service that sends nothing cannot be
     # told from a service that stopped.
     interval = 1.0 / (values["FPS"] if animated else values["IDLE_FPS"])
+    # Most of one frame, so a board that says nothing still draws at the rate
+    # that was asked for rather than stopping to wait for it.
+    settle = interval * SETTLE_SHARE
     owned = board is None
     if owned:
         board = Board()
+    quiet = 0
     try:
         while stop is None or not stop():
             due = now() + interval
             payload = renderer.render(snapshot, now() - started, shows)
-            board.show(frame(payload, values["SHAPE"]))
-            board.drain()
+            if board.show(frame(payload, values["SHAPE"]), settle=settle):
+                quiet = 0
+            else:
+                quiet += 1
+                # Once, and not for each frame: a board that stopped
+                # answering would otherwise write sixty lines a second.
+                if quiet == QUIET_FRAMES:
+                    LOG.warning("the board has not answered for %d frames; "
+                                "it is drawing without an answer", quiet)
             rest = due - now()
             if rest > 0:
                 time.sleep(rest)
     finally:
         try:
-            board.blank(values["LEDS"])
+            board.blank()
         except OSError:
             pass
         if owned:
@@ -546,8 +602,7 @@ def main(argv=None):
     if args.report:
         print("board: %s" % (node or "not plugged in"))
         print("LEDs: %d, shape %s, %d drawn"
-              % (values["LEDS"], values["SHAPE"],
-                 logical_leds(values["LEDS"], values["SHAPE"])))
+              % (LEDS, values["SHAPE"], logical_leds(values["SHAPE"])))
         print("effect: %s at %d brightness, speed %.2f"
               % (values["EFFECT"], values["BRIGHTNESS"], values["SPEED"]))
         return 0 if node else 1
@@ -569,7 +624,7 @@ def main(argv=None):
         try:
             with Board() as board:
                 LOG.info("drawing %s on %s, %d LEDs, shape %s",
-                         values["EFFECT"], board.node, values["LEDS"],
+                         values["EFFECT"], board.node, LEDS,
                          values["SHAPE"])
                 delay = RETRY_DELAY
                 run(values, board=board, stop=lambda: bool(stopping))

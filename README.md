@@ -315,7 +315,9 @@ so an effect added to one is on the other.
 
 ### The two sides
 
-One board is 64 LEDs: two strips of 32, one on each side. They are one chain.
+One board is 64 LEDs: two strips of 32, one on each side. That count is not a
+setting: a board with a different one is a different board, and it would need
+its layout written down and not only its number. They are one chain.
 LED 0 is the bottom of the left side, LED 31 the top of it, LED 32 the top of
 the right side, and LED 63 the bottom of it. So the middle of the chain is the
 top of the board, and the two ends are the two bottom corners.
@@ -341,6 +343,12 @@ ff 00 00 -> green        the wire is GRB, the order of a WS2812
 A frame is 195 bytes and a report is 64, so each frame goes in four writes.
 The endpoints poll every millisecond, and a measurement on a board carried 60
 frames a second with an answer for each one.
+
+The service waits for that answer before it draws the next frame. Four reports
+a frame, sent with no pause, made the board lose its place in the stream: the
+answer then did not come, the frame after it was read from the wrong offset,
+and single LEDs flashed with a byte meant for another one. The answer takes
+about a millisecond, so the wait costs the frame rate nothing.
 
 The service runs as root and needs no udev rule. The panel never opens the
 device: it reads sysfs to say whether a board is plugged in, and the service

@@ -343,9 +343,6 @@ PEGBOARD_NOTE = (
 PEGBOARD = [
     ("The board", [
         ("PEGBOARD_ENABLED", "Light the board", "bool", None, None, None),
-        # Two at a time: the two sides of one board are equal, and the mirror
-        # needs an even number. A person with two boards sets 128.
-        ("PEGBOARD_LEDS", "LEDs on the board", "int", 2, 256, 2),
         ("PEGBOARD_SHAPE", "The two sides", "named",
          ledpanel.pegboard_shapes(), None, None),
     ]),
