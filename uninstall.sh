@@ -188,7 +188,7 @@ remove_mount_units
 # files leaves the board lit and nothing to turn it off.
 systemctl disable --now "$NAME-pegboard.service" 2>/dev/null || true
 rm -f "$PEGBOARD_UNIT_PATH" "$PEGBOARD_APPLIER_PATH" \
-  "$INSTALL_DIR/$NAME-pegboard"
+  "$PEGBOARD_SLEEP_HOOK_PATH" "$INSTALL_DIR/$NAME-pegboard"
 
 # Controller wake, and the sysfs values it wrote.
 #

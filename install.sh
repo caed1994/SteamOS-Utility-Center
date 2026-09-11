@@ -608,6 +608,21 @@ install_pegboard() {
             "$PEGBOARD_CONFIG_PATH"
     fi
 
+    # What takes the board dark for a suspend. A shutdown needs nothing: the
+    # unit is stopped there and the service sends a dark frame as it goes.
+    #
+    # A system with no /usr/lib/systemd/system-sleep has one feature less. It
+    # is not a failed installation.
+    if [[ -d "$(dirname "$PEGBOARD_SLEEP_HOOK_PATH")" ]]; then
+        say "Installing the suspend hook to $PEGBOARD_SLEEP_HOOK_PATH"
+        install -m 0755 \
+            "$SOURCE_DIR/systemd-sleep/steamos-utility-center-pegboard" \
+            "$PEGBOARD_SLEEP_HOOK_PATH"
+    else
+        warn "no $(dirname "$PEGBOARD_SLEEP_HOOK_PATH") - the board will stay"
+        warn "lit while the machine sleeps"
+    fi
+
     say "Installing systemd unit to $PEGBOARD_UNIT_PATH"
     sed "s|@INSTALL_DIR@|$INSTALL_DIR|g" \
         "$SOURCE_DIR/server/steamos-utility-center-pegboard.service" \
@@ -633,6 +648,7 @@ remove_pegboard() {
     # off. See server/steamos_utility_center/pegboard.py.
     systemctl disable --now "$NAME-pegboard.service" 2>/dev/null || true
     rm -f "$PEGBOARD_UNIT_PATH" "$PEGBOARD_APPLIER_PATH" \
+        "$PEGBOARD_SLEEP_HOOK_PATH" \
         "$INSTALL_DIR/steamos-utility-center-pegboard"
     systemctl daemon-reload
     say "  the settings in $PEGBOARD_CONFIG_PATH stay, for a second install"

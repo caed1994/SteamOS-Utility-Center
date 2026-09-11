@@ -63,6 +63,11 @@ POWER_UNIT_PATH="$UNIT_DIR/$NAME-power.service"
 PEGBOARD_CONFIG_PATH="$ROOT/etc/$NAME-pegboard.conf"
 PEGBOARD_UNIT_PATH="$UNIT_DIR/$NAME-pegboard.service"
 PEGBOARD_APPLIER_PATH="$INSTALL_DIR/$NAME-pegboard-apply"
+# What takes the board dark for a suspend. A shutdown needs nothing:
+# systemd stops the unit there and the service sends a dark frame as it
+# goes. A suspend only freezes it. See
+# systemd-sleep/steamos-utility-center-pegboard.
+PEGBOARD_SLEEP_HOOK_PATH="$ROOT/usr/lib/systemd/system-sleep/$NAME-pegboard"
 UDEV_PATH="$ROOT/etc/udev/rules.d/99-$NAME.rules"
 # The drives of the System page.
 #

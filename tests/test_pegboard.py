@@ -20,6 +20,7 @@ each number below was read from the device or from its descriptors.
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -535,6 +536,67 @@ class ModuleTest(unittest.TestCase):
             self.assertIn(path, mounts.PROJECT_FILES)
 
 
+class SleepTest(unittest.TestCase):
+    """What takes the board dark while the machine sleeps.
+
+    A shutdown always worked: systemd stops the unit and the service sends a
+    dark frame as it goes. A suspend only freezes the process, so no frame
+    follows and the board holds the last one it was given.
+    """
+
+    HOOK = os.path.join(REPO, "systemd-sleep",
+                        "steamos-utility-center-pegboard")
+
+    def setUp(self):
+        with open(self.HOOK) as handle:
+            self.text = handle.read()
+
+    def test_it_is_a_program_that_systemd_can_run(self):
+        self.assertTrue(os.access(self.HOOK, os.X_OK))
+        self.assertTrue(self.text.startswith("#!"))
+
+    def test_it_parses(self):
+        done = subprocess.run(["sh", "-n", self.HOOK],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def test_it_stops_the_service_before_the_machine_sleeps(self):
+        """And systemd waits for that, which is what puts the frame out."""
+        before = self.text.split("pre)")[1].split(";;")[0]
+        self.assertIn("systemctl stop", before)
+
+    def test_it_starts_the_service_again_after_a_wake(self):
+        after = self.text.split("post)")[1].split(";;")[0]
+        self.assertIn("systemctl start", after)
+
+    def test_it_starts_nothing_that_a_person_switched_off(self):
+        """A resume is not the moment to decide that a disabled unit runs."""
+        after = self.text.split("post)")[1].split(";;")[0]
+        self.assertIn("is-enabled", after)
+
+    def test_it_does_not_write_to_the_board_itself(self):
+        """The service holds the device open, and one frame is four reports.
+
+        A second writer puts its bytes between them: the board loses its
+        place in the stream and draws the wrong colours. That is the fault
+        this project already met at 60 frames a second.
+
+        The comments are cut out first. They name the device to say why this
+        does not touch it, and a test that read them would refuse the
+        explanation along with the thing it explains.
+        """
+        code = "\n".join(line for line in self.text.splitlines()
+                         if not line.lstrip().startswith("#"))
+        # The board's device and not every device: /dev/null is where the
+        # output of each systemctl goes, and that is not the board.
+        for named in ("hidraw", "37fa", "/dev/hid"):
+            self.assertNotIn(named, code, named)
+
+    def test_a_machine_without_the_module_is_not_an_error(self):
+        self.assertIn("list-unit-files", self.text)
+        self.assertIn("exit 0", self.text)
+
+
 class InstallerTest(unittest.TestCase):
     """What install.sh and uninstall.sh do with it."""
 
@@ -543,6 +605,18 @@ class InstallerTest(unittest.TestCase):
             self.install = handle.read()
         with open(os.path.join(REPO, "uninstall.sh")) as handle:
             self.uninstall = handle.read()
+
+    def test_the_module_installs_the_suspend_hook(self):
+        block = self.install.split("install_pegboard()")[1].split(
+            "\nremove_pegboard")[0]
+        self.assertIn("PEGBOARD_SLEEP_HOOK_PATH", block)
+        self.assertIn("systemd-sleep/steamos-utility-center-pegboard", block)
+
+    def test_removing_the_module_takes_the_hook_away(self):
+        """A hook for a unit that is gone stops a suspend for nothing."""
+        block = self.install.split("remove_pegboard()")[1].split("\n# --")[0]
+        self.assertIn("PEGBOARD_SLEEP_HOOK_PATH", block)
+        self.assertIn("PEGBOARD_SLEEP_HOOK_PATH", self.uninstall)
 
     def test_the_module_installs_its_service_and_its_settings(self):
         block = self.install.split("install_pegboard()")[1].split(

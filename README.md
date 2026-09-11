@@ -372,6 +372,22 @@ The service runs as root and needs no udev rule. The panel never opens the
 device: it reads sysfs to say whether a board is plugged in, and the service
 does the rest.
 
+### While the machine sleeps
+
+The board goes dark, and it lights up again on the way out.
+
+A shutdown needed nothing: systemd stops the unit and the service sends a dark
+frame as it goes. A suspend only freezes the process, so no frame follows and
+the board holds the last one it was given.
+`/usr/lib/systemd/system-sleep/steamos-utility-center-pegboard` stops the unit
+for a suspend, which sends that same dark frame, and starts it again after the
+wake. systemd waits for a program in that directory, so the frame is on the
+wire before the freeze.
+
+It stops the service rather than write to the board itself. The service holds
+the device open, one frame is four reports, and a second writer puts its bytes
+between them.
+
 ## CPU and GPU power
 
 The **CPU & GPU power** page reads both settings from your machine:
