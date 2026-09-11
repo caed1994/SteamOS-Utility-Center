@@ -22,6 +22,7 @@ from steamos_utility_center import config as config_module
 from steamos_utility_center import lact as lact_module
 from steamos_utility_center import modules as modules_module
 from steamos_utility_center import phone
+from steamos_utility_center import pegboard as pegboard_module
 from steamos_utility_center import power as power_module
 from steamos_utility_center import temperature
 from steamos_utility_center import wake as wake_module
@@ -1414,6 +1415,65 @@ def read_power_config(path=None):
 # The text of the CPU settings file. It is in the power module, because the
 # program that applies the file and steamos-utility-centerctl write it also.
 power_config_text = power_module.text
+
+
+def read_pegboard_config(path=None):
+    """The settings of the Nanoleaf board, defaults for what is missing.
+
+    It reads without validating, which is what a window needs: a file with one
+    bad line still has to open a page that a person can correct. The applier
+    validates before it installs, and Apply reports what it says.
+    """
+    values = dict(pegboard_module.DEFAULTS)
+    try:
+        with open(path or pegboard_module.CONFIG_PATH,
+                  encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        name = name.strip().upper()
+        if name not in values:
+            continue
+        try:
+            values[name] = pegboard_module._coerce(
+                name, value.strip().strip("\"'"), pegboard_module.DEFAULTS[name])
+        except pegboard_module.PegboardError:
+            continue
+    return values
+
+
+def pegboard_config_text(values):
+    """Those settings as the text of the file."""
+    return pegboard_module.text(values)
+
+
+def apply_pegboard_command(source_dir, staged_path, ask=False):
+    """Install the settings of the board and put them into effect."""
+    return applier_command("pegboard", source_dir, "apply-pegboard.sh",
+                           staged_path, ask=ask)
+
+
+def pegboard_here():
+    """Whether a board is plugged into this machine.
+
+    It reads sysfs, which everybody can read, so the window can say "no board"
+    without any rights and without opening the device.
+    """
+    return pegboard_module.find_device() is not None
+
+
+def pegboard_shapes():
+    """The two ways the sides of the board show one effect."""
+    # One word each. The menu is as wide as the other menus in this window,
+    # and a sentence in it is a sentence with its end cut off. What the two
+    # words mean is on the page, under the cards. See PEGBOARD_NOTE.
+    return [("Mirror", pegboard_module.SHAPE_MIRROR),
+            ("Chain", pegboard_module.SHAPE_CHAIN)]
 
 
 def apply_power_command(source_dir, staged_path, ask=False):

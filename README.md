@@ -13,16 +13,17 @@ the Quick Access menu of Game Mode.
 2. [Modules](#modules)
 3. [LED bar](#led-bar)
 4. [Notifications](#notifications)
-5. [CPU and GPU power](#cpu-and-gpu-power)
-6. [HDMI CEC](#hdmi-cec)
-7. [Keyboard, controller wake and drives](#keyboard-controller-wake-and-drives)
-8. [The control panel](#the-control-panel)
-9. [Game Mode](#game-mode)
-10. [The command that speaks JSON](#the-command-that-speaks-json)
-11. [Settings reference](#settings-reference)
-12. [Troubleshooting](#troubleshooting)
-13. [Updates and removal](#updates-and-removal)
-14. [Credits and licence](#credits-and-licence)
+5. [The Nanoleaf board](#the-nanoleaf-board)
+6. [CPU and GPU power](#cpu-and-gpu-power)
+7. [HDMI CEC](#hdmi-cec)
+8. [Keyboard, controller wake and drives](#keyboard-controller-wake-and-drives)
+9. [The control panel](#the-control-panel)
+10. [Game Mode](#game-mode)
+11. [The command that speaks JSON](#the-command-that-speaks-json)
+12. [Settings reference](#settings-reference)
+13. [Troubleshooting](#troubleshooting)
+14. [Updates and removal](#updates-and-removal)
+15. [Credits and licence](#credits-and-licence)
 
 ## Install
 
@@ -295,6 +296,55 @@ Reading the phone's notifications from KDE Connect
 
 That command flashes nothing. It gives each notification it sees, the flash it
 would make, and the reason if the real bridge would flash nothing.
+
+## The Nanoleaf board
+
+The Nanoleaf Pegboard Desk Dock has no program for Linux. It hangs on USB-C,
+it reports itself as a HID device, and the Nanoleaf Desktop App is for Windows
+and macOS only. This module lights it on SteamOS.
+
+It is a module of its own with a page of its own, and it runs on its own:
+nothing that Steam shows on the LED bar reaches it, and removing the LED bar
+module leaves the board lit. You pick one effect and it draws it.
+
+### What it draws
+
+The same effects as the rainbow slot of the LED bar: rainbow, fire, aurora,
+ooze, and the temperature and load gauges. They come from the same renderer,
+so an effect added to one is on the other.
+
+### The two sides
+
+One board is 64 LEDs: two strips of 32, one on each side. They are one chain.
+LED 0 is the bottom of the left side, LED 31 the top of it, LED 32 the top of
+the right side, and LED 63 the bottom of it. So the middle of the chain is the
+top of the board, and the two ends are the two bottom corners.
+
+| `SHAPE` | What it does | Best for |
+| --- | --- | --- |
+| `mirror` | both sides from the bottom upwards, the same on each | the effects that move along a strip: the fire rises and the ooze creeps on both sides at once |
+| `chain` | the 64 LEDs in the order the hardware gives them | the gauges: the load gauge draws two bars outwards from the middle, so on this board the CPU goes down one side and the GPU down the other |
+
+### What it took
+
+Nanoleaf documents the protocol, and the rest was measured on a board:
+
+```text
+37fa:8201                the vendor and the product
+Report Count 64, no ID   so one write is 65 bytes: the report number
+                         that Linux hidraw wants, then the report
+02 00 c0 + 192 bytes     a frame for 64 LEDs, as type, length, payload
+82 00 01 00              the answer: the type asked for with bit 7 set
+ff 00 00 -> green        the wire is GRB, the order of a WS2812
+```
+
+A frame is 195 bytes and a report is 64, so each frame goes in four writes.
+The endpoints poll every millisecond, and a measurement on a board carried 60
+frames a second with an answer for each one.
+
+The service runs as root and needs no udev rule. The panel never opens the
+device: it reads sysfs to say whether a board is plugged in, and the service
+does the rest.
 
 ## CPU and GPU power
 

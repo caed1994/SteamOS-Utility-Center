@@ -469,9 +469,16 @@ class SudoersTest(unittest.TestCase):
                 if line.startswith("deck")]
 
     def test_each_line_names_one_program_and_one_argument(self):
-        """Three appliers, and the two switches that take one of two words."""
+        """One line for each applier, and two for each switch of two words.
+
+        Counted from the code and not written down here. The number was a
+        literal, and each module added since has had to come and edit it -
+        which is a test that reports the last person's arithmetic and not the
+        shape of the rule.
+        """
         rules = self._rules()
-        self.assertEqual(len(rules), 7)
+        switches = (ctl.RESUME_WAKE, ctl.APPLY_WAKE)
+        self.assertEqual(len(rules), len(ctl.APPLIER) + 2 * len(switches))
         for line in rules:
             after = line.split("NOPASSWD:")[1].split()
             self.assertEqual(len(after), 2, line)

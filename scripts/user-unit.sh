@@ -56,6 +56,13 @@ POWER_CONFIG_PATH="$ROOT/etc/$NAME-power.conf"
 UNIT_DIR="$ROOT/etc/systemd/system"
 UNIT_PATH="$UNIT_DIR/$NAME.service"
 POWER_UNIT_PATH="$UNIT_DIR/$NAME-power.service"
+# The Nanoleaf Pegboard Desk Dock. Its own service, its own settings
+# file and its own applier: the board is a module of its own and it
+# operates on a machine with no LED bar. See
+# server/steamos_utility_center/pegboard.py.
+PEGBOARD_CONFIG_PATH="$ROOT/etc/$NAME-pegboard.conf"
+PEGBOARD_UNIT_PATH="$UNIT_DIR/$NAME-pegboard.service"
+PEGBOARD_APPLIER_PATH="$INSTALL_DIR/$NAME-pegboard-apply"
 UDEV_PATH="$ROOT/etc/udev/rules.d/99-$NAME.rules"
 # The drives of the System page.
 #

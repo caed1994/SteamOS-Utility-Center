@@ -181,6 +181,15 @@ systemctl disable --now "$NAME-mounts.service" 2>/dev/null || true
 rm -f "$MOUNTS_UNIT_PATH" "$MOUNTS_APPLIER_PATH"
 remove_mount_units
 
+# The Nanoleaf board.
+#
+# Stopped before its files go: the service sends a dark frame when it stops,
+# and the board holds the last frame it was given. A service killed with its
+# files leaves the board lit and nothing to turn it off.
+systemctl disable --now "$NAME-pegboard.service" 2>/dev/null || true
+rm -f "$PEGBOARD_UNIT_PATH" "$PEGBOARD_APPLIER_PATH" \
+  "$INSTALL_DIR/$NAME-pegboard"
+
 # Controller wake, and the sysfs values it wrote.
 #
 # `off` before the file goes: the applier holds the record of what each USB
@@ -251,7 +260,7 @@ remove_decky_plugin
 rm -rf "${INSTALL_DIR:?}"
 
 if [[ $PURGE -eq 1 ]]; then
-    rm -f "$CONFIG_PATH" "$POWER_CONFIG_PATH"
+    rm -f "$CONFIG_PATH" "$POWER_CONFIG_PATH" "$PEGBOARD_CONFIG_PATH"
     # The record of the drives goes with the settings, and not before. It is
     # under /var and the rm -rf above already took it, so this is the line
     # that says so rather than a second removal.
@@ -295,6 +304,7 @@ echo "Left in place:"
 if [[ $PURGE -eq 0 ]]; then
     echo "  $CONFIG_PATH"
     echo "  $POWER_CONFIG_PATH"
+    echo "  $PEGBOARD_CONFIG_PATH"
     if [[ -n "${WATCHER_HOME:-}" ]]; then
         echo "  $WATCHER_HOME/.config/$PANEL_CONFIG"
     fi

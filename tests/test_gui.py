@@ -27,6 +27,7 @@ import ledpanel  # noqa: E402
 import roundrect  # noqa: E402
 from steamos_utility_center import syssettings  # noqa: E402
 import appsettings  # noqa: E402
+from steamos_utility_center import pegboard  # noqa: E402
 from steamos_utility_center import power  # noqa: E402
 from steamos_utility_center import config as config_module  # noqa: E402
 from steamos_utility_center import desktop  # noqa: E402
@@ -1325,14 +1326,17 @@ class PanelSettingsTest(unittest.TestCase):
         """
         assigned = self._assignments()
         sections = ast.literal_eval(assigned["SECTIONS"])
+        # The Nanoleaf board sits under the bar: it is the second thing this
+        # program lights, and it is not a setting of the machine.
         self.assertEqual([entry[0] for entry in sections],
-                         ["strip", "power", "cec", "keyboard", "status",
-                          "app"])
+                         ["strip", "pegboard", "power", "cec", "keyboard",
+                          "status", "app"])
         # "System" and no longer "Keyboard Layout". The drives are on that
         # page as well now, and both are settings of the machine.
         self.assertEqual([entry[1] for entry in sections],
-                         ["LED Strip", "CPU & GPU power", "HDMI CEC Mods",
-                          "System", "Status", "App Settings"])
+                         ["LED Strip", "Pegboard", "CPU & GPU power",
+                          "HDMI CEC Mods", "System", "Status",
+                          "App Settings"])
         self.assertEqual(ast.literal_eval(assigned["ABOUT"])[0], "about")
         # Every one of them says what it is for. A sidebar of five titles with
         # a blank line under one of them is a sidebar that failed to draw.
@@ -1562,14 +1566,39 @@ class PanelSettingsTest(unittest.TestCase):
         self.assertEqual(len(set(keys)), len(keys))
 
     def test_every_setting_shown_is_a_real_option(self):
-        # In one of the two files the window edits. A key in neither is a
+        # In one of the files the window edits. A key in none of them is a
         # typo, and a typo here is a row that reads and writes nothing.
+        #
+        # The rows of the Nanoleaf board carry a prefix that its file does
+        # not, because the board and the bar share a dozen names. See
+        # PEGBOARD_KEYS in the panel.
         known = dict(config_module.DEFAULTS)
         known.update(syssettings.DEFAULTS)
         known.update(power.DEFAULTS)
         known.update(appsettings.DEFAULTS)
+        known.update({"PEGBOARD_" + key: value
+                      for key, value in pegboard.DEFAULTS.items()})
         for key in self._settings():
             self.assertIn(key, known, key)
+
+    def test_the_pegboard_page_names_the_settings_pegboard_owns(self):
+        """Both directions, the way the System page is pinned to its module.
+
+        A row on that page whose name the board's file does not hold writes
+        nothing. A setting of the board with no row is one nobody can reach.
+        LOG_LEVEL is the exception: it is for a person reading the journal,
+        and it has no place on a page of sliders.
+        """
+        panel = self._panel()
+        table = self._assignments(panel).get("PEGBOARD")
+        self.assertIsNotNone(table, "PEGBOARD not found in the panel")
+        keys = [row.elts[0].value
+                for group in table.elts for row in group.elts[1].elts]
+        for key in keys:
+            self.assertTrue(key.startswith("PEGBOARD_"), key)
+            self.assertIn(key[len("PEGBOARD_"):], pegboard.DEFAULTS, key)
+        shown = {key[len("PEGBOARD_"):] for key in keys}
+        self.assertEqual(sorted(set(pegboard.DEFAULTS) - shown), ["LOG_LEVEL"])
 
     def test_the_system_page_names_the_settings_syssettings_owns(self):
         """The System page is written out; this is what pins it to the module.

@@ -60,6 +60,8 @@ INSTALL_DIR = "/var/lib/steamos-utility-center"
 APPLY_CONFIG = os.path.join(INSTALL_DIR, "steamos-utility-center-config-apply")
 APPLY_POWER = os.path.join(INSTALL_DIR, "steamos-utility-center-power-apply")
 APPLY_MOUNTS = os.path.join(INSTALL_DIR, "steamos-utility-center-mounts-apply")
+APPLY_PEGBOARD = os.path.join(INSTALL_DIR,
+                              "steamos-utility-center-pegboard-apply")
 # The switch that wakes the television after a resume. It is a unit of root,
 # so it needs a program of its own with a rule of its own. See
 # scripts/resume-wake.sh, which says why it is not scripts/install-cec.sh.
@@ -72,7 +74,7 @@ APPLY_WAKE = os.path.join(INSTALL_DIR, "steamos-utility-center-wake-apply")
 # Which applier belongs to which area. The panel reads this to build the same
 # command that this file runs, so the two never name different programs.
 APPLIER = {"strip": APPLY_CONFIG, "power": APPLY_POWER,
-           "drives": APPLY_MOUNTS}
+           "drives": APPLY_MOUNTS, "pegboard": APPLY_PEGBOARD}
 
 CONFIG_PATH = "/etc/steamos-utility-center.conf"
 
@@ -86,7 +88,8 @@ CONFIG_PATH = "/etc/steamos-utility-center.conf"
 STAGED_DIR = os.path.join(INSTALL_DIR, "staged")
 STAGED = {"strip": os.path.join(STAGED_DIR, "strip.conf"),
           "power": os.path.join(STAGED_DIR, "power.conf"),
-          "drives": os.path.join(STAGED_DIR, "mounts.conf")}
+          "drives": os.path.join(STAGED_DIR, "mounts.conf"),
+          "pegboard": os.path.join(STAGED_DIR, "pegboard.conf")}
 
 # Cooling Boost holds the fan of the card at the full speed it has. 1.0 is
 # how LACT counts a fan that runs as fast as it can.
@@ -723,7 +726,8 @@ def sudoers_text(user, present=None):
     permitted = [(applier, STAGED[area])
                  for applier, area in ((APPLY_CONFIG, "strip"),
                                        (APPLY_POWER, "power"),
-                                       (APPLY_MOUNTS, "drives"))
+                                       (APPLY_MOUNTS, "drives"),
+                                       (APPLY_PEGBOARD, "pegboard"))
                  if present(applier)]
     # The switch for the wake after a resume. Two lines rather than one with a
     # `*`: the argument is one of two words, so both words fit in the rule and

@@ -43,13 +43,14 @@ from . import cec
 INSTALL_DIR = "/var/lib/steamos-utility-center"
 
 LED = "led"
+PEGBOARD = "pegboard"
 POWER = "power"
 CEC = "cec"
 SYSTEM = "system"
 
 # The order of the pages of the panel, so a list of modules reads in the order
 # a person meets them.
-ORDER = (LED, POWER, CEC, SYSTEM)
+ORDER = (LED, PEGBOARD, POWER, CEC, SYSTEM)
 
 
 # What each module is, in the words the panel puts on the page.
@@ -71,6 +72,16 @@ SAYS = {
                   "leds-valve-shim kernel module, PlatformIO for the ESP "
                   "firmware, and the two watchers that run in your session.",
         "needs": "an ESP board on USB, with a WS2812 strip on it.",
+    },
+    PEGBOARD: {
+        "title": "Pegboard",
+        "does": "Lights the Nanoleaf Pegboard Desk Dock, which has no "
+                "program for Linux of its own. It draws one effect that you "
+                "pick, and it runs on its own: nothing that Steam shows on "
+                "the LED bar reaches it.",
+        "brings": "a service for the board, a settings file of its own, and "
+                  "a program that applies a change.",
+        "needs": "a Nanoleaf Pegboard Desk Dock on USB.",
     },
     POWER: {
         "title": "CPU and GPU power",
@@ -110,6 +121,8 @@ SAYS = {
 # needs that home and a constant cannot hold it. See installed().
 MARK = {
     LED: os.path.join(INSTALL_DIR, "steamos-utility-center-config-apply"),
+    PEGBOARD: os.path.join(INSTALL_DIR,
+                           "steamos-utility-center-pegboard-apply"),
     POWER: os.path.join(INSTALL_DIR, "steamos-utility-center-power-apply"),
     SYSTEM: os.path.join(INSTALL_DIR, "steamos-utility-center-mounts-apply"),
 }

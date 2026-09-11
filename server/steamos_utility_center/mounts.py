@@ -505,6 +505,12 @@ PROJECT_FILES = (
     # Controller wake. The link is what says the switch is on, so a update
     # that keeps the unit and loses the link is a machine that no longer
     # wakes for a controller. See scripts/wake-apply.sh.
+    # The Nanoleaf board: its service, the link that says it is on, and its
+    # settings. See server/steamos_utility_center/pegboard.py.
+    "/etc/steamos-utility-center-pegboard.conf",
+    "/etc/systemd/system/steamos-utility-center-pegboard.service",
+    "/etc/systemd/system/multi-user.target.wants/"
+    "steamos-utility-center-pegboard.service",
     "/etc/systemd/system/steamos-utility-center-wake.service",
     "/etc/systemd/system/multi-user.target.wants/"
     "steamos-utility-center-wake.service",

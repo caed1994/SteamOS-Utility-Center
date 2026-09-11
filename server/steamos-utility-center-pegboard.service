@@ -1,0 +1,31 @@
+[Unit]
+# Lights the Nanoleaf Pegboard Desk Dock.
+#
+# The board has no network. It hangs on USB-C and reports itself as a HID
+# device, and the program of Nanoleaf that drives it is for Windows and macOS
+# only. This service is what lights it on SteamOS.
+#
+# It runs on its own. It reads nothing that Steam shows on the LED bar, it
+# gets no notification, and no scene of the desktop reaches it. A person sets
+# one effect in the settings file and the board draws it.
+#
+# A board that is not plugged in is not a failure: the service looks for it
+# again, and the wait grows to half a minute.
+#
+# Log: journalctl -u steamos-utility-center-pegboard
+Description=Light the Nanoleaf Pegboard Desk Dock
+Documentation=https://github.com/caed1994/SteamOS-Utility-Center
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=@INSTALL_DIR@/steamos-utility-center-pegboard
+Restart=on-failure
+RestartSec=5
+# The board holds the last frame it was sent, so a service that stops without
+# a dark frame leaves the board lit. The service sends one; this is the limit
+# on how long it has to.
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

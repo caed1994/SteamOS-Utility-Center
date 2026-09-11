@@ -590,6 +590,54 @@ remove_cec() {
     remove_cec_toolkit || true
 }
 
+# -- pegboard: the Nanoleaf board ---------------------------------------------
+
+install_pegboard() {
+    say "Installing the Pegboard module"
+    install -m 0755 "$SOURCE_DIR/scripts/apply-pegboard.sh" \
+        "$PEGBOARD_APPLIER_PATH"
+    install -m 0755 "$SOURCE_DIR/server/steamos-utility-center-pegboard" \
+        "$INSTALL_DIR/steamos-utility-center-pegboard"
+
+    if [[ -f "$PEGBOARD_CONFIG_PATH" ]]; then
+        say "Keeping existing $PEGBOARD_CONFIG_PATH"
+    else
+        say "Writing $PEGBOARD_CONFIG_PATH"
+        install -m 0644 \
+            "$SOURCE_DIR/server/steamos-utility-center-pegboard.conf" \
+            "$PEGBOARD_CONFIG_PATH"
+    fi
+
+    say "Installing systemd unit to $PEGBOARD_UNIT_PATH"
+    sed "s|@INSTALL_DIR@|$INSTALL_DIR|g" \
+        "$SOURCE_DIR/server/steamos-utility-center-pegboard.service" \
+        > "$PEGBOARD_UNIT_PATH"
+    chmod 0644 "$PEGBOARD_UNIT_PATH"
+    systemctl daemon-reload
+
+    # Started here, because a board that is plugged in must light up after
+    # an install and not after a reboot. Enabled here for the same reason:
+    # the module is the asking, and a person who installs it asked.
+    #
+    # A board that is not plugged in leaves the service looking for one, which
+    # costs nothing and needs no message.
+    systemctl enable --now "$(basename "$PEGBOARD_UNIT_PATH")" \
+        >/dev/null 2>&1 || true
+}
+
+remove_pegboard() {
+    say "Removing the Pegboard module"
+    # Stop it before the files go. The service sends a dark frame when it
+    # stops, and the board holds the last frame it was given: a service that
+    # is killed with its files leaves the board lit with nothing to turn it
+    # off. See server/steamos_utility_center/pegboard.py.
+    systemctl disable --now "$NAME-pegboard.service" 2>/dev/null || true
+    rm -f "$PEGBOARD_UNIT_PATH" "$PEGBOARD_APPLIER_PATH" \
+        "$INSTALL_DIR/steamos-utility-center-pegboard"
+    systemctl daemon-reload
+    say "  the settings in $PEGBOARD_CONFIG_PATH stay, for a second install"
+}
+
 # -- system: the drives and Game Mode ----------------------------------------
 
 install_system() {
