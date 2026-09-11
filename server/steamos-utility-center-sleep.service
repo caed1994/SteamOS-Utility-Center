@@ -1,0 +1,33 @@
+[Unit]
+# Tells the LED strip that the machine goes to sleep.
+#
+# The strip carries on by itself while the machine sleeps, because the ESP
+# keeps drawing what it was given last. It must get the word before systemd
+# freezes the service, and this unit is that moment.
+#
+# It is a unit in /etc and not a program in /usr/lib/systemd/system-sleep,
+# which is where this lived before. A SteamOS update rebuilds /usr, so the
+# hook was gone after each update and the strip went dark at the next
+# suspend. /etc is what the keep-list carries. See
+# server/steamos_utility_center/mounts.py.
+#
+# Before=sleep.target and WantedBy=sleep.target is the pair that runs a unit
+# ahead of a suspend, a hibernate and a hybrid sleep alike: each of those
+# targets pulls in sleep.target. DefaultDependencies=no keeps this unit out
+# of the ordinary boot and shutdown ordering, which a sleep is not part of.
+Description=Tell the LED strip that the machine sleeps
+Documentation=https://github.com/caed1994/SteamOS-Utility-Center
+DefaultDependencies=no
+Before=sleep.target
+
+[Service]
+Type=oneshot
+ExecStart=@INSTALL_DIR@/steamos-utility-center-sleep pre
+# The suspend waits for this unit. Without a limit of its own it gets the
+# default of the machine, which is a minute and a half, so one service that
+# does not answer holds the machine for that long. The script waits half a
+# second for the answer, and this is the room it needs and no more.
+TimeoutStartSec=15
+
+[Install]
+WantedBy=sleep.target

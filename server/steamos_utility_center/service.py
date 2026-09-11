@@ -80,7 +80,7 @@ RESUME_WORD = "resume"
 #
 # Without it the hook waited half a second and hoped. It waits for this now,
 # which is some tens of milliseconds on a machine that answers and the same
-# half second on one that does not. See systemd-sleep/steamos-utility-center.
+# half second on one that does not. See scripts/sleep-led.sh.
 STANDBY_DONE = "standby-done"
 
 # The maximum length of the standby state while this process runs.

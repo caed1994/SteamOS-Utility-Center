@@ -544,8 +544,7 @@ class SleepTest(unittest.TestCase):
     follows and the board holds the last one it was given.
     """
 
-    HOOK = os.path.join(REPO, "systemd-sleep",
-                        "steamos-utility-center-pegboard")
+    HOOK = os.path.join(REPO, "scripts", "sleep-pegboard.sh")
 
     def setUp(self):
         with open(self.HOOK) as handle:
@@ -597,6 +596,73 @@ class SleepTest(unittest.TestCase):
         self.assertIn("exit 0", self.text)
 
 
+class SleepUnitTest(unittest.TestCase):
+    """The two units that call that helper, and why they are units.
+
+    The helper was a program in /usr/lib/systemd/system-sleep, which systemd
+    runs with "pre" before a sleep and "post" after a wake. That worked, and
+    a SteamOS update rebuilds /usr and took the file away each time, so the
+    board stayed lit at the first suspend after an update. The keep-list
+    carries /etc, so the same two moments are asked for with two units there.
+    See server/steamos_utility_center/mounts.py.
+    """
+
+    SLEEP = os.path.join(REPO, "server",
+                         "steamos-utility-center-pegboard-sleep.service")
+    RESUME = os.path.join(REPO, "server",
+                          "steamos-utility-center-pegboard-resume.service")
+    HELPER = "@INSTALL_DIR@/steamos-utility-center-pegboard-sleep"
+
+    def setUp(self):
+        with open(self.SLEEP) as handle:
+            self.sleep = handle.read()
+        with open(self.RESUME) as handle:
+            self.resume = handle.read()
+
+    def test_the_board_goes_dark_before_the_machine_sleeps(self):
+        """Before=sleep.target, and systemd waits for a oneshot unit.
+
+        That wait is what puts the dark frame on the wire. After sleep.target
+        the service is frozen, and the board holds the last picture it drew.
+        """
+        self.assertIn("Before=sleep.target", self.sleep)
+        self.assertIn("Type=oneshot", self.sleep)
+        self.assertIn("ExecStart=%s pre" % self.HELPER, self.sleep)
+
+    def test_one_link_covers_every_kind_of_sleep(self):
+        """suspend, hibernate and hybrid-sleep each pull in sleep.target."""
+        self.assertIn("WantedBy=sleep.target", self.sleep)
+
+    def test_the_suspend_is_not_held_for_the_default_time(self):
+        """A oneshot with no limit of its own gets a minute and a half.
+
+        The service gets ten seconds to send its dark frame and stop, and
+        this is that with room for the systemctl around it.
+        """
+        self.assertIn("TimeoutStartSec=", self.sleep)
+
+    def test_the_board_is_lit_again_after_the_wake(self):
+        """suspend.target is reached after the sleeping is over.
+
+        sleep.target is reached on the way down, so the resume side cannot
+        use it.
+        """
+        self.assertIn("After=suspend.target", self.resume)
+        self.assertIn("WantedBy=suspend.target", self.resume)
+        self.assertIn("ExecStart=%s post" % self.HELPER, self.resume)
+
+    def test_neither_unit_writes_to_the_board(self):
+        """The service holds the device open. See the helper for why.
+
+        The comments are cut out first, the way the helper's own test does.
+        """
+        for name, text in (("sleep", self.sleep), ("resume", self.resume)):
+            code = "\n".join(line for line in text.splitlines()
+                              if not line.lstrip().startswith("#"))
+            for named in ("hidraw", "37fa"):
+                self.assertNotIn(named, code, "%s: %s" % (name, named))
+
+
 class InstallerTest(unittest.TestCase):
     """What install.sh and uninstall.sh do with it."""
 
@@ -606,17 +672,43 @@ class InstallerTest(unittest.TestCase):
         with open(os.path.join(REPO, "uninstall.sh")) as handle:
             self.uninstall = handle.read()
 
-    def test_the_module_installs_the_suspend_hook(self):
+    def test_the_module_installs_the_suspend_helper_and_its_units(self):
         block = self.install.split("install_pegboard()")[1].split(
             "\nremove_pegboard")[0]
-        self.assertIn("PEGBOARD_SLEEP_HOOK_PATH", block)
-        self.assertIn("systemd-sleep/steamos-utility-center-pegboard", block)
+        self.assertIn("scripts/sleep-pegboard.sh", block)
+        for wanted in ("PEGBOARD_SLEEP_HELPER_PATH",
+                       "PEGBOARD_SLEEP_UNIT_PATH",
+                       "PEGBOARD_RESUME_UNIT_PATH"):
+            self.assertIn(wanted, block, wanted)
 
-    def test_removing_the_module_takes_the_hook_away(self):
-        """A hook for a unit that is gone stops a suspend for nothing."""
+    def test_the_units_are_switched_on(self):
+        """A unit with no link in sleep.target.wants never runs."""
+        block = self.install.split("install_pegboard()")[1].split(
+            "\nremove_pegboard")[0]
+        self.assertIn("enable", block.split("PEGBOARD_RESUME_UNIT_PATH")[1])
+
+    def test_removing_the_module_takes_the_units_away(self):
+        """A link to a unit that is gone is a message at every suspend."""
         block = self.install.split("remove_pegboard()")[1].split("\n# --")[0]
-        self.assertIn("PEGBOARD_SLEEP_HOOK_PATH", block)
-        self.assertIn("PEGBOARD_SLEEP_HOOK_PATH", self.uninstall)
+        disabled = block.index("-pegboard-sleep.service")
+        deleted = block.index("PEGBOARD_SLEEP_UNIT_PATH")
+        self.assertLess(disabled, deleted)
+        for wanted in ("PEGBOARD_SLEEP_HELPER_PATH",
+                       "PEGBOARD_SLEEP_UNIT_PATH",
+                       "PEGBOARD_RESUME_UNIT_PATH"):
+            self.assertIn(wanted, block, wanted)
+            self.assertIn(wanted, self.uninstall, wanted)
+
+    def test_an_older_install_loses_its_copy_under_usr(self):
+        """Or systemd runs the program there and the units as well.
+
+        Each suspend then does the work two times. That is the fault this
+        project already met in the CEC toolkit. See LEGACY_SLEEP_HOOKS in
+        scripts/user-unit.sh.
+        """
+        block = self.install.split("install_pegboard()")[1].split(
+            "\nremove_pegboard")[0]
+        self.assertIn("remove_legacy_sleep_hooks", block)
 
     def test_the_module_installs_its_service_and_its_settings(self):
         block = self.install.split("install_pegboard()")[1].split(

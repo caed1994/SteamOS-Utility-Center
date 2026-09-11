@@ -265,7 +265,7 @@ esac
 
 
 UNINSTALLER = os.path.join(HERE, "..", "uninstall.sh")
-SLEEP_HOOK = os.path.join(HERE, "..", "systemd-sleep", "steamos-utility-center")
+SLEEP_HOOK = os.path.join(HERE, "..", "scripts", "sleep-led.sh")
 
 
 class RootfsTest(unittest.TestCase):
@@ -537,7 +537,7 @@ class SleepHookTest(unittest.TestCase):
     def _run(self, action, config_path, timeout=10, **environment):
         env = dict(os.environ, STEAMOS_LED_CONFIG=config_path)
         env.update(environment)
-        return subprocess.run(["sh", SLEEP_HOOK, action, "suspend"],
+        return subprocess.run(["sh", SLEEP_HOOK, action],
                               capture_output=True, text=True, env=env,
                               timeout=timeout)
 
@@ -671,6 +671,70 @@ class SleepHookTest(unittest.TestCase):
     def test_it_parses(self):
         done = subprocess.run(["sh", "-n", SLEEP_HOOK])
         self.assertEqual(done.returncode, 0)
+
+
+class SleepUnitTest(unittest.TestCase):
+    """The two units that call that helper, and why they are units.
+
+    The helper was a program in /usr/lib/systemd/system-sleep, which systemd
+    runs with "pre" before a sleep and "post" after a wake. That worked, and
+    a SteamOS update rebuilds /usr and took the file away each time. The
+    keep-list carries /etc, so the same two moments are asked for with two
+    units there. See server/steamos_utility_center/mounts.py.
+    """
+
+    SLEEP = os.path.join(HERE, "..", "server",
+                         "steamos-utility-center-sleep.service")
+    RESUME = os.path.join(HERE, "..", "server",
+                          "steamos-utility-center-resume.service")
+
+    def setUp(self):
+        with open(self.SLEEP) as handle:
+            self.sleep = handle.read()
+        with open(self.RESUME) as handle:
+            self.resume = handle.read()
+
+    def test_the_word_goes_out_before_the_machine_sleeps(self):
+        """Before=sleep.target, and systemd waits for a oneshot unit.
+
+        After sleep.target the service is frozen and nothing reads the pipe.
+        """
+        self.assertIn("Before=sleep.target", self.sleep)
+        self.assertIn("Type=oneshot", self.sleep)
+        self.assertIn("ExecStart=@INSTALL_DIR@/steamos-utility-center-sleep pre",
+                      self.sleep)
+
+    def test_one_link_covers_every_kind_of_sleep(self):
+        """suspend, hibernate and hybrid-sleep each pull in sleep.target."""
+        self.assertIn("WantedBy=sleep.target", self.sleep)
+
+    def test_the_suspend_is_not_held_for_the_default_time(self):
+        """A oneshot with no limit of its own gets a minute and a half.
+
+        One service that stops answering then holds the machine awake for
+        that long, with the screen already off.
+        """
+        self.assertIn("TimeoutStartSec=", self.sleep)
+
+    def test_the_other_word_goes_out_after_the_wake(self):
+        """suspend.target is reached after the sleeping is over.
+
+        sleep.target is reached on the way down, so the resume side cannot
+        use it. See the four targets named here.
+        """
+        self.assertIn("After=suspend.target", self.resume)
+        self.assertIn("WantedBy=suspend.target", self.resume)
+        self.assertIn(
+            "ExecStart=@INSTALL_DIR@/steamos-utility-center-sleep post",
+            self.resume)
+
+    def test_both_units_name_the_helper_the_installer_writes(self):
+        """One file for the two sides, called with the two words."""
+        with open(USER_UNIT) as handle:
+            self.assertIn('SLEEP_HELPER_PATH="$INSTALL_DIR/$NAME-sleep"',
+                          handle.read())
+        with open(INSTALLER) as handle:
+            self.assertIn("scripts/sleep-led.sh", handle.read())
 
 
 class InstallerShapeTest(unittest.TestCase):
@@ -816,9 +880,13 @@ class InstallerShapeTest(unittest.TestCase):
         An unlock around each write left the rootfs locked again at the write of
         the suspend hook into /usr/lib. Under set -e that ends the install. The
         script now unlocks the rootfs one time, before the first question.
+
+        The suspend helper is in /var now and the units that call it are in
+        /etc, so that one write is gone. The installer still takes the old
+        copy out of /usr/lib, and that removal is the step this watches.
         """
         unlock = self.text.index("\nunlock_rootfs || true")
-        for path, what in (('SLEEP_HOOK_PATH"', "the suspend hook"),
+        for path, what in (("remove_legacy_sleep_hooks", "the old suspend hook"),
                            ("pacman -S --needed", "installing packages"),
                            ('"$dir/install.sh"', "the kernel module")):
             self.assertLess(unlock, self.text.index(path),
@@ -859,17 +927,20 @@ class InstallerShapeTest(unittest.TestCase):
     def test_the_uninstaller_unlocks_before_it_removes_anything(self):
         """The order, and a measurement gave this result.
 
-        The suspend hook is under /usr/lib/systemd. `rm -f` on a locked rootfs
+        The suspend hook was under /usr/lib/systemd. `rm -f` on a locked rootfs
         does not return with a success. It fails with "Read-only file system",
         and under set -e that ended the uninstall after three steps. The udev
         rule was gone, and the service files, the command link and the
         configuration were still on disk, with no message. The uninstaller had
         its own unlock, but only before the kernel module, forty lines below.
+
+        The hook is a unit in /etc now. The copy that an earlier install left
+        in /usr/lib is still removed here, so the order still counts.
         """
         with open(UNINSTALLER) as handle:
             text = handle.read()
         unlock = text.index("\nunlock_rootfs || true")
-        for path, what in (('rm -f "$SLEEP_HOOK_PATH"', "the suspend hook"),
+        for path, what in (("remove_legacy_sleep_hooks", "the old suspend hook"),
                            ("\n    remove_stale_shims", "the kernel module")):
             self.assertLess(unlock, text.index(path),
                             "%s is removed before the rootfs is unlocked"

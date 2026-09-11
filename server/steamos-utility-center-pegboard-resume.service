@@ -1,0 +1,15 @@
+[Unit]
+# Lights the Nanoleaf board again after a wake.
+#
+# The other half of steamos-utility-center-pegboard-sleep.service. See there
+# for why the two sides name different targets.
+Description=Light the Nanoleaf Pegboard Desk Dock again after a wake
+Documentation=https://github.com/caed1994/SteamOS-Utility-Center
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=@INSTALL_DIR@/steamos-utility-center-pegboard-sleep post
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

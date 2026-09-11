@@ -325,6 +325,57 @@ class KeepListTest(unittest.TestCase):
         self.assertIn("/etc/steamos-utility-center.conf", said)
 
 
+class ProjectUnitTest(unittest.TestCase):
+    """Each unit the keep-list names, against the links that switch it on.
+
+    A unit that an update carries without its link is a file that systemd
+    loads and never starts. Nothing reports it: every file is where it
+    belongs, and the feature is simply gone. This reads the WantedBy of each
+    unit template and asks for the matching link by name.
+    """
+
+    SERVER = os.path.join(HERE, "..", "server")
+    UNIT_DIR = "/etc/systemd/system"
+
+    def templates(self):
+        """The unit templates that the keep-list names, with their text."""
+        for path in mounts.PROJECT_FILES:
+            name = os.path.basename(path)
+            if os.path.dirname(path) != self.UNIT_DIR:
+                continue
+            if not name.endswith(".service"):
+                continue
+            template = os.path.join(self.SERVER, name)
+            self.assertTrue(os.path.exists(template),
+                            "%s is on the keep-list and %s is not in the "
+                            "repository" % (path, template))
+            with open(template) as handle:
+                yield name, handle.read()
+
+    def test_the_list_names_the_units_of_this_project(self):
+        self.assertTrue(list(self.templates()))
+
+    def test_every_target_a_unit_asks_for_has_its_link_on_the_list(self):
+        for name, text in self.templates():
+            for line in text.splitlines():
+                if not line.startswith("WantedBy="):
+                    continue
+                for target in line.split("=", 1)[1].split():
+                    link = "%s/%s.wants/%s" % (self.UNIT_DIR, target, name)
+                    self.assertIn(link, mounts.PROJECT_FILES, link)
+
+    def test_every_link_on_the_list_names_a_unit_on_the_list(self):
+        """The other direction: a link to a unit that nothing carries."""
+        for path in mounts.PROJECT_FILES:
+            room = os.path.dirname(path)
+            if not room.startswith(self.UNIT_DIR + "/"):
+                continue
+            if not room.endswith(".wants"):
+                continue
+            unit = os.path.join(self.UNIT_DIR, os.path.basename(path))
+            self.assertIn(unit, mounts.PROJECT_FILES, path)
+
+
 class StaleTest(unittest.TestCase):
     """A unit that this project wrote and nobody wants any more."""
 

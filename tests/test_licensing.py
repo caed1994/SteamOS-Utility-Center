@@ -22,8 +22,7 @@ LICENCE = "GPL-3.0-or-later"
 # with no language in their name. A script with the name
 # steamos-utility-center is source code.
 SUFFIXES = (".py", ".sh", ".cpp", ".h")
-SCRIPTS = ("server/steamos-utility-center", "gui/steamos-utility-center-panel",
-           "systemd-sleep/steamos-utility-center")
+SCRIPTS = ("server/steamos-utility-center", "gui/steamos-utility-center-panel")
 
 # Code under the licence of another project. This project cannot change that
 # licence. The kernel shim carries its own SPDX line with GPL-2.0+. The

@@ -6,8 +6,8 @@
 # Log: journalctl --user -u steamos-utility-center-phone -f
 Description=Flash the LED bar on the phone notifications KDE Connect forwards
 # Ordering only, deliberately NOT PartOf=: that would stop this whenever the
-# desktop session goes away - which is what switching to Game Mode does, and
-# Game Mode never brings the target back.
+# desktop session goes away. A switch to Game Mode does exactly that, and Game
+# Mode never brings the target back.
 After=graphical-session.target
 
 [Service]

@@ -5,12 +5,16 @@
 # Hand the LED strip over to the ESP while the machine sleeps, and take it
 # back on the way out.
 #
-# This is installed to /usr/lib/systemd/system-sleep/. systemd runs each
-# program there with "pre <action>" before a suspend and "post <action>" after
-# a wake, and it waits for each one to finish.
+# Two units call this: steamos-utility-center-sleep.service with "pre" before
+# a suspend, and steamos-utility-center-resume.service with "post" after a
+# wake. systemd waits for the first one, and that wait is the point of it.
+# The strip must get the message before systemd freezes the service.
 #
-# That is why this is the correct place. The strip must get the message
-# *before* systemd freezes the service, and nothing else knows that moment.
+# This was a program in /usr/lib/systemd/system-sleep before, which systemd
+# runs at the same two moments with the same two words. A SteamOS update
+# rebuilds /usr and took the file away each time, so the strip went dark at
+# the first suspend after an update. The units are in /etc, which the
+# keep-list carries. See server/steamos_utility_center/mounts.py.
 #
 # It writes a word into the service's trigger pipe rather than talking to the
 # serial port, because the service holds that port exclusively. The pipe is

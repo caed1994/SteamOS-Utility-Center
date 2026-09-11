@@ -5,13 +5,19 @@
 # Take the Nanoleaf board dark while the machine sleeps, and light it again
 # on the way out.
 #
-# This is installed to /usr/lib/systemd/system-sleep/. systemd runs each
-# program there with "pre <action>" before a suspend and "post <action>" after
-# a wake, and it waits for each one to finish.
+# Two units call this: steamos-utility-center-pegboard-sleep.service with
+# "pre" before a suspend, and steamos-utility-center-pegboard-resume.service
+# with "post" after a wake. systemd waits for the first one.
 #
-# That wait is why this is the correct place. The board holds the last frame
+# This was a program in /usr/lib/systemd/system-sleep before, which systemd
+# runs at the same two moments with the same two words. A SteamOS update
+# rebuilds /usr and took the file away each time, so the board stayed lit at
+# the first suspend after an update. The units are in /etc, which the
+# keep-list carries. See server/steamos_utility_center/mounts.py.
+#
+# That wait is what this needs. The board holds the last frame
 # it was sent, and a suspend only freezes the service: no frame follows, so
-# the board stays lit at whatever it was drawing. A shutdown always worked,
+# the board stays lit at the last picture it drew. A shutdown always worked,
 # because systemd stops the unit there and the service sends a dark frame as
 # it goes.
 #

@@ -318,7 +318,7 @@ class UninstallerTest(unittest.TestCase):
         for marker in ('rm -f "$UNIT_PATH"', 'rm -f "$POWER_UNIT_PATH"',
                        'rm -f "$MOUNTS_UNIT_PATH"', "remove_cec_toolkit",
                        "remove_decky_plugin", "remove_user_units",
-                       'rm -f "$UDEV_PATH"', 'rm -f "$SLEEP_HOOK_PATH"',
+                       'rm -f "$UDEV_PATH"', 'rm -f "$SLEEP_HELPER_PATH"',
                        'rm -f "$SUDO_RULE_PATH"'):
             self.assertIn(marker, self.text, marker)
 

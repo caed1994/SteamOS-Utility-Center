@@ -187,8 +187,11 @@ remove_mount_units
 # and the board holds the last frame it was given. A service killed with its
 # files leaves the board lit and nothing to turn it off.
 systemctl disable --now "$NAME-pegboard.service" 2>/dev/null || true
+systemctl disable "$NAME-pegboard-sleep.service" \
+  "$NAME-pegboard-resume.service" >/dev/null 2>&1 || true
 rm -f "$PEGBOARD_UNIT_PATH" "$PEGBOARD_APPLIER_PATH" \
-  "$PEGBOARD_SLEEP_HOOK_PATH" "$INSTALL_DIR/$NAME-pegboard"
+  "$PEGBOARD_SLEEP_HELPER_PATH" "$PEGBOARD_SLEEP_UNIT_PATH" \
+  "$PEGBOARD_RESUME_UNIT_PATH" "$INSTALL_DIR/$NAME-pegboard"
 
 # Controller wake, and the sysfs values it wrote.
 #
@@ -227,7 +230,13 @@ if [[ -n "${WATCHER_USER:-}" ]] && linger_is_on "$WATCHER_USER"; then
 fi
 
 rm -f "$UDEV_PATH"
-rm -f "$SLEEP_HOOK_PATH"
+# The suspend helper and the two units that call it. Disabled first, or the
+# links in sleep.target.wants and suspend.target.wants stay behind and name a
+# unit that is gone. See scripts/sleep-led.sh.
+systemctl disable "$NAME-sleep.service" "$NAME-resume.service" \
+  >/dev/null 2>&1 || true
+rm -f "$SLEEP_HELPER_PATH" "$SLEEP_UNIT_PATH" "$RESUME_UNIT_PATH"
+remove_legacy_sleep_hooks
 udevadm control --reload >/dev/null 2>&1 || true
 
 # Only when the link is still ours. A person who put their own

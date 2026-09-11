@@ -42,11 +42,13 @@ OTHERS = ("leds-valve-shim", "cec-toolkit")
 OURS_IN_OTHERS = ("cec-toolkit/README.md", "cec-toolkit/ORIGIN",
                   "cec-toolkit/bin/steamos-cec-register")
 
-SUFFIXES = (".py", ".sh", ".md")
+# A unit file is in this list because its comments carry the reason for each
+# line in it. See server/steamos-utility-center-sleep.service, which is where
+# the ordering of a suspend is written down.
+SUFFIXES = (".py", ".sh", ".md", ".service")
 SCRIPTS = ("server/steamos-utility-center", "server/steamos-utility-center-power",
            "server/steamos-utility-centerctl",
            "gui/steamos-utility-center-panel",
-           "systemd-sleep/steamos-utility-center",
            "cec-toolkit/bin/steamos-cec-register")
 
 # A sentence in descriptive text. An instruction is shorter, but a program

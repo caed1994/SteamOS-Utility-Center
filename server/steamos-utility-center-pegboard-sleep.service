@@ -1,0 +1,28 @@
+[Unit]
+# Takes the Nanoleaf board dark before the machine sleeps.
+#
+# The board holds the last frame it was sent, and a suspend only freezes the
+# service: no frame follows, so the board stays lit at the last picture it
+# drew. A shutdown always worked, because systemd stops the unit there and
+# the service sends a dark frame as it goes.
+#
+# It is a unit in /etc and not a program in /usr/lib/systemd/system-sleep,
+# which is where this lived before. A SteamOS update rebuilds /usr, so the
+# hook was gone after each update and the board stayed lit at the next
+# suspend. /etc is what the keep-list carries. See
+# server/steamos_utility_center/mounts.py.
+Description=Take the Nanoleaf Pegboard Desk Dock dark before sleep
+Documentation=https://github.com/caed1994/SteamOS-Utility-Center
+DefaultDependencies=no
+Before=sleep.target
+
+[Service]
+Type=oneshot
+ExecStart=@INSTALL_DIR@/steamos-utility-center-pegboard-sleep pre
+# The suspend waits for this unit, which is what puts the dark frame on the
+# wire before the freeze. The service gets ten seconds to stop, and this is
+# that with room for the systemctl around it.
+TimeoutStartSec=15
+
+[Install]
+WantedBy=sleep.target

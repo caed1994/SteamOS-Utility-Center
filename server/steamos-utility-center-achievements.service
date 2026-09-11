@@ -5,24 +5,26 @@
 # Log: journalctl --user -u steamos-utility-center-achievements -f
 Description=Flash the LED bar when a Steam achievement unlocks
 # Ordering only, deliberately NOT PartOf=: that would stop the watcher whenever
-# the desktop session goes away - which is what switching to Game Mode does,
-# and Game Mode never brings the target back.
+# the desktop session goes away. A switch to Game Mode does exactly that, and
+# Game Mode never brings the target back.
 After=graphical-session.target
 
 [Service]
 Type=simple
 ExecStart=@INSTALL_DIR@/steamos-utility-center --watch-achievements
-# Not just crash recovery - it is how the watcher works. A process that has
-# initialised Steamworks stays registered as an instance of that game, and
-# Steam will not report the game stopped while that lasts (SteamAPI_Shutdown
-# does not clear it, only exiting does). So one game session per process.
+# Not crash recovery only: it is how the watcher works. A process that
+# initialises Steamworks stays registered as an instance of that game, and
+# Steam does not report the game stopped while that lasts (SteamAPI_Shutdown
+# does not clear it, and an exit is the one thing that does). So one game
+# session per process.
 Restart=always
 # Long enough for Steam to finish stopping the game: coming back too early
 # would find the app still present and block the shutdown all over again.
 RestartSec=20
-# Exit 3 is "both notification switches are off" - a setting, not a failure,
-# and no amount of restarting will change it. Without these the journal reports
-# a failure for doing exactly as it was told. See NOTHING_TO_WATCH_EXIT.
+# Exit 3 is "both notification switches are off". That is a setting and not a
+# failure, and no amount of restarting changes it. Without these the journal
+# reports a failure for doing exactly as it was told. See
+# NOTHING_TO_WATCH_EXIT.
 RestartPreventExitStatus=3
 SuccessExitStatus=3
 

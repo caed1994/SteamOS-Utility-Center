@@ -456,18 +456,23 @@ install_led() {
     udevadm control --reload >/dev/null 2>&1 || warn "could not reload udev rules"
     udevadm trigger --subsystem-match=tty >/dev/null 2>&1 || true
 
-    say "Installing the suspend hook to $SLEEP_HOOK_PATH"
-    # The program that tells the strip about a suspend. Without it, the strip
-    # goes dark during a suspend, as it did before.
+    # What tells the strip about a suspend. Without it, the strip goes dark
+    # during a suspend, as it did before.
     #
-    # A system with no /usr/lib/systemd/system-sleep thus has one feature less.
-    # It is not a failed installation.
-    if [ -d "$(dirname "$SLEEP_HOOK_PATH")" ]; then
-        install -m 0755 "$SOURCE_DIR/systemd-sleep/steamos-utility-center" \
-            "$SLEEP_HOOK_PATH"
-    else
-        warn "no $(dirname "$SLEEP_HOOK_PATH") - the strip will go dark in standby"
-    fi
+    # The helper is beside the other installed files and the two units that
+    # call it are in /etc, which is what the keep-list carries. Both were one
+    # program in /usr/lib/systemd/system-sleep before, and a SteamOS update
+    # took it away each time. See scripts/sleep-led.sh.
+    say "Installing the suspend helper to $SLEEP_HELPER_PATH"
+    install -m 0755 "$SOURCE_DIR/scripts/sleep-led.sh" "$SLEEP_HELPER_PATH"
+    remove_legacy_sleep_hooks
+
+    say "Installing the suspend units to $UNIT_DIR"
+    write_unit "$SOURCE_DIR/server/$NAME-sleep.service" "$SLEEP_UNIT_PATH"
+    write_unit "$SOURCE_DIR/server/$NAME-resume.service" "$RESUME_UNIT_PATH"
+    systemctl daemon-reload
+    systemctl enable "$NAME-sleep.service" "$NAME-resume.service" \
+        >/dev/null 2>&1 || warn "could not enable the suspend units"
 
     say "Installing systemd unit to $UNIT_PATH"
     sed "s|@INSTALL_DIR@|$INSTALL_DIR|g" \
@@ -488,8 +493,15 @@ remove_led() {
     # A stop makes the strip dark before the process exits. A strip that keeps
     # the last frame after a removal is a strip that looks installed.
     systemctl disable --now "$NAME.service" 2>/dev/null || true
+    # The suspend units are disabled before the files go: a link in
+    # sleep.target.wants that names a unit which is not there any more is a
+    # message on the console at every suspend.
+    systemctl disable "$NAME-sleep.service" "$NAME-resume.service" \
+        >/dev/null 2>&1 || true
     rm -f "$UNIT_PATH" "$INSTALL_DIR/steamos-utility-center-config-apply"
-    rm -f "$UDEV_PATH" "$SLEEP_HOOK_PATH"
+    rm -f "$UDEV_PATH" "$SLEEP_HELPER_PATH" "$SLEEP_UNIT_PATH" \
+        "$RESUME_UNIT_PATH"
+    remove_legacy_sleep_hooks
     udevadm control --reload >/dev/null 2>&1 || true
     systemctl daemon-reload
     remove_user_units
@@ -611,17 +623,20 @@ install_pegboard() {
     # What takes the board dark for a suspend. A shutdown needs nothing: the
     # unit is stopped there and the service sends a dark frame as it goes.
     #
-    # A system with no /usr/lib/systemd/system-sleep has one feature less. It
-    # is not a failed installation.
-    if [[ -d "$(dirname "$PEGBOARD_SLEEP_HOOK_PATH")" ]]; then
-        say "Installing the suspend hook to $PEGBOARD_SLEEP_HOOK_PATH"
-        install -m 0755 \
-            "$SOURCE_DIR/systemd-sleep/steamos-utility-center-pegboard" \
-            "$PEGBOARD_SLEEP_HOOK_PATH"
-    else
-        warn "no $(dirname "$PEGBOARD_SLEEP_HOOK_PATH") - the board will stay"
-        warn "lit while the machine sleeps"
-    fi
+    # The helper is beside the other installed files and the two units that
+    # call it are in /etc, which is what the keep-list carries. Both were one
+    # program in /usr/lib/systemd/system-sleep before, and a SteamOS update
+    # took it away each time. See scripts/sleep-pegboard.sh.
+    say "Installing the suspend helper to $PEGBOARD_SLEEP_HELPER_PATH"
+    install -m 0755 "$SOURCE_DIR/scripts/sleep-pegboard.sh" \
+        "$PEGBOARD_SLEEP_HELPER_PATH"
+    remove_legacy_sleep_hooks
+
+    say "Installing the suspend units to $UNIT_DIR"
+    write_unit "$SOURCE_DIR/server/$NAME-pegboard-sleep.service" \
+        "$PEGBOARD_SLEEP_UNIT_PATH"
+    write_unit "$SOURCE_DIR/server/$NAME-pegboard-resume.service" \
+        "$PEGBOARD_RESUME_UNIT_PATH"
 
     say "Installing systemd unit to $PEGBOARD_UNIT_PATH"
     sed "s|@INSTALL_DIR@|$INSTALL_DIR|g" \
@@ -638,6 +653,9 @@ install_pegboard() {
     # costs nothing and needs no message.
     systemctl enable --now "$(basename "$PEGBOARD_UNIT_PATH")" \
         >/dev/null 2>&1 || true
+    systemctl enable "$NAME-pegboard-sleep.service" \
+        "$NAME-pegboard-resume.service" >/dev/null 2>&1 \
+        || warn "could not enable the suspend units"
 }
 
 remove_pegboard() {
@@ -647,9 +665,16 @@ remove_pegboard() {
     # is killed with its files leaves the board lit with nothing to turn it
     # off. See server/steamos_utility_center/pegboard.py.
     systemctl disable --now "$NAME-pegboard.service" 2>/dev/null || true
+    # And the suspend units before their files go: a link in sleep.target.wants
+    # that names a unit which is not there any more is a message on the console
+    # at every suspend.
+    systemctl disable "$NAME-pegboard-sleep.service" \
+        "$NAME-pegboard-resume.service" >/dev/null 2>&1 || true
     rm -f "$PEGBOARD_UNIT_PATH" "$PEGBOARD_APPLIER_PATH" \
-        "$PEGBOARD_SLEEP_HOOK_PATH" \
+        "$PEGBOARD_SLEEP_HELPER_PATH" "$PEGBOARD_SLEEP_UNIT_PATH" \
+        "$PEGBOARD_RESUME_UNIT_PATH" \
         "$INSTALL_DIR/steamos-utility-center-pegboard"
+    remove_legacy_sleep_hooks
     systemctl daemon-reload
     say "  the settings in $PEGBOARD_CONFIG_PATH stay, for a second install"
 }

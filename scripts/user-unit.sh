@@ -65,9 +65,14 @@ PEGBOARD_UNIT_PATH="$UNIT_DIR/$NAME-pegboard.service"
 PEGBOARD_APPLIER_PATH="$INSTALL_DIR/$NAME-pegboard-apply"
 # What takes the board dark for a suspend. A shutdown needs nothing:
 # systemd stops the unit there and the service sends a dark frame as it
-# goes. A suspend only freezes it. See
-# systemd-sleep/steamos-utility-center-pegboard.
-PEGBOARD_SLEEP_HOOK_PATH="$ROOT/usr/lib/systemd/system-sleep/$NAME-pegboard"
+# goes. A suspend only freezes it. See scripts/sleep-pegboard.sh.
+#
+# One helper and two units: one unit runs it before the sleep and one
+# after the wake. systemd waits for the first, which is what puts the
+# dark frame on the wire before the freeze.
+PEGBOARD_SLEEP_HELPER_PATH="$INSTALL_DIR/$NAME-pegboard-sleep"
+PEGBOARD_SLEEP_UNIT_PATH="$UNIT_DIR/$NAME-pegboard-sleep.service"
+PEGBOARD_RESUME_UNIT_PATH="$UNIT_DIR/$NAME-pegboard-resume.service"
 UDEV_PATH="$ROOT/etc/udev/rules.d/99-$NAME.rules"
 # The drives of the System page.
 #
@@ -88,7 +93,21 @@ WAKE_UNIT_PATH="$UNIT_DIR/$NAME-wake.service"
 WAKE_APPLIER_PATH="$INSTALL_DIR/$NAME-wake-apply"
 WAKE_STATE_PATH="$INSTALL_DIR/wake-state"
 KEEP_LIST_PATH="$ROOT/etc/atomic-update.conf.d/$NAME.conf"
-SLEEP_HOOK_PATH="$ROOT/usr/lib/systemd/system-sleep/$NAME"
+# What tells the strip about a suspend, in the same shape as the board above.
+# See scripts/sleep-led.sh.
+SLEEP_HELPER_PATH="$INSTALL_DIR/$NAME-sleep"
+SLEEP_UNIT_PATH="$UNIT_DIR/$NAME-sleep.service"
+RESUME_UNIT_PATH="$UNIT_DIR/$NAME-resume.service"
+# Where both helpers were until the units took over.
+#
+# systemd runs each program in /usr/lib/systemd/system-sleep at the same two
+# moments, so that directory worked. A SteamOS update rebuilds /usr and took
+# both files away each time, and the keep-list cannot carry a path outside
+# /etc. An installation that leaves an old copy there does the work twice at
+# each suspend, which is a fault this project already met in the CEC toolkit.
+# Both installers thus remove these.
+LEGACY_SLEEP_HOOKS=("$ROOT/usr/lib/systemd/system-sleep/$NAME"
+                    "$ROOT/usr/lib/systemd/system-sleep/$NAME-pegboard")
 # This name did not change with the other names, because this project does not
 # write the file. The installer of leds-valve-shim writes it under this name,
 # and this project keeps that script unmodified. See
@@ -98,6 +117,23 @@ SLEEP_HOOK_PATH="$ROOT/usr/lib/systemd/system-sleep/$NAME"
 # writes, and it leaves the real file on the machine. That file loads the
 # module at each boot.
 MODULES_LOAD="$ROOT/etc/modules-load.d/steamos-led-bar.conf"
+
+# Writes a unit file from its template in the repository.
+#
+# A template carries @INSTALL_DIR@ where the path of the installed files goes.
+# That path is a choice of the installer, and the same template is read by a
+# test with a root of its own.
+write_unit() {
+    local template="$1" target="$2"
+    sed "s|@INSTALL_DIR@|$INSTALL_DIR|g" "$template" > "$target"
+    chmod 0644 "$target"
+}
+
+# Takes away a copy that an earlier install left in
+# /usr/lib/systemd/system-sleep. See LEGACY_SLEEP_HOOKS.
+remove_legacy_sleep_hooks() {
+    rm -f "${LEGACY_SLEEP_HOOKS[@]}" 2>/dev/null || true
+}
 
 # --- the kernel shim, on every kernel that has one --------------------------
 #

@@ -488,9 +488,15 @@ def missing_units(entries, root=""):
 # The files that this project already writes into /etc, and that nothing
 # protected until the keep-list existed.
 #
-# The suspend hook is not here. It is in /usr/lib/systemd/system-sleep, and the
-# keep-list covers /etc. A SteamOS update thus still takes that one file, and
-# the installer writes it again.
+# The links in the *.target.wants directories are here with the units they
+# name. A link is what says that a unit is switched on: an update that keeps
+# the unit and loses the link gives a machine on which the file is there and
+# nothing runs it.
+#
+# This is also why the two suspend helpers are called by units. They were
+# programs in /usr/lib/systemd/system-sleep, which systemd runs at the same
+# two moments. A SteamOS update rebuilds /usr and took both away each time,
+# and the keep-list covers /etc only. See scripts/sleep-led.sh.
 PROJECT_FILES = (
     "/etc/steamos-utility-center.conf",
     "/etc/steamos-utility-center-power.conf",
@@ -502,15 +508,40 @@ PROJECT_FILES = (
     "/etc/systemd/system/steamos-utility-center-mounts.service",
     "/etc/systemd/system/multi-user.target.wants/"
     "steamos-utility-center-mounts.service",
-    # Controller wake. The link is what says the switch is on, so a update
-    # that keeps the unit and loses the link is a machine that no longer
-    # wakes for a controller. See scripts/wake-apply.sh.
+    # What tells the strip that the machine sleeps, and that it is awake
+    # again. See scripts/sleep-led.sh.
+    "/etc/systemd/system/steamos-utility-center-sleep.service",
+    "/etc/systemd/system/steamos-utility-center-resume.service",
+    "/etc/systemd/system/sleep.target.wants/"
+    "steamos-utility-center-sleep.service",
+    "/etc/systemd/system/suspend.target.wants/"
+    "steamos-utility-center-resume.service",
+    "/etc/systemd/system/hibernate.target.wants/"
+    "steamos-utility-center-resume.service",
+    "/etc/systemd/system/hybrid-sleep.target.wants/"
+    "steamos-utility-center-resume.service",
+    "/etc/systemd/system/suspend-then-hibernate.target.wants/"
+    "steamos-utility-center-resume.service",
     # The Nanoleaf board: its service, the link that says it is on, and its
     # settings. See server/steamos_utility_center/pegboard.py.
     "/etc/steamos-utility-center-pegboard.conf",
     "/etc/systemd/system/steamos-utility-center-pegboard.service",
     "/etc/systemd/system/multi-user.target.wants/"
     "steamos-utility-center-pegboard.service",
+    # And what takes it dark for a sleep. See scripts/sleep-pegboard.sh.
+    "/etc/systemd/system/steamos-utility-center-pegboard-sleep.service",
+    "/etc/systemd/system/steamos-utility-center-pegboard-resume.service",
+    "/etc/systemd/system/sleep.target.wants/"
+    "steamos-utility-center-pegboard-sleep.service",
+    "/etc/systemd/system/suspend.target.wants/"
+    "steamos-utility-center-pegboard-resume.service",
+    "/etc/systemd/system/hibernate.target.wants/"
+    "steamos-utility-center-pegboard-resume.service",
+    "/etc/systemd/system/hybrid-sleep.target.wants/"
+    "steamos-utility-center-pegboard-resume.service",
+    "/etc/systemd/system/suspend-then-hibernate.target.wants/"
+    "steamos-utility-center-pegboard-resume.service",
+    # Controller wake. See scripts/wake-apply.sh.
     "/etc/systemd/system/steamos-utility-center-wake.service",
     "/etc/systemd/system/multi-user.target.wants/"
     "steamos-utility-center-wake.service",

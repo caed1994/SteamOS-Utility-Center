@@ -1,0 +1,20 @@
+[Unit]
+# Tells the LED strip that the machine is awake again.
+#
+# The other half of steamos-utility-center-sleep.service. The strip holds the
+# standby picture until something says otherwise, and this says it.
+#
+# suspend.target and its three companions are reached after the machine wakes,
+# because each one is ordered after the service that does the sleeping. That
+# is why this side names them and not sleep.target: sleep.target is reached on
+# the way down.
+Description=Tell the LED strip that the machine is awake
+Documentation=https://github.com/caed1994/SteamOS-Utility-Center
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=@INSTALL_DIR@/steamos-utility-center-sleep post
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

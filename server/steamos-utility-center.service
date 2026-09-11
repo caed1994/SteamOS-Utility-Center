@@ -11,10 +11,10 @@ RuntimeDirectoryMode=0755
 ExecStart=@INSTALL_DIR@/steamos-utility-center
 Restart=always
 RestartSec=3
-# Exit 2 is a configuration the service will not accept, and no amount of
+# Exit 2 is a configuration the service does not accept, and no amount of
 # restarting rewrites a file. Left to retry it fills the journal every three
-# seconds and buries the one line that says which option is wrong - so stop,
-# and let "systemctl status" show the reason. See CONFIG_REFUSED_EXIT.
+# seconds and buries the one line that says which option is wrong. So it stops
+# instead, and "systemctl status" shows the reason. See CONFIG_REFUSED_EXIT.
 RestartPreventExitStatus=2
 # The strip is blanked on SIGTERM before the process exits.
 KillSignal=SIGTERM
