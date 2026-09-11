@@ -48,7 +48,7 @@ class FramingTest(unittest.TestCase):
 
     def test_a_frame_of_64_leds_needs_four_reports(self):
         """195 bytes into reports of 64. The last one is mostly padding."""
-        said = pegboard.frame(bytes(3 * 32), pegboard.SHAPE_MIRROR)
+        said = pegboard.frame(bytes(3 * 32), pegboard.SHOWS_RAINBOW_WAVE)
         pieces = pegboard.reports(said)
         self.assertEqual(len(pieces), 4)
         self.assertTrue(all(len(piece) == 64 for piece in pieces))
@@ -84,36 +84,54 @@ class WireOrderTest(unittest.TestCase):
         self.assertEqual(triples(said), [(0, 255, 0), (255, 0, 0)])
 
 
-class ShapeTest(unittest.TestCase):
-    """The fold, which is the whole reason SHAPE exists."""
+class FoldTest(unittest.TestCase):
+    """The fold, which belongs to one effect and is not a setting.
 
+    It was `SHAPE`, mirror against chain. Every effect looked better on the
+    chain, where it travels once around the board, so the switch went and the
+    one effect that gained from the fold became an effect of its own.
+    """
+
+    WAVE = pegboard.SHOWS_RAINBOW_WAVE
     DRAWN = bytes([1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4])   # bottom to top
 
-    def test_the_mirror_draws_half_the_leds(self):
-        self.assertEqual(pegboard.logical_leds(pegboard.SHAPE_MIRROR), 32)
+    def test_the_wave_is_drawn_on_half_the_board(self):
+        self.assertEqual(pegboard.logical_leds(self.WAVE), 32)
 
-    def test_the_chain_draws_all_of_them(self):
-        self.assertEqual(pegboard.logical_leds(pegboard.SHAPE_CHAIN), 64)
+    def test_every_other_effect_takes_the_whole_chain(self):
+        for name in pegboard.EFFECTS:
+            if name == self.WAVE:
+                continue
+            self.assertEqual(pegboard.logical_leds(name), 64, name)
 
-    def test_the_mirror_puts_the_bottom_in_both_bottom_corners(self):
+    def test_the_wave_is_the_rainbow_and_the_rest_are_themselves(self):
+        self.assertEqual(pegboard.drawn_by(self.WAVE), render.SHOWS_RAINBOW)
+        for name in pegboard.EFFECTS:
+            if name == self.WAVE:
+                continue
+            self.assertEqual(pegboard.drawn_by(name), name, name)
+
+    def test_the_wave_puts_the_bottom_in_both_bottom_corners(self):
         """LED 0 is the bottom left and LED 63 the bottom right."""
-        said = triples(pegboard.fold(self.DRAWN, pegboard.SHAPE_MIRROR))
+        said = triples(pegboard.fold(self.DRAWN, self.WAVE))
         self.assertEqual(said[0], (1, 1, 1))
         self.assertEqual(said[-1], (1, 1, 1))
 
-    def test_the_mirror_puts_the_top_in_both_top_corners(self):
+    def test_the_wave_puts_the_top_in_both_top_corners(self):
         """The two middle LEDs of the chain are the top of the board."""
-        said = triples(pegboard.fold(self.DRAWN, pegboard.SHAPE_MIRROR))
+        said = triples(pegboard.fold(self.DRAWN, self.WAVE))
         self.assertEqual(said[3], (4, 4, 4))
         self.assertEqual(said[4], (4, 4, 4))
 
-    def test_the_mirror_is_the_same_length_as_the_board(self):
-        said = pegboard.fold(bytes(3 * 32), pegboard.SHAPE_MIRROR)
+    def test_the_wave_is_the_same_length_as_the_board(self):
+        said = pegboard.fold(bytes(3 * 32), self.WAVE)
         self.assertEqual(len(said), 3 * 64)
 
-    def test_the_chain_changes_nothing(self):
-        self.assertEqual(pegboard.fold(self.DRAWN, pegboard.SHAPE_CHAIN),
-                         self.DRAWN)
+    def test_an_unfolded_effect_is_left_alone(self):
+        self.assertEqual(pegboard.fold(self.DRAWN, "ooze"), self.DRAWN)
+
+    def test_the_shape_is_no_longer_a_setting(self):
+        self.assertNotIn("SHAPE", pegboard.DEFAULTS)
 
 
 
@@ -190,10 +208,6 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(pegboard.PegboardError):
             pegboard.read(self._write("SIDEWAYS=1\n"))
 
-    def test_a_shape_it_cannot_draw_is_refused(self):
-        with self.assertRaises(pegboard.PegboardError):
-            pegboard.read(self._write("SHAPE=diagonal\n"))
-
     def test_the_count_of_leds_is_not_a_setting(self):
         """One board is 64. A different count is a different board, with a
         layout of its own and not only a number of its own."""
@@ -205,12 +219,15 @@ class ConfigTest(unittest.TestCase):
     def test_the_effects_are_the_renderer_s_without_the_load_gauge(self):
         """Derived and not written down, so a new effect reaches the board.
 
-        The gauge is the one exception. It draws two bars of a fixed colour
-        on a strip, which reads as a meter behind a case and as two coloured
-        stubs on a board.
+        Two exceptions. The gauge draws two bars of a fixed colour on a
+        strip, which reads as a meter behind a case and as two coloured stubs
+        on a board. The wave is the board's own, because the fold it needs is
+        the geometry of this board and not an effect.
         """
-        self.assertEqual(set(pegboard.EFFECTS),
-                         set(render.RAINBOW_CHOICES) - {render.SHOWS_LOAD})
+        self.assertEqual(
+            set(pegboard.EFFECTS),
+            (set(render.RAINBOW_CHOICES) - {render.SHOWS_LOAD})
+            | {pegboard.SHOWS_RAINBOW_WAVE})
         for name in pegboard.EFFECTS:
             values = dict(pegboard.DEFAULTS, EFFECT=name)
             self.assertEqual(pegboard.validate(values)["EFFECT"], name)
@@ -254,8 +271,7 @@ class ConfigTest(unittest.TestCase):
             pegboard.read(self._write("FPS=10\nIDLE_FPS=20\n"))
 
     def test_what_it_writes_it_can_read_again(self):
-        values = dict(pegboard.DEFAULTS, SHAPE=pegboard.SHAPE_CHAIN,
-                      EFFECT="ooze", ENABLED=False)
+        values = dict(pegboard.DEFAULTS, EFFECT="ooze", ENABLED=False)
         again = pegboard.read(self._write(pegboard.text(values)))
         self.assertEqual(again, values)
 
@@ -301,11 +317,13 @@ class DrawingTest(unittest.TestCase):
         pegboard.run(values, board=board, stop=stop, now=lambda: next(ticks))
         return board
 
-    def test_each_shape_fills_the_whole_board(self):
-        for shape in pegboard.SHAPES:
-            board = self._run(dict(pegboard.DEFAULTS, SHAPE=shape,
-                                   EFFECT="ooze"))
-            self.assertEqual(len(board.sent[0]) - 3, 3 * 64, shape)
+    def test_every_effect_fills_the_whole_board_and_no_more(self):
+        """The wave is drawn on 32 and folded. The fold once put 128 LEDs on
+        the wire, because the count came from the effect the renderer draws
+        and not from the one the board was asked for."""
+        for name in pegboard.EFFECTS:
+            board = self._run(dict(pegboard.DEFAULTS, EFFECT=name))
+            self.assertEqual(len(board.sent[0]) - 3, 3 * 64, name)
 
     def test_it_sends_a_dark_frame_when_it_stops(self):
         """The board holds the last frame. A service that stops without this
@@ -313,12 +331,18 @@ class DrawingTest(unittest.TestCase):
         board = self._run(dict(pegboard.DEFAULTS))
         self.assertEqual(board.sent[-1], "blank")
 
-    def test_the_mirror_really_is_symmetrical_on_the_wire(self):
-        board = self._run(dict(pegboard.DEFAULTS, SHAPE=pegboard.SHAPE_MIRROR,
-                               EFFECT="fire"))
+    def test_the_wave_really_is_symmetrical_on_the_wire(self):
+        board = self._run(dict(pegboard.DEFAULTS,
+                               EFFECT=pegboard.SHOWS_RAINBOW_WAVE))
         wire = triples(board.sent[0][3:])
         self.assertEqual(wire[0], wire[-1])
         self.assertEqual(wire[31], wire[32])
+
+    def test_the_plain_rainbow_is_not(self):
+        """Which is the whole difference between the two entries."""
+        board = self._run(dict(pegboard.DEFAULTS, EFFECT="rainbow"))
+        wire = triples(board.sent[0][3:])
+        self.assertNotEqual(wire[0], wire[-1])
 
     def test_the_wait_for_an_answer_cannot_eat_a_frame(self):
         """It was a share of the frame, and at 60 that share was 13 of 16 ms.

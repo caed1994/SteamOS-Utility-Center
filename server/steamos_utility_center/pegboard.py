@@ -45,7 +45,8 @@ one chain: LED 0 is the bottom of the left side, LED 31 the top of it, LED 32
 the top of the right side, and LED 63 the bottom of it.
 
 So the middle of the chain is the top of the board, and the two ends are the
-two bottom corners. That is what SHAPE is about. See fold().
+two bottom corners. One effect is drawn on half of it and put on both
+sides. See MIRRORED and fold().
 """
 
 from __future__ import annotations
@@ -210,50 +211,59 @@ def answer_of(piece):
 
 # -- the shape ---------------------------------------------------------------
 
-# Both sides of the board show the same thing, each from its bottom upwards.
+# The rainbow, drawn on half the board and put on both sides.
 #
-# The chain runs up the left side and down the right, so the right side has to
-# be reversed to read the same way. Almost every effect of this project
-# moves along the strip. The fire rises, the ooze creeps, the rainbow runs.
-# In a chain those go up one side and back down the other, which reads as
-# broken.
-SHAPE_MIRROR = "mirror"
-
-# The chain as the hardware gives it, LED 0 to LED 63.
+# This is the one effect with a fold. It was a setting, `mirror` against
+# `chain`, and every effect looked better on the chain: the chain is the LEDs
+# in the order the hardware gives them, so an effect that moves along a strip
+# runs up the left side and down the right, once around the board. Only the
+# rainbow gained from the fold, where the colour rises on both sides at once.
 #
-# The middle of the chain is the top of the board, so an effect that works
-# outwards from the middle lands on the two sides. The load gauge is drawn
-# that way: "two bars from the centre, one chip in each direction". On this
-# board that is the CPU down the left side and the GPU down the right.
-SHAPE_CHAIN = "chain"
+# So the fold is a property of an effect now and not a thing to set. See
+# MIRRORED and fold().
+SHOWS_RAINBOW_WAVE = "rainbow-wave"
 
-SHAPES = (SHAPE_MIRROR, SHAPE_CHAIN)
+# The effects that are drawn on half the board and mirrored onto the other
+# side. Everything else takes the chain, LED 0 to LED 63.
+MIRRORED = frozenset({SHOWS_RAINBOW_WAVE})
 
-# What the board can draw. Every effect of the renderer except the load gauge.
+# Which effect of the renderer draws each of these. Only the wave needs an
+# entry: it is the rainbow with the fold, and not an effect of its own.
+DRAWN_BY = {SHOWS_RAINBOW_WAVE: render.SHOWS_RAINBOW}
+
+# What the board can draw: every effect of the renderer except the load gauge,
+# and the wave.
 #
 # That gauge draws two bars of a fixed colour that grow and shrink with the
 # counters. On a strip behind a case it reads as a meter. On a board it reads
 # as two coloured stubs, and the numbers it shows are on the Status page in
-# words. Derived from the renderer, so a new effect still arrives by itself.
-EFFECTS = tuple(name for name in sorted(render.RAINBOW_CHOICES)
-                if name != render.SHOWS_LOAD)
+# words. The rest is derived from the renderer, so a new effect still arrives
+# by itself.
+EFFECTS = tuple(sorted(
+    {name for name in render.RAINBOW_CHOICES if name != render.SHOWS_LOAD}
+    | {SHOWS_RAINBOW_WAVE}))
 
 
-def logical_leds(shape):
-    """How many LEDs the renderer draws.
+def drawn_by(effect):
+    """Which effect of the renderer draws this one."""
+    return DRAWN_BY.get(effect, effect)
 
-    Half of them in the mirror, because the second half is the first one
+
+def logical_leds(effect):
+    """How many LEDs the renderer draws for that effect.
+
+    Half of them for a folded one, because the second half is the first one
     backwards.
     """
-    return LEDS // 2 if shape == SHAPE_MIRROR else LEDS
+    return LEDS // 2 if effect in MIRRORED else LEDS
 
 
-def fold(payload, shape):
+def fold(payload, effect):
     """Puts a drawn frame on the chain of the board.
 
     `payload` is what the renderer made: three bytes for each LED, in RGB.
     """
-    if shape != SHAPE_MIRROR:
+    if effect not in MIRRORED:
         return payload
     return payload + _backwards(payload)
 
@@ -266,9 +276,9 @@ def _backwards(payload):
     return bytes(out)
 
 
-def frame(payload, shape):
+def frame(payload, effect):
     """One frame for the wire, from what the renderer drew."""
-    return message(TYPE_COLOUR, on_the_wire(fold(payload, shape)))
+    return message(TYPE_COLOUR, on_the_wire(fold(payload, effect)))
 
 
 # -- the configuration -------------------------------------------------------
@@ -283,7 +293,6 @@ CONFIG_PATH = "/etc/steamos-utility-center-pegboard.conf"
 # mean the same thing. A person who knows one page knows the other.
 DEFAULTS = {
     "ENABLED": True,
-    "SHAPE": SHAPE_MIRROR,
     "EFFECT": render.SHOWS_RAINBOW,
     "BRIGHTNESS": 128,
     "SPEED": 1.0,
@@ -353,8 +362,6 @@ def read(path=CONFIG_PATH):
 
 def validate(values):
     """Refuses a setting that would draw nothing, or draw it wrong."""
-    if values["SHAPE"] not in SHAPES:
-        raise PegboardError("SHAPE must be one of %s" % ", ".join(SHAPES))
     if values["EFFECT"] not in EFFECTS:
         raise PegboardError("EFFECT must be one of %s" % ", ".join(EFFECTS))
     if not 0 <= values["BRIGHTNESS"] <= 255:
@@ -513,10 +520,13 @@ class Board:
 
 
 def build_renderer(values):
-    """The renderer for the board, at the count its shape asks for."""
-    shows = values["EFFECT"]
+    """The renderer for the board, at the count its effect asks for."""
+    shows = drawn_by(values["EFFECT"])
     return render.Renderer(
-        led_count=logical_leds(values["SHAPE"]),
+        # The count comes from the effect of the board and not from the one
+        # the renderer draws. They differ for the wave: it is drawn by the
+        # rainbow, on half the LEDs, and fold() puts the other half on.
+        led_count=logical_leds(values["EFFECT"]),
         gamma=values["GAMMA"],
         speed_scale=values["SPEED"],
         temperature=(temperature.TemperatureSource(
@@ -559,7 +569,10 @@ def run(values, board=None, stop=None, now=None):
     now = time.monotonic if now is None else now
     renderer = build_renderer(values)
     snapshot = build_snapshot(values)
-    shows = values["EFFECT"]
+    # Two names: the renderer knows the effect it draws, and the fold knows
+    # the effect the board was asked for. They differ for the wave.
+    effect = values["EFFECT"]
+    shows = drawn_by(effect)
     started = now()
     animated = renderer.is_animated(snapshot, shows)
     # A still effect needs no sixty frames a second. It still needs some: the
@@ -574,7 +587,7 @@ def run(values, board=None, stop=None, now=None):
         while stop is None or not stop():
             due = now() + interval
             payload = renderer.render(snapshot, now() - started, shows)
-            if board.show(frame(payload, values["SHAPE"]),
+            if board.show(frame(payload, effect),
                           settle=SETTLE_SECONDS):
                 quiet = 0
             else:
@@ -629,8 +642,9 @@ def main(argv=None):
     node = find_device()
     if args.report:
         print("board: %s" % (node or "not plugged in"))
-        print("LEDs: %d, shape %s, %d drawn"
-              % (LEDS, values["SHAPE"], logical_leds(values["SHAPE"])))
+        print("LEDs: %d, %d drawn%s"
+              % (LEDS, logical_leds(values["EFFECT"]),
+                 " and mirrored" if values["EFFECT"] in MIRRORED else ""))
         print("effect: %s at %d brightness, speed %.2f"
               % (values["EFFECT"], values["BRIGHTNESS"], values["SPEED"]))
         return 0 if node else 1
@@ -651,9 +665,8 @@ def main(argv=None):
     while not stopping:
         try:
             with Board() as board:
-                LOG.info("drawing %s on %s, %d LEDs, shape %s",
-                         values["EFFECT"], board.node, LEDS,
-                         values["SHAPE"])
+                LOG.info("drawing %s on %s, %d LEDs",
+                         values["EFFECT"], board.node, LEDS)
                 delay = RETRY_DELAY
                 run(values, board=board, stop=lambda: bool(stopping))
         except PegboardError as exc:

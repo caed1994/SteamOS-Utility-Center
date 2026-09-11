@@ -313,9 +313,10 @@ The same effects as the rainbow slot of the LED bar: rainbow, fire, aurora,
 ooze and the temperature gauge. They come from the same renderer, so an effect
 added to one is on the other.
 
-The load gauge is the exception. It draws two bars of a fixed colour that grow
-with the counters, which reads as a meter on a strip behind a case and as two
-coloured stubs on a board.
+Two exceptions. The load gauge is not here: it draws two bars of a fixed
+colour that grow with the counters, which reads as a meter on a strip behind a
+case and as two coloured stubs on a board. And **Rainbow wave** is the board's
+own, because what makes it is the shape of this board.
 
 ### The two sides
 
@@ -326,10 +327,15 @@ LED 0 is the bottom of the left side, LED 31 the top of it, LED 32 the top of
 the right side, and LED 63 the bottom of it. So the middle of the chain is the
 top of the board, and the two ends are the two bottom corners.
 
-| `SHAPE` | What it does | Best for |
-| --- | --- | --- |
-| `mirror` | both sides from the bottom upwards, the same on each | the effects that move along a strip: the fire rises and the ooze creeps on both sides at once |
-| `chain` | the 64 LEDs in the order the hardware gives them | the gauges: the load gauge draws two bars outwards from the middle, so on this board the CPU goes down one side and the GPU down the other |
+Every effect takes the 64 LEDs in the order the board has them, so it travels
+once around the board: up the left side and down the right. `SHAPE` was a
+setting with a second arrangement, `mirror`, which drew half the LEDs and put
+them on both sides. It is gone, because on the chain every effect looked
+better and only the rainbow gained from the fold.
+
+That one is kept as **Rainbow wave**: the rainbow drawn on half the board and
+put on both sides, so the colour rises on the two sides at once. The fold is a
+property of that effect and no longer a thing to set.
 
 ### What it took
 

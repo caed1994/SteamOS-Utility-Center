@@ -1272,6 +1272,9 @@ def rainbow_choices(names):
         "fire": "Fire",
         "aurora": "Aurora",
         "ooze": "Ooze",
+        # The Nanoleaf board only. It is the rainbow on half the board, put
+        # on both sides. capitalize() would make it "Rainbow-wave".
+        "rainbow-wave": "Rainbow wave",
     }
     return tuple((labels.get(name, name.capitalize()), name) for name in names)
 
@@ -1465,15 +1468,6 @@ def pegboard_here():
     without any rights and without opening the device.
     """
     return pegboard_module.find_device() is not None
-
-
-def pegboard_shapes():
-    """The two ways the sides of the board show one effect."""
-    # One word each. The menu is as wide as the other menus in this window,
-    # and a sentence in it is a sentence with its end cut off. What the two
-    # words mean is on the page, under the cards. See PEGBOARD_NOTE.
-    return [("Mirror", pegboard_module.SHAPE_MIRROR),
-            ("Chain", pegboard_module.SHAPE_CHAIN)]
 
 
 def apply_power_command(source_dir, staged_path, ask=False):

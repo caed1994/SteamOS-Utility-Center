@@ -336,17 +336,14 @@ PEGBOARD_NOTE = (
     "a matter of taste: above 40 a board draws single LEDs with the wrong "
     "byte, and a slider that goes there is a slider that breaks the "
     "picture.\n\n"
-    "The two sides: Mirror shows the same on each side, from the bottom "
-    "upwards, which is what makes the fire rise on both of them. Chain uses "
-    "the 64 LEDs in the order the hardware gives them, up the left side and "
-    "down the right. The middle of that chain is the top of the board, so "
-    "the load gauge puts the CPU down one side and the GPU down the other.")
+    "The effects take the 64 LEDs in the order the board has them, up the "
+    "left side and down the right, so they travel once around it. Rainbow "
+    "wave is the exception: it is the rainbow drawn on half the board and "
+    "put on both sides, so the colour rises on the two sides at once.")
 
 PEGBOARD = [
     ("The board", [
         ("PEGBOARD_ENABLED", "Light the board", "bool", None, None, None),
-        ("PEGBOARD_SHAPE", "The two sides", "named",
-         ledpanel.pegboard_shapes(), None, None),
     ]),
     ("What it draws", [
         # The board's own list and not the bar's: the load gauge is two
