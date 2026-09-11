@@ -36,7 +36,6 @@ type Status = Answer & {
   // and a person takes each one from its own page in the panel. See
   // server/steamos_utility_center/modules.py.
   modules?: string[];
-  areas?: { cec?: { installed?: boolean } };
   cec_features?: Record<string, boolean>;
 };
 
@@ -375,7 +374,6 @@ function Content() {
   const cpu = (held.power?.settings ?? {}) as Record<string, unknown>;
   const offered = (held.power?.offers ?? {}) as Record<string, unknown>;
   const switches = held.status?.cec_features ?? {};
-  const installed = Boolean(held.status?.areas?.cec?.installed);
 
   // Whether this machine has one module. A section for a module that is not
   // installed is a row of controls that can apply nothing, and Game Mode is
@@ -628,30 +626,20 @@ function Content() {
       </PanelSection>
       )}
 
+      {has("cec") && (
       <PanelSection title="Television">
-        {!installed ? (
-          <PanelSectionRow>
-            <div style={{ fontSize: "0.8em" }}>
-              The HDMI CEC toolkit is not installed. Install it from the panel
-              in Desktop Mode.
-            </div>
+        {features.map((feature) => (
+          <PanelSectionRow key={feature.name}>
+            <ToggleField
+              label={feature.label}
+              checked={Boolean(switches[feature.name])}
+              disabled={held.busy}
+              onChange={(on: boolean) => write("cec", { [feature.name]: on })}
+            />
           </PanelSectionRow>
-        ) : (
-          <>
-            {features.map((feature) => (
-              <PanelSectionRow key={feature.name}>
-                <ToggleField
-                  label={feature.label}
-                  checked={Boolean(switches[feature.name])}
-                  disabled={held.busy}
-                  onChange={(on: boolean) =>
-                    write("cec", { [feature.name]: on })}
-                />
-              </PanelSectionRow>
-            ))}
-          </>
-        )}
+        ))}
       </PanelSection>
+      )}
     </>
   );
 }

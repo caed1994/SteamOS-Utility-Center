@@ -606,7 +606,9 @@ Quick Access menu.
 | Television | each switch of the HDMI CEC toolkit |
 
 The plugin draws a section for each module this machine has, and none for a
-module it has not.
+module it has not. Television was the one exception: it drew a heading and a
+sentence saying the toolkit was missing, which is a heading and a sentence for
+ever on a machine with no CEC.
 
 The **System** page installs it with one button, which says which of four cases
 this machine is in: no Decky Loader, Decky with no plugin, an older plugin, or

@@ -273,6 +273,25 @@ class PageTest(unittest.TestCase):
             self.assertNotIn("write(", one, one[:300])
             self.assertNotIn("setArea(", one, one[:300])
 
+    def test_every_section_is_behind_the_module_that_brings_it(self):
+        """A section with no module is a row of controls that apply nothing.
+
+        Television was the one that was not. It drew a paragraph saying the
+        toolkit was missing, so a machine with no CEC had a heading and a
+        sentence under it for ever. The other sections simply are not there.
+
+        Read off the page rather than named here: a section added without a
+        gate is the fault this is about, and a list in this file would not
+        hold it.
+        """
+        sections = re.findall(r'<PanelSection title="([^"]+)"', self.text)
+        self.assertTrue(sections)
+        for title in sections:
+            at = self.text.index('<PanelSection title="%s"' % title)
+            before = self.text[max(0, at - 200):at]
+            self.assertIn('has("', before,
+                          "the %s section is not behind a module" % title)
+
     def test_the_board_has_a_section_of_its_own(self):
         """The Nanoleaf board, behind the module that brings it.
 
