@@ -41,214 +41,34 @@ What each answer decides:
 """
 
 import argparse
-import json
 import math
+import os
 import socket
 import struct
 import sys
 import time
-import urllib.error
-import urllib.request
 
-MDNS_GROUP = "224.0.0.251"
-MDNS_PORT = 5353
-SERVICE = "_nanoleafapi._tcp.local"
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "server"))
 
-API_PORT = 16021
+from steamos_utility_center import nanoleaf                    # noqa: E402
+from steamos_utility_center.nanoleaf import (                  # noqa: E402
+    API_PORT, NanoleafError, PTR, SERVICE, SRV, TXT, A,
+    _name_bytes, _read_name, _records, _texts, call, document, find, forget,
+    pair)
+
+# Where a device takes a stream of frames.
+#
+# This module streams and nanoleaf.py does not. The rate and the shape are
+# why: see the note at the top of that file. The probe keeps the code,
+# because the two measurements that settled it were taken with it.
 STREAM_PORT = 60222
-
-# The records this reads out of an answer.
-PTR, TXT, A, SRV = 12, 16, 1, 33
 
 # How long each frame takes to arrive at its colour, in units of 100ms.
 #
 # One unit is the gap of a stream at ten frames a second, so each frame
 # arrives as the next one goes out and the movement has no steps in it.
 TRANSITION = 1
-
-HTTP_TIMEOUT = 4.0
-
-
-# -- the names on the wire ---------------------------------------------------
-
-def _name_bytes(text):
-    """A dotted name as the labels that a DNS question carries."""
-    out = bytearray()
-    for label in text.split("."):
-        if label:
-            out.append(len(label))
-            out += label.encode("ascii")
-    out.append(0)
-    return bytes(out)
-
-
-def _read_name(data, at):
-    """A name from a message, and where it ends.
-
-    A name is a list of labels, and a label can be a pointer to a label
-    earlier in the same message. The end to report is the end of this name
-    and not the end of the name it points at.
-    """
-    labels = []
-    after = None
-    for _step in range(64):                     # a guard against a loop
-        if at >= len(data):
-            break
-        length = data[at]
-        if length == 0:
-            at += 1
-            break
-        if length & 0xC0 == 0xC0:
-            if after is None:
-                after = at + 2
-            at = struct.unpack_from("!H", data, at)[0] & 0x3FFF
-            continue
-        at += 1
-        labels.append(data[at:at + length].decode("ascii", "replace"))
-        at += length
-    return ".".join(labels), (at if after is None else after)
-
-
-def _records(data):
-    """Every record of an answer, as (name, type, body)."""
-    counts = struct.unpack_from("!HHHH", data, 4)
-    at = 12
-    for _question in range(counts[0]):
-        _asked, at = _read_name(data, at)
-        at += 4
-    out = []
-    for _record in range(sum(counts[1:])):
-        name, at = _read_name(data, at)
-        if at + 10 > len(data):
-            break
-        rtype, _rclass, _ttl, length = struct.unpack_from("!HHIH", data, at)
-        at += 10
-        out.append((name, rtype, data[at:at + length], data, at))
-        at += length
-    return out
-
-
-def _texts(body):
-    """The key=value pairs of a TXT record."""
-    out = {}
-    at = 0
-    while at < len(body):
-        length = body[at]
-        at += 1
-        piece = body[at:at + length].decode("ascii", "replace")
-        at += length
-        key, sign, value = piece.partition("=")
-        if sign:
-            out[key] = value
-    return out
-
-
-def find(seconds=4.0):
-    """The devices that answer the service query of Nanoleaf.
-
-    The question carries the bit that asks for a unicast answer, and this
-    listens on the port it sent from. A query to port 5353 needs that port,
-    and on a desktop the mDNS daemon already holds it.
-
-    A device that answers nothing is not a device that cannot be reached:
-    a router that drops multicast gives the same silence. That is what
-    --ip is for.
-    """
-    question = (struct.pack("!HHHHHH", 0, 0, 1, 0, 0, 0)
-                + _name_bytes(SERVICE)
-                + struct.pack("!HH", PTR, 0x8001))
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
-    sock.settimeout(0.4)
-    found = {}
-    hosts = {}
-    ends = time.monotonic() + seconds
-    asked = 0.0
-    while time.monotonic() < ends:
-        if time.monotonic() >= asked:
-            try:
-                sock.sendto(question, (MDNS_GROUP, MDNS_PORT))
-            except OSError as exc:
-                print("could not ask: %s" % exc, file=sys.stderr)
-                break
-            asked = time.monotonic() + 1.0
-        try:
-            data, _where = sock.recvfrom(9000)
-        except socket.timeout:
-            continue
-        for name, rtype, body, whole, at in _records(data):
-            if rtype == A and len(body) == 4:
-                hosts[name] = socket.inet_ntoa(body)
-            elif rtype == SRV:
-                target, _end = _read_name(whole, at + 6)
-                port = struct.unpack_from("!H", body, 4)[0]
-                found.setdefault(name, {})["host"] = target
-                found[name]["port"] = port
-            elif rtype == TXT and SERVICE in name:
-                found.setdefault(name, {}).update(_texts(body))
-    sock.close()
-    out = []
-    for name, what in sorted(found.items()):
-        what["name"] = name.split("." + SERVICE)[0]
-        what["ip"] = hosts.get(what.get("host", ""), "")
-        out.append(what)
-    return out
-
-
-# -- the REST half -----------------------------------------------------------
-
-def call(ip, path, method="GET", body=None, port=API_PORT):
-    """One call to the Open API. It returns the answer, parsed if it is JSON.
-
-    The API is HTTP and has no HTTPS, which is safe on a LAN and must never
-    face the internet.
-    """
-    url = "http://%s:%d%s" % (ip, port, path)
-    data = None if body is None else json.dumps(body).encode("utf-8")
-    ask = urllib.request.Request(url, data=data, method=method,
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(ask, timeout=HTTP_TIMEOUT) as answer:
-        raw = answer.read()
-    if not raw:
-        return {}
-    try:
-        return json.loads(raw.decode("utf-8"))
-    except ValueError:
-        return {"raw": raw.decode("utf-8", "replace")}
-
-
-def pair(ips, seconds=30.0):
-    """Asks each device for a token until one of them gives one.
-
-    A device gives a token out for 30 seconds after a person holds its power
-    button. So this asks and asks rather than asking one time: a person holds
-    the button on the device they want, and that device answers.
-
-    This is the part of the design that decides the window. A list to pick
-    from needs the name of the device and the person needs to know which name
-    is which. A countdown needs neither.
-    """
-    ends = time.monotonic() + seconds
-    while time.monotonic() < ends:
-        left = int(round(ends - time.monotonic()))
-        print("\r  %2d seconds left" % left, end="", flush=True)
-        for ip in ips:
-            try:
-                said = call(ip, "/api/v1/new", method="POST")
-            except (urllib.error.URLError, OSError):
-                continue
-            token = said.get("auth_token")
-            if token:
-                print()
-                return ip, token
-        time.sleep(1.0)
-    print()
-    return None, None
-
-
-def document(ip, token):
-    """Everything the device says about itself, in one call."""
-    return call(ip, "/api/v1/%s/" % token)
 
 
 def panels(said):
@@ -259,6 +79,11 @@ def panels(said):
     of the shape, and an effect then travels around it. That is the same
     answer the Pegboard Desk Dock got, where the chain goes up one side and
     down the other.
+
+    Measured on a Lines, that order jumps about and does not follow the
+    figure. The layout there is two clusters and not a ring, and 81 panels
+    stand in it. That measurement is why nanoleaf.py plays the effects of
+    the device and streams nothing.
 
     The path starts at the left of the shape and turns the way a clock does
     not. Where it starts is not a decision: a ring has no first panel, and
@@ -315,16 +140,6 @@ def external(ip, token):
     return where, int(port)
 
 
-def forget(ip, token):
-    """Takes that token back. The device keeps its other tokens.
-
-    One DELETE on the token itself. This is what the window needs for the
-    button that removes a device: a removal that left the token on the
-    device would leave a key to it on every machine that ever paired.
-    """
-    return call(ip, "/api/v1/%s" % token, method="DELETE")
-
-
 def before(ip, token):
     """What the device draws and whether it is on, to give back after.
 
@@ -340,12 +155,12 @@ def before(ip, token):
         said = call(ip, "/api/v1/%s/effects/select" % token)
         if isinstance(said, str) and not said.startswith("*"):
             effect = said
-    except (urllib.error.URLError, OSError):
+    except NanoleafError:
         pass
     try:
         said = call(ip, "/api/v1/%s/state/on" % token)
         lit = said.get("value") if isinstance(said, dict) else None
-    except (urllib.error.URLError, OSError):
+    except NanoleafError:
         pass
     return effect, lit
 
@@ -362,17 +177,25 @@ def restore(ip, token, was):
         try:
             call(ip, "/api/v1/%s/effects" % token, method="PUT",
                  body={"select": effect})
-        except (urllib.error.URLError, OSError):
+        except NanoleafError:
             pass
     if lit is not None:
         try:
             call(ip, "/api/v1/%s/state" % token, method="PUT",
                  body={"on": {"value": bool(lit)}})
-        except (urllib.error.URLError, OSError):
+        except NanoleafError:
             pass
 
 
 # -- what each command prints ------------------------------------------------
+
+def _countdown(gap, left=[nanoleaf.PAIR_SECONDS]):
+    """Sleeps that long and says how much of the window is left."""
+    left[0] -= gap
+    print("\r  %2d seconds left" % max(0, int(round(left[0]))),
+          end="", flush=True)
+    time.sleep(gap)
+
 
 def _said_back(was):
     """Says what the device got back, so a person can check it."""
@@ -412,7 +235,8 @@ def do_pair(args):
     print("Hold the power button on the device for 5 to 7 seconds, until "
           "its LEDs flash.")
     print("Asking: %s" % ", ".join(ips))
-    ip, token = pair(ips)
+    ip, token = pair(ips, rest=_countdown)
+    print()
     if not token:
         print("No device gave a token.")
         print("The button holds the window open for 30 seconds, so hold it "
@@ -592,14 +416,12 @@ def main(argv=None):
         parser.error("%s needs --ip and --token" % args.command)
     try:
         return args.run(args)
-    except urllib.error.HTTPError as exc:
-        print("The device refused: %s %s" % (exc.code, exc.reason),
-              file=sys.stderr)
-        if exc.code == 401:
-            print("401 is a token that the device does not know. Pair again.",
-                  file=sys.stderr)
+    except NanoleafError as exc:
+        print("%s" % exc, file=sys.stderr)
+        print("A token that the device forgot needs the button and a new "
+              "pair.", file=sys.stderr)
         return 1
-    except (urllib.error.URLError, OSError) as exc:
+    except OSError as exc:
         print("Could not reach the device: %s" % exc, file=sys.stderr)
         return 1
 
