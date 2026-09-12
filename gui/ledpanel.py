@@ -22,6 +22,7 @@ from steamos_utility_center import config as config_module
 from steamos_utility_center import lact as lact_module
 from steamos_utility_center import modules as modules_module
 from steamos_utility_center import phone
+from steamos_utility_center import nanoleaf as nanoleaf_module
 from steamos_utility_center import pegboard as pegboard_module
 from steamos_utility_center import power as power_module
 from steamos_utility_center import temperature
@@ -1475,6 +1476,92 @@ def pegboard_here():
     without any rights and without opening the device.
     """
     return pegboard_module.find_device() is not None
+
+
+# -- the Nanoleaf devices on the network -------------------------------------
+#
+# No applier and no staged file, which every other block here needs. An effect
+# on one of these is one HTTP call to an address on the LAN, so the window
+# calls it and needs no rights at all. See
+# server/steamos_utility_center/nanoleaf.py.
+#
+# Each of these makes a call over the network, so the window runs them away
+# from the thread that draws it.
+
+NanoleafError = nanoleaf_module.NanoleafError
+
+
+def nanoleaf_devices(home=None):
+    """Each paired device, with the state it is in and the effects it holds.
+
+    A device that is off or away is in the list with a reason on it. The
+    record says it is paired, and today the network says no more than that.
+    """
+    return [nanoleaf_module.look(one)
+            for one in nanoleaf_module.read(home)]
+
+
+def nanoleaf_found(seconds=3.0):
+    """The devices that answer mDNS, paired or not."""
+    return nanoleaf_module.find(seconds)
+
+
+def nanoleaf_pair(ips, seconds=None, rest=None):
+    """Asks each of those devices for a token until one answers."""
+    return nanoleaf_module.pair(
+        ips, seconds=nanoleaf_module.PAIR_SECONDS if seconds is None
+        else seconds, rest=rest)
+
+
+def nanoleaf_add(device, home=None):
+    """Puts a paired device into the record."""
+    return nanoleaf_module.add(device, home)
+
+
+def nanoleaf_drop(device, home=None):
+    """Takes a device out of the record, and its token off the device.
+
+    The token first, and the record whatever that call said. A device that is
+    away must still leave the list, and a token left on a device is a key to
+    it on every machine that ever paired.
+    """
+    left = ""
+    try:
+        nanoleaf_module.forget(device["ip"], device["token"])
+    except NanoleafError as exc:
+        left = str(exc)
+    nanoleaf_module.remove(device["token"], home)
+    return left
+
+
+def nanoleaf_select(device, effect):
+    """Plays one of the effects that the device holds."""
+    nanoleaf_module.select(device, effect)
+
+
+def nanoleaf_switch(device, on):
+    """Turns the device on or off."""
+    nanoleaf_module.switch(device, on)
+
+
+def nanoleaf_dim(device, level):
+    """Sets the brightness of the device, from 0 to 100."""
+    nanoleaf_module.dim(device, level)
+
+
+def nanoleaf_refresh(home=None):
+    """Reads the addresses off mDNS again and writes the record.
+
+    A lease moves, and a record with the old address is a device that stopped
+    answering for no reason a person can see.
+    """
+    devices = nanoleaf_module.read(home)
+    if not devices:
+        return []
+    moved = nanoleaf_module.refresh(devices)
+    if moved != devices:
+        nanoleaf_module.write(moved, home)
+    return moved
 
 
 def apply_power_command(source_dir, staged_path, ask=False):

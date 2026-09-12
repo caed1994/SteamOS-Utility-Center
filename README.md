@@ -409,6 +409,44 @@ That one is kept as **Rainbow wave**: the rainbow drawn on half the board and
 put on both sides, so the colour rises on the two sides at once. The fold is a
 property of that effect and no longer a thing to set.
 
+## Nanoleaf devices on the network
+
+The **Nanoleaf** page has a second card, **On the network**, for the devices
+of that maker with the Open API: the Light Panels, Canvas, Shapes, Elements,
+Lines and Skylight. The Essentials range has no API, and the Pegboard Desk
+Dock has none either.
+
+One row for each paired device: its name, its address, whether it is on, the
+effect it plays, and a button for each of those. The effects are the ones on
+the device, put there with the app of Nanoleaf, and the list is read off the
+device rather than written down here.
+
+**Add a device** asks nothing. Hold the power button on the device you want
+for five seconds, and it appears: the window asks every device on the network
+once a second for thirty seconds, and the one whose button was held answers.
+On a network whose router drops multicast, type the address instead.
+
+**Remove** takes the device off the list and takes the token of this machine
+off the device. A device that is away still leaves the list, and the window
+says the token stayed on it.
+
+This needs nothing of the machine. An effect on one of these is one HTTP call
+to an address on the LAN, so there is no module to install, no service, and no
+password. The record of the paired devices is a JSON file in your home
+directory, written for you and nobody else, because the token in it needs no
+root and a file in `/etc` would be readable by every program here.
+
+The effects of this project do not reach these devices, and that was a
+measurement and not a decision. Nanoleaf recommends no more than ten frames a
+second, which is a quarter of what the LED bar and the Pegboard take. And a
+Lines reported 81 panels as a surface with an x and a y each, where an effect
+here draws a line: a walk along the order this project would use jumped about
+the figure rather than following it. See `tools/nanoleaf-probe.py`, which took
+both measurements.
+
+Game Mode reaches the same devices through the control command, in the
+`nanoleaf` [area](#the-command-that-speaks-json).
+
 ### What it took
 
 Nanoleaf documents the protocol, and the rest was measured on a board:

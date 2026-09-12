@@ -2212,5 +2212,109 @@ class GameModeTest(unittest.TestCase):
         self.assertIn("Test tab", ledpanel.NO_AGENT_ADVICE)
 
 
+class NetworkCardTest(unittest.TestCase):
+    """The Nanoleaf devices on the network, on the page of that maker.
+
+    A live test draws this card. These are the properties that a machine
+    with no display can still check, and each one of them is a fault that
+    was easy to write.
+    """
+
+    def setUp(self):
+        with open(os.path.join(HERE, "..", "gui",
+                               "steamos-utility-center-panel")) as handle:
+            self.text = handle.read()
+
+    def _body(self, name):
+        return self.text.split("def %s(" % name)[1].split("\n    def ")[0]
+
+    def test_it_is_on_the_page_of_that_maker(self):
+        """Beside the Pegboard and not on a page of its own.
+
+        The rail says Nanoleaf, which is why: the board and these are the
+        same maker, and a second page for one card is a second place to
+        look.
+        """
+        self.assertIn("_build_network", self._body("_build_pegboard"))
+
+    def test_the_card_is_there_whether_the_module_is_or_not(self):
+        """An effect on one of these needs no rights, so it is core.
+
+        _build_module_line and _build_module_offer are what a module gets,
+        and this card takes neither.
+        """
+        body = self._body("_build_network")
+        self.assertNotIn("_build_module_offer", body)
+        self.assertNotIn("_module_halves", body)
+
+    def test_every_call_over_the_network_leaves_the_drawing_thread(self):
+        """One call costs a timeout of some seconds.
+
+        A window that waits for it on the thread that draws is a window
+        that a person calls frozen. So each of these goes through
+        _in_background, which answers on the drawing thread.
+        """
+        for name in ("_reread_network", "pair_nanoleaf", "remove_nanoleaf",
+                     "play_nanoleaf", "switch_nanoleaf",
+                     "refresh_nanoleaf"):
+            self.assertIn("_in_background", self._body(name), name)
+
+    def test_the_answer_comes_back_on_the_thread_that_draws(self):
+        """Tk belongs to one thread, and a call from another one is a crash.
+
+        The work runs on a thread and puts its answer in a box. An after()
+        on the drawing thread reads that box, so nothing of Tk is touched
+        from the thread that waits.
+        """
+        body = self._body("_in_background")
+        self.assertIn("threading.Thread", body)
+        self.assertIn("self.root.after", body)
+        run = body.split("def run(")[1].split("def look(")[0]
+        self.assertNotIn("self.root", run)
+        self.assertNotIn("ttk.", run)
+
+    def test_the_pairing_dialog_touches_no_widget_from_its_thread(self):
+        body = self.text.split("class PairDialog(")[1].split("\nclass ")[0]
+        ask = body.split("def _ask(")[1].split("\n    def ")[0]
+        self.assertNotIn("self.window", ask)
+        self.assertNotIn("ttk.", ask)
+        # And the one way out of it stops that thread.
+        self.assertIn("self.stop.set()", body)
+        self.assertIn("after_cancel", body)
+
+    def test_the_effects_come_off_the_device(self):
+        """A table here would go out of date the first time one changes.
+
+        They are the effects a person put on the device with the app of
+        Nanoleaf, and the read of the device carries the list.
+        """
+        body = self._body("_build_one_device")
+        self.assertIn('said["effects"]', body)
+
+    def test_a_device_that_does_not_answer_keeps_its_row(self):
+        """The record says it is paired. The network says no more today."""
+        body = self._body("_build_one_device")
+        self.assertIn('if not said["ok"]', body)
+        self.assertIn("Remove", body.split('if not said["ok"]')[1])
+
+    def test_removing_one_asks_first_and_takes_the_token_off_it(self):
+        body = self._body("remove_nanoleaf")
+        self.assertIn("Dialog(", body)
+        self.assertIn("nanoleaf_drop", body)
+
+    def test_the_token_names_the_menu_of_one_device(self):
+        """Two devices of one model carry the same name.
+
+        A menu keyed by the name would then be one menu for the two, and a
+        pick on either row would move both.
+        """
+        body = self._body("_build_one_device")
+        self.assertIn('"nanoleaf-%s" % said["token"]', body)
+
+    def test_an_address_can_be_typed_for_a_network_that_drops_multicast(self):
+        self.assertIn("pair_nanoleaf_at", self._body("_build_network"))
+        self.assertIn("_network_where", self._body("pair_nanoleaf_at"))
+
+
 if __name__ == "__main__":
     unittest.main()
