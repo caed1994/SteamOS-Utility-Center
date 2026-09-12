@@ -337,10 +337,11 @@ POWER = [
 # pegboard.py, where somebody looking for them looks.
 
 PEGBOARD = [
+    # One group and not two. "The board" held the switch on its own and
+    # "What it draws" held the rest, and a card with one row in it is a
+    # heading with a row under it.
     ("The board", [
         ("PEGBOARD_ENABLED", "Light the board", "bool", None, None, None),
-    ]),
-    ("What it draws", [
         # The board's own list and not the bar's: the load gauge is two
         # coloured stubs on a board. See pegboard.EFFECTS.
         ("PEGBOARD_EFFECT", "Effect", "named",
@@ -5355,10 +5356,10 @@ class Panel:
     def _build_module_line(self, parent, name):
         """The card at the head of a page whose module is installed.
 
-        One sentence and one button. The full description belongs to a person
-        who must decide, and that person reads the other half of this page.
-        Somebody who opens this page every day must not read the same
-        paragraph every day.
+        A name and a button, and no prose at all. The description belongs to
+        a person who must decide, and that person reads the other half of
+        this page. Somebody who opens this page every day must not read the
+        same paragraph every day.
         """
         said = ledpanel.module_says(name)
         card = self._card(parent)
@@ -5372,19 +5373,20 @@ class Panel:
         # belongs. It is not a setting of this page, and a place among the
         # settings would read as one.
         #
-        # Named, and not "Remove". The System page has a Remove button on each
-        # drive, and two buttons with one word on one page are two buttons
-        # that a person must try to tell apart. The HDMI CEC page has said
-        # "Remove HDMI CEC" since before there were modules.
-        ttk.Button(inner, text="Remove %s" % said["title"],
-                   style="Text.TButton",
+        # "Remove module" and not "Remove %s". The System page has a Remove
+        # button on each drive, so one word alone is two buttons a person
+        # must tell apart. The name of the module was in the button before,
+        # and "Drives, controller wake and Game Mode" is 366 pixels of it:
+        # the heading and the button together measured 977 against a card of
+        # about 950 at the font of somebody else's desktop, and the button
+        # was drawn over the end of the heading. The heading already names
+        # the module, one line above.
+        ttk.Button(inner, text="Remove module", style="Text.TButton",
                    command=lambda: self._remove_module(name)).grid(
                        row=0, column=1, sticky="e")
-        line = ttk.Label(inner, text=said["does"], style="Muted.TLabel",
-                         justify="left", wraplength=CARD_WRAP)
-        line.grid(row=1, column=0, columnspan=2, sticky="w",
-                  pady=(ROW_GAP, 0))
-        self._wrapped.append(line)
+        # And no line of prose under it. The offer above says what the module
+        # does, which is where a person decides. Somebody who reads this card
+        # has the module already.
         return card
 
     def _show_module(self, name):
@@ -6780,7 +6782,7 @@ class Panel:
         A card of state and one button, both from the same four words. See
         ledpanel.decky_state.
         """
-        box = self._section(parent, "Game Mode", card=True)
+        box = self._section(parent, "Game Mode Decky Plugin", card=True)
         self.decky_said = ttk.Label(box, style="Muted.TLabel", justify="left")
         self.decky_said.pack(anchor="w")
         self._wrapped.append(self.decky_said)

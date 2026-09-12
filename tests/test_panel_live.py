@@ -5291,15 +5291,28 @@ class ModulePageTest(unittest.TestCase):
         return found
 
     def test_the_installed_page_offers_to_remove_it(self):
-        """Named, and not "Remove".
+        """"Remove module", and not "Remove" and not the name of it.
 
-        The System page has a Remove button on each drive. Two buttons with
-        one word on one page are two buttons a person must tell apart.
+        One word alone is two buttons a person must tell apart, because the
+        System page has a Remove button on each drive. The name of the module
+        in the button was too wide: with "Drives, controller wake and Game
+        Mode" the heading and the button measured 977 against a card of about
+        950 at a larger font, and the button was drawn over the heading.
         """
         panel = self._panel(modules.ORDER)
         for name in panel._module_halves:
             buttons = self._buttons(panel._module_halves[name][1])
-            self.assertIn("Remove %s" % modules.SAYS[name]["title"], buttons,
+            self.assertIn("Remove module", buttons, name)
+            self.assertNotIn("Remove", buttons, name)
+
+    def test_the_installed_card_carries_no_prose(self):
+        """Somebody who opens this page every day has the module already."""
+        panel = self._panel(modules.ORDER)
+        for name in panel._module_halves:
+            texts = self._labels(panel._module_halves[name][1])
+            self.assertNotIn(modules.SAYS[name]["does"], texts, name)
+            # The name of it stays, one line above the button.
+            self.assertIn("%s module" % modules.SAYS[name]["title"], texts,
                           name)
 
     def _buttons(self, widget):
