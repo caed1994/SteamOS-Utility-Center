@@ -357,6 +357,79 @@ class DiscoveryTest(unittest.TestCase):
         self.assertEqual(nanoleaf.find(seconds=0.0), [])
 
 
+class ControlTest(Room):
+    """The area of the control command, which is what Game Mode talks to."""
+
+    def setUp(self):
+        super().setUp()
+        from steamos_utility_center import ctl
+        self.ctl = ctl
+
+    def test_the_area_is_there_and_carries_no_list_of_keys(self):
+        """A device is a thing to act on and not a set of settings."""
+        self.assertIn("nanoleaf", self.ctl.AREAS)
+        self.assertIsNone(self.ctl.AREA["nanoleaf"]["keys"])
+
+    def test_reading_it_gives_one_row_for_each_paired_device(self):
+        self._talk(answers={"/api/v1/%s/" % DEVICE["token"]: {
+            "effects": {"select": "Prism", "effectsList": ["Prism"]}}})
+        nanoleaf.add(DEVICE, self.home)
+        said = self.ctl.nanoleaf_read(home=self.home)
+        self.assertEqual(len(said["devices"]), 1)
+        self.assertEqual(said["devices"][0]["effect"], "Prism")
+
+    def test_the_effects_come_with_the_device_and_not_from_offers(self):
+        """One call for each device and not two for the same answer."""
+        self.assertIsInstance(self.ctl.nanoleaf_offers()["effects"], str)
+
+    def test_one_device_needs_no_token_in_the_menu(self):
+        """Which is the ordinary machine, and one key fewer in Game Mode."""
+        talker = self._talk()
+        nanoleaf.add(DEVICE, self.home)
+        said = self.ctl.nanoleaf_write({"effect": "Prism"}, home=self.home)
+        self.assertIn("Prism", said)
+        self.assertEqual(talker.asked[0]["body"], {"select": "Prism"})
+
+    def test_two_devices_need_the_token(self):
+        self._talk()
+        nanoleaf.add(DEVICE, self.home)
+        nanoleaf.add(OTHER, self.home)
+        with self.assertRaises(self.ctl.CtlError):
+            self.ctl.nanoleaf_write({"effect": "Prism"}, home=self.home)
+        said = self.ctl.nanoleaf_write(
+            {"token": OTHER["token"], "effect": "Prism"}, home=self.home)
+        self.assertIn(OTHER["name"], said)
+
+    def test_the_switch_and_the_brightness_go_through_it_too(self):
+        talker = self._talk()
+        nanoleaf.add(DEVICE, self.home)
+        self.ctl.nanoleaf_write({"on": True, "brightness": 40},
+                                home=self.home)
+        self.assertEqual([one["body"] for one in talker.asked],
+                         [{"on": {"value": True}},
+                          {"brightness": {"value": 40}}])
+
+    def test_a_machine_with_no_device_says_where_to_pair_one(self):
+        with self.assertRaises(self.ctl.CtlError) as caught:
+            self.ctl.nanoleaf_write({"effect": "Prism"}, home=self.home)
+        self.assertIn("panel", str(caught.exception))
+
+    def test_a_device_that_refused_is_reported_and_not_raised_raw(self):
+        """Game Mode shows the message, so it must read as a sentence."""
+        self._talk(raises=nanoleaf.NanoleafError("192.168.1.9 did not "
+                                                 "answer"))
+        nanoleaf.add(DEVICE, self.home)
+        with self.assertRaises(self.ctl.CtlError) as caught:
+            self.ctl.nanoleaf_write({"effect": "Prism"}, home=self.home)
+        self.assertIn("did not answer", str(caught.exception))
+
+    def test_it_asks_for_no_action_at_all_and_is_told_so(self):
+        self._talk()
+        nanoleaf.add(DEVICE, self.home)
+        with self.assertRaises(self.ctl.CtlError):
+            self.ctl.nanoleaf_write({}, home=self.home)
+
+
 class NoRightsTest(unittest.TestCase):
     """This module needs nothing of the machine, and that is the design.
 

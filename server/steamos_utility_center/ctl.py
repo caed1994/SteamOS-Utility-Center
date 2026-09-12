@@ -48,6 +48,7 @@ from . import config as config_module
 from . import lact
 from . import modules
 from . import mounts
+from . import nanoleaf
 from . import pegboard
 from . import power
 from . import shim
@@ -325,6 +326,69 @@ def pegboard_write(updates, may_prompt=False, run=None, home=None):
         os.unlink(staged)
 
 
+def nanoleaf_read(home=None):
+    """Each paired Nanoleaf device on the network, and what it is set to.
+
+    One call to each device, so a page of them costs a moment. A device that
+    is off or away is a row with a reason on it: the record says it is
+    paired, and the network says nothing more than that today.
+    """
+    return {"devices": [nanoleaf.look(one) for one in nanoleaf.read(home)]}
+
+
+def nanoleaf_offers():
+    """Nothing here. The effects of a device are on the device.
+
+    nanoleaf_read gives the list for each one, because it arrives in the
+    same call that reads the state of that device. A second call for each
+    device, to answer the same question again, is a page that takes twice
+    as long to draw.
+
+    The list is also not a table of this project. They are the effects a
+    person put on the device with the app of Nanoleaf, and a table here
+    would go out of date the first time they change one.
+    """
+    return {"effects": "each device carries its own list"}
+
+
+def nanoleaf_write(updates, may_prompt=False, run=None, home=None):
+    """Plays an effect on one device, or switches it, or dims it.
+
+    A device is a thing to act on and not a setting to write, so this takes
+    the token that names one and up to three actions. Pairing is in the
+    window, because it needs a person at the device with a finger on it.
+
+    The token can be left out on a machine with one device, which is the
+    ordinary machine. A menu in Game Mode then needs no token in it.
+    """
+    devices = nanoleaf.read(home)
+    if not devices:
+        raise CtlError("no Nanoleaf device is paired. Pair one in the panel.")
+    token = str(updates.get("token", "")).strip()
+    if not token and len(devices) == 1:
+        token = devices[0]["token"]
+    device = next((one for one in devices if one["token"] == token), None)
+    if device is None:
+        raise CtlError('nanoleaf takes {"token": "...", "effect": "..."}, '
+                       "and the token must name a paired device")
+    did = []
+    try:
+        if "on" in updates:
+            nanoleaf.switch(device, updates["on"])
+            did.append("on" if updates["on"] else "off")
+        if "brightness" in updates:
+            nanoleaf.dim(device, updates["brightness"])
+            did.append("brightness %s" % updates["brightness"])
+        if "effect" in updates:
+            nanoleaf.select(device, str(updates["effect"]))
+            did.append(str(updates["effect"]))
+    except nanoleaf.NanoleafError as exc:
+        raise CtlError(str(exc))
+    if not did:
+        raise CtlError('nanoleaf takes "effect", "on" or "brightness"')
+    return "%s: %s" % (device.get("name") or device["ip"], ", ".join(did))
+
+
 def keyboard_read(home=None):
     """The keyboard layout, which is in the home directory of the user."""
     return syssettings.read(home)
@@ -506,6 +570,13 @@ AREA = {
               "write": power_write, "keys": tuple(power.DEFAULTS)},
     "pegboard": {"read": pegboard_read, "offers": pegboard_offers,
                  "write": pegboard_write, "keys": tuple(pegboard.DEFAULTS)},
+    # The devices on the network. Not a module: an effect on one of these is
+    # one HTTP call to an address on the LAN. See nanoleaf.py.
+    #
+    # No list of keys, because a device is a thing to act on and not a set of
+    # settings. nanoleaf_write names what it takes.
+    "nanoleaf": {"read": nanoleaf_read, "offers": nanoleaf_offers,
+                 "write": nanoleaf_write, "keys": None},
     "keyboard": {"read": keyboard_read, "offers": keyboard_offers,
                  "write": keyboard_write, "keys": tuple(syssettings.DEFAULTS)},
     "drives": {"read": drives_read, "offers": drives_offers,

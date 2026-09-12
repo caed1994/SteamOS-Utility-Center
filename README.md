@@ -745,6 +745,9 @@ steamos-utility-centerctl areas
 | ---- | ------------- | ---------- |
 | `strip` | every setting of the LED service | yes |
 | `power` | the CPU governor and the EPP | yes |
+| `gpu` | the power limits and the fan of the card | yes |
+| `pegboard` | every setting of the Nanoleaf board | yes |
+| `nanoleaf` | the Nanoleaf devices on the network | no |
 | `keyboard` | the Game Mode keyboard layout | no |
 | `drives` | the second drives and where they mount | yes |
 | `cec` | the settings of the HDMI CEC toolkit | no |
@@ -752,6 +755,19 @@ steamos-utility-centerctl areas
 `get` gives the settings of one area and the values that this machine offers.
 `set` takes a JSON object of changes and keeps every other setting. `set
 drives` takes the whole list.
+
+`set nanoleaf` is the one that takes an action and not a setting, because a
+device on the network is a thing to act on:
+
+```bash
+steamos-utility-centerctl set nanoleaf '{"effect": "Northern Lights"}'
+steamos-utility-centerctl set nanoleaf '{"on": false}'
+steamos-utility-centerctl set nanoleaf '{"token": "...", "brightness": 40}'
+```
+
+The token names one device and can be left out on a machine with one. `get
+nanoleaf` gives a row for each paired device with the effects it holds, and a
+device that is off or away is a row with a reason on it.
 
 `status` is the cheap half, for a front end that asks again and again.
 `status --full` adds the slower answers. Both give `modules`, the list of
