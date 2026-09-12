@@ -430,6 +430,190 @@ class ControlTest(Room):
             self.ctl.nanoleaf_write({}, home=self.home)
 
 
+class FollowTest(Room):
+    """The lights following the machine: on at a boot, off at a shutdown."""
+
+    def _both(self):
+        nanoleaf.add(DEVICE, self.home)
+        nanoleaf.add(OTHER, self.home)
+
+    def test_it_switches_every_paired_device(self):
+        talker = self._talk()
+        self._both()
+        said = nanoleaf.follow(True, home=self.home)
+        self.assertEqual(len(said["done"]), 2)
+        self.assertEqual([one["body"] for one in talker.asked],
+                         [{"on": {"value": True}}] * 2)
+        self.assertTrue(said["state"])
+
+    def test_and_the_other_way_for_a_shutdown(self):
+        talker = self._talk()
+        self._both()
+        nanoleaf.follow(False, home=self.home)
+        self.assertEqual([one["body"] for one in talker.asked],
+                         [{"on": {"value": False}}] * 2)
+
+    def test_a_machine_with_nothing_paired_is_not_an_error(self):
+        said = nanoleaf.follow(True, home=self.home)
+        self.assertEqual(said["done"], [])
+        self.assertEqual(said["trouble"], [])
+
+    def test_a_device_that_is_away_does_not_stop_the_others(self):
+        """And it never raises.
+
+        A unit that failed while the machine went off is a message that
+        nobody reads, and one lamp that is unplugged must not leave the
+        rest lit.
+        """
+        away = self._talk()
+
+        def sometimes(ip, path, method="GET", body=None, timeout=None):
+            if ip == DEVICE["ip"]:
+                raise nanoleaf.NanoleafError("%s did not answer" % ip)
+            return away(ip, path, method=method, body=body)
+
+        nanoleaf.call = sometimes
+        self._both()
+        said = nanoleaf.follow(False, home=self.home, rest=lambda _gap: None)
+        self.assertEqual(said["done"], [OTHER["name"]])
+        self.assertEqual(len(said["trouble"]), 1)
+        self.assertIn("did not answer", said["trouble"][0])
+
+    def test_the_way_up_asks_a_silent_device_again(self):
+        """A lamp one second after a boot is not reachable yet.
+
+        The machine reaches its targets before a switch has learnt where the
+        lamp is, so the first call fails and the same call a moment later
+        works.
+        """
+        seen = []
+
+        def late(ip, path, method="GET", body=None, timeout=None):
+            seen.append(ip)
+            if len(seen) < 3:
+                raise nanoleaf.NanoleafError("%s did not answer" % ip)
+            return {}
+
+        nanoleaf.call = late
+        nanoleaf.add(DEVICE, self.home)
+        said = nanoleaf.follow(True, home=self.home, rest=lambda _gap: None)
+        self.assertEqual(said["done"], [DEVICE["name"]])
+        self.assertEqual(said["trouble"], [])
+        self.assertEqual(len(seen), 3)
+
+    def test_the_way_down_asks_one_time(self):
+        """A suspend waits here. A lamp that missed the message stays lit
+        until the next boot, which is better than a suspend that waits."""
+        seen = []
+
+        def never(ip, path, method="GET", body=None, timeout=None):
+            seen.append(ip)
+            raise nanoleaf.NanoleafError("no")
+
+        nanoleaf.call = never
+        nanoleaf.add(DEVICE, self.home)
+        nanoleaf.follow(False, home=self.home, rest=lambda _gap: None)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(nanoleaf.FOLLOW_TRIES, 5)
+
+    def test_the_command_the_units_run_says_on_or_off(self):
+        talker = self._talk()
+        nanoleaf.add(DEVICE, self.home)
+        was = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+        self.addCleanup(lambda: os.environ.__setitem__("HOME", was)
+                        if was is not None else os.environ.pop("HOME", None))
+        self.assertEqual(nanoleaf.main(["on"]), 0)
+        self.assertEqual(nanoleaf.main(["off"]), 0)
+        self.assertEqual([one["body"] for one in talker.asked],
+                         [{"on": {"value": True}}, {"on": {"value": False}}])
+
+    def test_it_is_zero_even_where_a_lamp_did_not_answer(self):
+        """A unit that fails at every suspend is a red line for ever."""
+        self._talk(raises=nanoleaf.NanoleafError("away"))
+        nanoleaf.add(DEVICE, self.home)
+        was = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+        self.addCleanup(lambda: os.environ.__setitem__("HOME", was)
+                        if was is not None else os.environ.pop("HOME", None))
+        self.assertEqual(nanoleaf.main(["off"]), 0)
+
+    def test_a_word_it_does_not_know_is_a_fault(self):
+        for argv in ([], ["sideways"], ["on", "off"]):
+            self.assertEqual(nanoleaf.main(argv), 2, argv)
+
+
+class UnitTest(unittest.TestCase):
+    """The two units, and what the installers do with them."""
+
+    REPO = os.path.join(HERE, "..")
+
+    def _unit(self, name):
+        with open(os.path.join(self.REPO, "server", name)) as handle:
+            return handle.read()
+
+    def setUp(self):
+        self.main = self._unit("steamos-utility-center-nanoleaf.service")
+        self.resume = self._unit(
+            "steamos-utility-center-nanoleaf-resume.service")
+
+    def test_a_boot_turns_them_on_and_a_shutdown_turns_them_off(self):
+        """The stop of the unit is the off, and systemd stops it before it
+        takes the network down: it stops in the reverse of the start."""
+        self.assertIn("RemainAfterExit=yes", self.main)
+        self.assertIn("steamos-utility-center-nanoleaf on", self.main)
+        self.assertIn("ExecStop=", self.main)
+        self.assertIn("steamos-utility-center-nanoleaf off", self.main)
+        self.assertIn("WantedBy=multi-user.target", self.main)
+        self.assertIn("After=network-online.target", self.main)
+
+    def test_a_suspend_stops_it_and_that_stop_is_the_off(self):
+        """One unit for three of the four moments. See its own comment."""
+        self.assertIn("Conflicts=sleep.target", self.main)
+        self.assertIn("Before=sleep.target", self.main)
+
+    def test_a_wake_starts_it_again(self):
+        self.assertIn("After=suspend.target", self.resume)
+        self.assertIn("WantedBy=suspend.target", self.resume)
+        self.assertIn("systemctl start steamos-utility-center-nanoleaf",
+                      self.resume)
+
+    def test_it_runs_as_the_person_who_paired_them_and_not_as_root(self):
+        """The record is in that person's home and holds a token for each
+        device. systemd gives a unit with User= the HOME of that account, so
+        no path is written into the unit."""
+        self.assertIn("User=@WATCHER_USER@", self.main)
+
+    def test_neither_side_waits_for_ever(self):
+        for name, text in (("main", self.main),):
+            self.assertIn("TimeoutStartSec=", text, name)
+            self.assertIn("TimeoutStopSec=", text, name)
+
+    def test_the_core_installs_them_and_the_uninstaller_removes_them(self):
+        """The core, which writes no other unit. The devices are core too."""
+        with open(os.path.join(self.REPO, "install.sh")) as handle:
+            install = handle.read()
+        core = install.split("# --- the modules ---")[0]
+        for wanted in ("NANOLEAF_HELPER_PATH", "NANOLEAF_UNIT_PATH",
+                       "NANOLEAF_RESUME_UNIT_PATH", "watcher_user_dirs"):
+            self.assertIn(wanted, core, wanted)
+        with open(os.path.join(self.REPO, "uninstall.sh")) as handle:
+            gone = handle.read()
+        for wanted in ("NANOLEAF_HELPER_PATH", "NANOLEAF_UNIT_PATH",
+                       "NANOLEAF_RESUME_UNIT_PATH"):
+            self.assertIn(wanted, gone, wanted)
+
+    def test_a_machine_with_no_desktop_user_gets_no_unit(self):
+        """There is no home to read the record from, so there is nothing to
+        run and nothing to run it as."""
+        with open(os.path.join(self.REPO, "install.sh")) as handle:
+            install = handle.read()
+        block = install.split("NANOLEAF_HELPER_PATH")[1].split(
+            "# --- the modules ---")[0]
+        self.assertIn("if watcher_user_dirs; then", block)
+        self.assertIn("else", block)
+
+
 class NoRightsTest(unittest.TestCase):
     """This module needs nothing of the machine, and that is the design.
 

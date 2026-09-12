@@ -541,6 +541,21 @@ PROJECT_FILES = (
     "steamos-utility-center-pegboard-resume.service",
     "/etc/systemd/system/suspend-then-hibernate.target.wants/"
     "steamos-utility-center-pegboard-resume.service",
+    # What lets the Nanoleaf devices on the network follow the machine. Part
+    # of the core, so these two are on a machine with no module at all. See
+    # server/steamos_utility_center/nanoleaf.py.
+    "/etc/systemd/system/steamos-utility-center-nanoleaf.service",
+    "/etc/systemd/system/steamos-utility-center-nanoleaf-resume.service",
+    "/etc/systemd/system/multi-user.target.wants/"
+    "steamos-utility-center-nanoleaf.service",
+    "/etc/systemd/system/suspend.target.wants/"
+    "steamos-utility-center-nanoleaf-resume.service",
+    "/etc/systemd/system/hibernate.target.wants/"
+    "steamos-utility-center-nanoleaf-resume.service",
+    "/etc/systemd/system/hybrid-sleep.target.wants/"
+    "steamos-utility-center-nanoleaf-resume.service",
+    "/etc/systemd/system/suspend-then-hibernate.target.wants/"
+    "steamos-utility-center-nanoleaf-resume.service",
     # Controller wake. See scripts/wake-apply.sh.
     "/etc/systemd/system/steamos-utility-center-wake.service",
     "/etc/systemd/system/multi-user.target.wants/"

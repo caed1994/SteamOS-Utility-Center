@@ -63,6 +63,7 @@ import json
 import os
 import socket
 import struct
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -84,6 +85,21 @@ TIMEOUT = 2.5
 
 # How long a device gives a token out after the button. Nanoleaf documents 30.
 PAIR_SECONDS = 30.0
+
+# How many times follow() asks a device that did not answer, and the wait
+# between two of those.
+#
+# For the way up only. The machine reaches its targets before a switch has
+# learnt where a lamp is, so the first call to a device one second after a
+# boot fails and the same call a moment later works. Five tries three seconds
+# apart is fifteen seconds in the worst case, and nothing waits for it: the
+# unit is wanted by multi-user.target and ordered before nothing.
+#
+# On the way down there is one try. The machine is on its way to off, and a
+# lamp that missed the message is a lamp that stays lit until the next boot,
+# which is better than a shutdown that waits fifteen seconds for it.
+FOLLOW_TRIES = 5
+FOLLOW_GAP = 3.0
 
 CONFIG_DIR = ".config"
 CONFIG_FILE = "steamos-utility-center-nanoleaf.json"
@@ -355,6 +371,72 @@ def dim(device, level):
     level = max(0, min(int(level), 100))
     call(device["ip"], "/api/v1/%s/state" % device["token"], method="PUT",
          body={"brightness": {"value": level}})
+
+
+def follow(state, home=None, tries=None, rest=None):
+    """Turns every paired device on, or off, and says what it did.
+
+    This is what makes the lights follow the machine: on at a boot and at a
+    wake, off at a suspend and at a shutdown. The units call it. See
+    server/steamos-utility-center-nanoleaf.
+
+    It never raises. A device that is away must not stop the others, and a
+    unit that failed while the machine went off is a message that nobody
+    reads.
+
+    A device that did not answer is asked again, and only that one. That is
+    for the way up: see FOLLOW_TRIES.
+    """
+    rest = time.sleep if rest is None else rest
+    if tries is None:
+        tries = FOLLOW_TRIES if state else 1
+    left = read(home)
+    done = []
+    trouble = []
+    for turn in range(max(1, int(tries))):
+        if not left:
+            break
+        if turn:
+            rest(FOLLOW_GAP)
+        again = []
+        trouble = []
+        for one in left:
+            try:
+                switch(one, state)
+            except NanoleafError as exc:
+                again.append(one)
+                trouble.append("%s: %s" % (one.get("name") or one["ip"], exc))
+            else:
+                done.append(one.get("name") or one["ip"])
+        left = again
+    return {"state": bool(state), "done": done, "trouble": trouble}
+
+
+def main(argv=None):
+    """The two units call this with "on" or "off".
+
+    See server/steamos-utility-center-nanoleaf.service, which turns the
+    lights on at a boot and off at a shutdown, and the resume unit beside it.
+
+    It returns zero either way. A lamp that did not answer is not a fault of
+    this machine, and a unit that fails at every suspend is a red line in
+    `systemctl status` for ever. What happened is in the journal.
+    """
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if len(argv) != 1 or argv[0] not in ("on", "off"):
+        print("usage: steamos-utility-center-nanoleaf on|off",
+              file=sys.stderr)
+        return 2
+    said = follow(argv[0] == "on")
+    if not said["done"] and not said["trouble"]:
+        print("no Nanoleaf device on the network is paired here")
+        return 0
+    if said["done"]:
+        print("%s: %s" % ("on" if said["state"] else "off",
+                          ", ".join(said["done"])))
+    for line in said["trouble"]:
+        print(line, file=sys.stderr)
+    return 0
 
 
 # -- the record --------------------------------------------------------------

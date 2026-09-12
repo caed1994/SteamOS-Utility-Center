@@ -459,6 +459,34 @@ device that does not answer keeps its switch with the reason in its name.
 There is no brightness there, for the same reason no other slider is: a
 slider sends a write at every step it passes.
 
+### They follow the machine
+
+The paired devices go on when the machine boots or wakes, and off when it
+suspends or shuts down. Two units do it, and the installer writes them with
+the core:
+
+| | |
+| --- | --- |
+| a boot | `steamos-utility-center-nanoleaf.service` starts and turns them on |
+| a suspend | that unit conflicts with `sleep.target`, so systemd stops it, and the stop turns them off |
+| a wake | `steamos-utility-center-nanoleaf-resume.service` starts it again |
+| a shutdown | the same stop, and systemd stops the unit before it takes the network down |
+
+The unit runs as the person who paired the devices and not as root, because
+the record and its tokens are in that person's home directory. A machine
+where nothing is paired reads an empty record and both units do nothing,
+which is why they are in the core rather than in a module.
+
+On the way up a device that does not answer is asked again, five times three
+seconds apart: the machine reaches its targets before a switch has learnt
+where a lamp is. Nothing waits for the unit, so those seconds delay no boot.
+On the way down there is one try, because a suspend waits there.
+
+There is no switch to turn this off yet. A device you pair follows the
+machine, and the one way out is to remove it from the card.
+
+Log: `journalctl -u steamos-utility-center-nanoleaf`
+
 ### What it took
 
 Nanoleaf documents the protocol, and the rest was measured on a board:

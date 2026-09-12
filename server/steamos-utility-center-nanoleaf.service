@@ -1,0 +1,49 @@
+[Unit]
+# Lets the Nanoleaf devices on the network follow the machine.
+#
+# Four moments and two units. This one holds three of them:
+#
+#   a boot      ExecStart turns them on.
+#   a suspend   Conflicts with sleep.target, so systemd stops this unit on
+#               the way down and Before=sleep.target makes that stop finish
+#               first. The stop is ExecStop, which turns them off.
+#   a shutdown  the same stop, and systemd stops this before it takes the
+#               network down, because it stops in the reverse of the order
+#               it started.
+#
+# The fourth is a wake, and that is the resume unit beside this one: it
+# starts this unit again, and ExecStart turns them on.
+#
+# It runs as the person who paired the devices and not as root. The record of
+# them is in that person's home directory and holds a token for each one, and
+# nothing here needs any right that person does not have. See
+# server/steamos_utility_center/nanoleaf.py.
+#
+# A machine where nothing is paired reads an empty record and exits. That is
+# why this is part of the core: it costs nothing until somebody pairs a lamp.
+#
+# Log: journalctl -u steamos-utility-center-nanoleaf
+Description=Let the Nanoleaf devices on the network follow this machine
+Documentation=https://github.com/caed1994/SteamOS-Utility-Center
+Wants=network-online.target
+After=network-online.target
+Conflicts=sleep.target
+Before=sleep.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=@WATCHER_USER@
+ExecStart=@INSTALL_DIR@/steamos-utility-center-nanoleaf on
+ExecStop=@INSTALL_DIR@/steamos-utility-center-nanoleaf off
+# The way up asks a device that did not answer again, five times three
+# seconds apart, because a lamp one second after a boot is not reachable yet.
+# Nothing waits for this unit, so those seconds delay no boot.
+TimeoutStartSec=40
+# The way down asks one time. A suspend waits here, and a lamp that missed
+# the message stays lit until the next boot, which is better than a suspend
+# that waits.
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

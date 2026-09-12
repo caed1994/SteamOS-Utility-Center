@@ -1,0 +1,21 @@
+[Unit]
+# Lights the Nanoleaf devices on the network again after a wake.
+#
+# The fourth moment of steamos-utility-center-nanoleaf.service. That unit was
+# stopped on the way into the suspend, and this starts it again, which runs
+# its ExecStart.
+#
+# suspend.target and its three companions are reached after the machine wakes,
+# because each one is ordered after the service that does the sleeping. That
+# is why this side names them and not sleep.target: sleep.target is reached on
+# the way down.
+Description=Light the Nanoleaf devices on the network again after a wake
+Documentation=https://github.com/caed1994/SteamOS-Utility-Center
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl start steamos-utility-center-nanoleaf.service
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
