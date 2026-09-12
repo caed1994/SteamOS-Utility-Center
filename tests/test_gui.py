@@ -2291,6 +2291,23 @@ class NetworkCardTest(unittest.TestCase):
         body = self._body("_build_one_device")
         self.assertIn('said["effects"]', body)
 
+    def test_the_menu_is_filled_before_the_trace_goes_on_it(self):
+        """_field fills the variable with the label of the current effect.
+
+        A trace already on it would fire for that fill, and the card would
+        play an effect on every device each time the page is opened. The
+        guard in play_nanoleaf catches it as well, so a live test cannot
+        tell the two apart. This pins the order.
+        """
+        body = self._body("_build_one_device")
+        self.assertLess(body.index("self._field("), body.index("trace_add"),
+                        "the trace is on the variable before _field fills it")
+
+    def test_and_an_effect_the_device_plays_is_not_played_again(self):
+        """The other half of the pair. See the test above."""
+        body = self._body("play_nanoleaf")
+        self.assertIn('effect == device.get("effect")', body)
+
     def test_a_device_that_does_not_answer_keeps_its_row(self):
         """The record says it is paired. The network says no more today."""
         body = self._body("_build_one_device")

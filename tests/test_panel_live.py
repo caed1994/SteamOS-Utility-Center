@@ -17,6 +17,7 @@ import io
 import json
 import os
 import sys
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -4539,6 +4540,204 @@ class GpuFirstLookTest(unittest.TestCase):
         """A callback for a window that has gone is an invalid command name."""
         self.panel._stop_timers()
         self.assertIsNone(self.panel._gpu_first)
+
+
+class NetworkCardTest(unittest.TestCase):
+    """The Nanoleaf devices on the network, drawn in a real window.
+
+    No device answers here. ledpanel is asked instead and gives two: one that
+    replies and one that does not. The second is the case this card was built
+    around, because a lamp that is off or unplugged is an ordinary lamp.
+    """
+
+    DEVICES = [
+        {"name": "Lines A5F4", "model": "NL59", "ip": "192.168.178.93",
+         "token": "one", "ok": True, "on": True, "brightness": 60,
+         "effect": "Northern Lights",
+         "effects": ("Cotton Candy", "Northern Lights", "Prism"),
+         "error": ""},
+        {"name": "Shapes 1B2C", "model": "NL42", "ip": "192.168.178.41",
+         "token": "two", "ok": False, "on": None, "brightness": None,
+         "effect": "", "effects": (), "error": "192.168.178.41 did not "
+                                               "answer"},
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.panel_module = _panel_module()
+
+    def setUp(self):
+        self.ledpanel = self.panel_module.ledpanel
+        self.acted = []
+        self._was = {name: getattr(self.ledpanel, name)
+                     for name in ("nanoleaf_devices", "nanoleaf_select",
+                                  "nanoleaf_switch", "nanoleaf_drop",
+                                  "nanoleaf_found", "nanoleaf_refresh")}
+        self.addCleanup(self._put_back)
+        self.ledpanel.nanoleaf_devices = lambda home=None: [
+            dict(one) for one in self.DEVICES]
+        self.ledpanel.nanoleaf_select = lambda one, name: self.acted.append(
+            ("select", one["token"], name))
+        self.ledpanel.nanoleaf_switch = lambda one, on: self.acted.append(
+            ("switch", one["token"], bool(on)))
+        self.ledpanel.nanoleaf_drop = lambda one, home=None: (
+            self.acted.append(("drop", one["token"])) or "")
+        self.ledpanel.nanoleaf_found = lambda seconds=3.0: []
+        self.ledpanel.nanoleaf_refresh = lambda home=None: []
+
+        self.root = tk.Tk()
+        self.addCleanup(self._destroy)
+        self.panel = self.panel_module.Panel(self.root)
+        self.said = []
+        self.panel._say = lambda title, message: self.said.append(message)
+        self.root.update()
+        self.panel._open_section("pegboard")
+        self._settle()
+
+    def _put_back(self):
+        for name, was in self._was.items():
+            setattr(self.ledpanel, name, was)
+
+    def _destroy(self):
+        if getattr(self, "root", None) is not None:
+            self.root.destroy()
+            self.root = None
+
+    def _settle(self, tries=400):
+        """Pumps the loop until the card has read the devices.
+
+        The read is on a thread and the answer arrives through after(), so
+        the window needs its loop turned for it to land.
+        """
+        for _try in range(tries):
+            self.root.update()
+            if self.panel._network:
+                self.root.update()
+                return
+            time.sleep(0.01)
+        self.fail("the card never read the devices")
+
+    def _texts(self):
+        out = []
+        for child in self.panel.network_box.winfo_children():
+            try:
+                out.append(child.cget("text"))
+            except tk.TclError:                 # a field carries a variable
+                out.append("")
+        return out
+
+    def _wait(self, tries=400):
+        """Pumps the loop until the card records an action."""
+        for _try in range(tries):
+            self.root.update()
+            if self.acted:
+                return
+            time.sleep(0.01)
+        self.fail("nothing was done")
+
+    def test_one_row_for_each_paired_device(self):
+        texts = self._texts()
+        self.assertIn("Lines A5F4", texts)
+        self.assertIn("Shapes 1B2C", texts)
+        self.assertIn("192.168.178.93", texts)
+
+    def test_the_one_that_answers_says_what_it_plays(self):
+        self.assertIn("on", self._texts())
+        self.assertEqual(
+            self.panel._menu_parts["nanoleaf-one"].get(), "Northern Lights")
+
+    def test_the_menu_of_a_row_holds_what_that_device_holds(self):
+        """Off the device, and not a table of this project."""
+        self.assertEqual(
+            [value for _label, value in self.panel._menus["nanoleaf-one"]],
+            ["Cotton Candy", "Northern Lights", "Prism"])
+
+    def test_the_one_that_does_not_answer_keeps_its_row_and_its_button(self):
+        """The record says it is paired. The network says no more today.
+
+        A row that vanished would leave a person with a device they cannot
+        remove and no reason on the screen.
+        """
+        texts = self._texts()
+        self.assertIn("does not answer", texts)
+        self.assertEqual(texts.count("Remove"), 2)
+
+    def test_a_device_that_is_away_offers_no_menu_of_effects(self):
+        self.assertNotIn("nanoleaf-two", self.panel._menus)
+
+    def test_picking_an_effect_plays_it_on_that_device(self):
+        self.panel._menu_parts["nanoleaf-one"].set("Prism")
+        self._wait()
+        self.assertEqual(self.acted, [("select", "one", "Prism")])
+
+    def test_drawing_the_card_plays_nothing(self):
+        """Two things hold this, and one of the two is enough on its own.
+
+        _field fills the variable with the label of the current effect, and
+        the trace goes on after that fill. And play_nanoleaf returns where
+        the effect asked for is the one the device already plays. Each was
+        taken away on its own here and this test still passed, so it stands
+        for the pair of them and not for either one: the order of the two
+        lines is pinned in tests/test_gui.py instead.
+        """
+        self.assertEqual(self.acted, [])
+
+    def test_the_switch_turns_it_the_other_way(self):
+        self.panel.switch_nanoleaf(dict(self.DEVICES[0]))
+        self._wait()
+        self.assertEqual(self.acted, [("switch", "one", False)])
+
+    def test_removing_one_asks_first(self):
+        asked = []
+
+        class Refuses:
+            def __init__(self, *args, **kwargs):
+                asked.append(args[1] if len(args) > 1 else "")
+                self.answer = False
+
+        was = self.panel_module.Dialog
+        self.panel_module.Dialog = Refuses
+        self.addCleanup(setattr, self.panel_module, "Dialog", was)
+        self.panel.remove_nanoleaf(dict(self.DEVICES[0]))
+        self.root.update()
+        self.assertTrue(asked)
+        self.assertEqual(self.acted, [])
+
+    def test_and_then_takes_the_token_off_it(self):
+        class Agrees:
+            def __init__(self, *args, **kwargs):
+                self.answer = True
+
+        was = self.panel_module.Dialog
+        self.panel_module.Dialog = Agrees
+        self.addCleanup(setattr, self.panel_module, "Dialog", was)
+        self.panel.remove_nanoleaf(dict(self.DEVICES[0]))
+        self._wait()
+        self.assertEqual(self.acted[0], ("drop", "one"))
+
+    def test_a_search_that_answers_nothing_says_where_to_type_it(self):
+        self.panel.pair_nanoleaf()
+        for _try in range(200):
+            self.root.update()
+            if "multicast" in self.panel.network_said.cget("text"):
+                return
+            time.sleep(0.01)
+        self.fail("the card said %r" % self.panel.network_said.cget("text"))
+
+    def test_an_address_is_asked_for_before_it_is_used(self):
+        self.panel.pair_nanoleaf_at()
+        self.root.update()
+        self.assertTrue(self.said)
+        self.assertIn("address", self.said[0])
+
+    def test_no_name_in_the_card_is_cut_off(self):
+        """Canvas text does not wrap, and a grid cell does not cut. These are
+        labels in a grid, so the card grows instead: this checks that the row
+        fits the width the page gives it."""
+        self.root.update_idletasks()
+        wanted = self.panel.network_box.winfo_reqwidth()
+        self.assertGreater(wanted, 0)
+        self.assertLess(wanted, 2000, "the row is wider than any window")
 
 
 class DrivesPageTest(unittest.TestCase):
