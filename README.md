@@ -359,31 +359,37 @@ temperature gauge is a reading, and a reading is not a texture.
 The LED bar is unchanged. It asks for nothing and gets what it always gave,
 and the frames it draws are the same byte for byte at 17, 30 and 60 LEDs.
 
-### Two effects that keep a floor
+### Three effects that keep a floor
 
-The aurora and the ooze each hold a brightness floor. The curtain of the
-aurora thins and does not go out, and the blobs of the ooze overlap, so the
-gaps between them rarely go near the dark end. On a bar behind a case that
-floor is the effect.
+The aurora, the ooze and the fire each hold a brightness floor, or come close
+to one. The curtain of the aurora thins and does not go out, and the blobs of
+the ooze overlap, so the gaps between them rarely go near the dark end. On a
+bar behind a case that floor is the effect.
 
 On this board the two sides light each other, so the floor never reads as
-dark. Both effects then sit in their bright half. Measured over 120 frames at
-full brightness:
+dark and the effect sits in its bright half. So each of the three draws
+through a curve of its own, on top of `GAMMA`. Measured over 120 frames at
+full brightness, the dark tenth against the bright tenth of 255:
 
-| | dark tenth | bright tenth | ratio |
+| | no curve | with its curve | curve |
 | --- | --- | --- | --- |
-| aurora, before | 38 | 184 | 4.8 |
-| aurora, now | 6 | 156 | 26 |
-| ooze, before | 32 | 227 | 7.0 |
-| ooze, now | 3 | 209 | 59 |
+| aurora | 4.8 | 6.7 | 1.25 |
+| ooze | 7.0 | 10.6 | 1.25 |
+| fire | 3.4 | 4.1 | 1.30 |
 
-So those two draw through a curve of their own. The fire keeps none: it has
-hard colour stops and no floor, and the same curve took its mean from 106 to
-59 and its bright tenth from 165 to 105. It went dim and not deep.
+The values are what looked right on the board, after living with them. The
+first version of this table held 2.5 for the aurora and the ooze and nothing
+for the fire, from a measurement of contrast alone: 2.5 took the ooze to a
+ratio of 59, and it looked wrong. The three now stand within four parts in a
+hundred of each other, so the reading that two of them want a much steeper
+curve than the fire did not hold. They want one mild curve.
 
-`GAMMA` still works on top of that. Leave it at 1.0 for the aurora and the
-ooze, because the curve they need is already there. Both are dimmer overall
-than the fire at the same brightness, which is what a deeper curve does.
+The rainbow and the temperature gauge carry none. A gauge is a reading, and a
+curve on a reading changes what it says.
+
+`GAMMA` still works on top of that, and it multiplies: a gamma is an
+exponent, so two of them are one. Leave it at 1.0, because the curve each
+effect needs is already there.
 
 Two exceptions. The load gauge is not here: it draws two bars of a fixed
 colour that grow with the counters, which reads as a meter on a strip behind a

@@ -467,25 +467,45 @@ class DrawingTest(unittest.TestCase):
             mean += sum(levels) / count
         return dark / shots, bright / shots, mean / shots
 
-    def test_the_two_soft_effects_draw_through_a_steeper_curve(self):
-        """Each of those two keeps a floor, and on this board it never reads
-        as dark: the two sides light each other. See pegboard.TONE_GAMMA."""
-        for effect in (render.SHOWS_AURORA, render.SHOWS_OOZE):
-            self.assertEqual(pegboard.tone_gamma(effect), 2.5, effect)
-            dark, bright, _mean = self._tones(effect)
-            self.assertGreater(bright / dark, 15.0,
-                               "%s: %.1f to %.1f" % (effect, dark, bright))
+    # The value each effect carries, and the ratio of its bright tenth to its
+    # dark tenth with no curve at all. The floor below each ratio is between
+    # the two, so this fails both where the curve is gone and where it is
+    # much steeper than a person asked for. See pegboard.TONE_GAMMA.
+    CURVES = {render.SHOWS_AURORA: (1.25, 4.8, 5.5, 9.0),
+              render.SHOWS_OOZE: (1.25, 7.0, 8.5, 14.0),
+              render.SHOWS_FIRE: (1.30, 3.4, 3.8, 5.0)}
 
-    def test_the_fire_and_the_rainbow_keep_their_own(self):
-        """The fire has hard colour stops and no floor. At 2.5 its mean went
-        from 106 to 59 and its bright tenth from 165 to 105, so it went dim
-        and not deep."""
-        for effect in (render.SHOWS_FIRE, render.SHOWS_RAINBOW):
+    def test_each_shaped_effect_draws_through_a_curve_of_its_own(self):
+        """The values are what a person settled on, on the board.
+
+        The first table held 2.5 for the aurora and the ooze and nothing for
+        the fire, from a measurement of contrast alone. That was too much.
+        """
+        for effect, (curve, flat, floor, ceiling) in self.CURVES.items():
+            self.assertEqual(pegboard.tone_gamma(effect), curve, effect)
+            dark, bright, _mean = self._tones(effect)
+            ratio = bright / dark
+            self.assertGreater(ratio, floor, "%s: %.2f, and %.1f is flat"
+                               % (effect, ratio, flat))
+            self.assertLess(ratio, ceiling, "%s: %.2f is steeper than asked"
+                            % (effect, ratio))
+
+    def test_the_three_stand_close_together(self):
+        """Which is the reading that the first table got wrong.
+
+        It said the aurora and the ooze want a much steeper curve than the
+        fire. They want the same mild curve, within four parts in a hundred.
+        """
+        values = sorted(pegboard.TONE_GAMMA.values())
+        self.assertLess(values[-1] / values[0], 1.10)
+
+    def test_the_rainbow_and_the_gauge_carry_none(self):
+        """A gauge is a reading, and a curve on a reading changes what it
+        says. Neither was tried at these values."""
+        for effect in (render.SHOWS_RAINBOW, render.SHOWS_TEMPERATURE,
+                       pegboard.SHOWS_RAINBOW_WAVE, pegboard.SHOWS_PATROL):
             self.assertEqual(pegboard.tone_gamma(effect), 1.0, effect)
             self.assertNotIn(effect, pegboard.TONE_GAMMA, effect)
-            dark, bright, _mean = self._tones(effect)
-            self.assertLess(bright / dark, 8.0,
-                            "%s: %.1f to %.1f" % (effect, dark, bright))
 
     def test_the_curve_is_the_gamma_of_the_board_times_its_own(self):
         """A gamma is an exponent, so two of them are one multiplication.

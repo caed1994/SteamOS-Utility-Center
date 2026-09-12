@@ -645,26 +645,40 @@ class Board:
 # file.
 
 
-# The curve that two of the effects draw through, on top of GAMMA.
+# The curve that each of these effects draws through, on top of GAMMA.
 #
-# Each of those two keeps a floor: AURORA_FLOOR is 0.35, so the curtain thins
-# and does not go out, and the blobs of the ooze overlap, so the gaps between
-# them rarely come near OOZE_FLOOR. On a bar behind a case that floor is the
-# effect. On this board the two sides light each other, so the floor never
-# reads as dark and both effects sit in their bright half.
+# Each of the three keeps a floor, or close to one. AURORA_FLOOR is 0.35, so
+# the curtain thins and does not go out, and the blobs of the ooze overlap, so
+# the gaps between them rarely come near OOZE_FLOOR. On a bar behind a case
+# that floor is the effect. On this board the two sides light each other, so
+# the floor never reads as dark and the effect sits in its bright half.
 #
-# Measured over 120 frames at full brightness. The dark tenth of the aurora
-# is at 38 of 255 and its bright tenth at 184, a ratio of 4.8. At 2.5 the two
-# are 6 and 156, a ratio of 26. The ooze goes from 7.0 to 59.
+# The values are what a person settled on, on the board, after living with
+# them. Measured over 120 frames at full brightness, dark tenth against
+# bright tenth of 255:
 #
-# The fire keeps 1.0. It has hard colour stops and no floor, and 2.5 takes its
-# mean from 106 to 59 and its bright tenth from 165 to 105. It goes dim and
-# not deep.
+#     aurora    4.8 with no curve, 6.7 at 1.25
+#     ooze      7.0 with no curve, 10.6 at 1.25
+#     fire      3.4 with no curve, 4.1 at 1.30
+#
+# The first version of this table held 2.5 for the aurora and the ooze and
+# nothing for the fire, from a measurement of contrast alone. That was too
+# much: 2.5 took the ooze to a ratio of 59, and the report was that it looked
+# wrong. The three values now stand within four parts in a hundred of each
+# other, so the reading that these two effects want a much steeper curve than
+# the fire did not hold. What they want is one mild curve, and the table says
+# so for each of them rather than for a pair.
+#
+# The rainbow and the temperature gauge are not here and were not tried at
+# these values. A gauge is a reading, and a curve on a reading changes what it
+# says.
 #
 # A gamma is an exponent, so two of them are one multiplication. GAMMA still
-# works on top of this: it moves these two, and it moves every effect that
-# this table leaves out.
-TONE_GAMMA = {render.SHOWS_AURORA: 2.5, render.SHOWS_OOZE: 2.5}
+# works on top of this: it moves each effect in this table, and it moves
+# every effect that the table leaves out.
+TONE_GAMMA = {render.SHOWS_AURORA: 1.25,
+              render.SHOWS_OOZE: 1.25,
+              render.SHOWS_FIRE: 1.30}
 
 
 def tone_gamma(effect):
