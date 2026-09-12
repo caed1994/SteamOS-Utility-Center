@@ -325,27 +325,64 @@ def forget(ip, token):
     return call(ip, "/api/v1/%s" % token, method="DELETE")
 
 
-def selected(ip, token):
-    """Which effect the device draws now, so this can give it back."""
+def before(ip, token):
+    """What the device draws and whether it is on, to give back after.
+
+    A name between asterisks is not an effect. *Solid*, *Dynamic* and
+    *ExtControl* are the modes of the device, and a select of one of those
+    does nothing: the first walk on a Lines left the device in *ExtControl*
+    and lit, and the device was off before it, because this read *Solid* and
+    tried to select it. So a mode is not carried, and the on state always is.
+    """
+    effect = None
+    lit = None
     try:
         said = call(ip, "/api/v1/%s/effects/select" % token)
-    except (urllib.error.URLError, OSError):
-        return None
-    return said if isinstance(said, str) else None
-
-
-def restore(ip, token, effect):
-    """Selects that effect again. The streaming mode ends with it."""
-    if not effect:
-        return
-    try:
-        call(ip, "/api/v1/%s/effects" % token, method="PUT",
-             body={"select": effect})
+        if isinstance(said, str) and not said.startswith("*"):
+            effect = said
     except (urllib.error.URLError, OSError):
         pass
+    try:
+        said = call(ip, "/api/v1/%s/state/on" % token)
+        lit = said.get("value") if isinstance(said, dict) else None
+    except (urllib.error.URLError, OSError):
+        pass
+    return effect, lit
+
+
+def restore(ip, token, was):
+    """Puts that effect and that on state back.
+
+    The streaming mode ends with either of them. A device left in it goes
+    back to its own effect after a minute of no frames, which is a minute of
+    a person asking what happened.
+    """
+    effect, lit = was
+    if effect:
+        try:
+            call(ip, "/api/v1/%s/effects" % token, method="PUT",
+                 body={"select": effect})
+        except (urllib.error.URLError, OSError):
+            pass
+    if lit is not None:
+        try:
+            call(ip, "/api/v1/%s/state" % token, method="PUT",
+                 body={"on": {"value": bool(lit)}})
+        except (urllib.error.URLError, OSError):
+            pass
 
 
 # -- what each command prints ------------------------------------------------
+
+def _said_back(was):
+    """Says what the device got back, so a person can check it."""
+    effect, lit = was
+    print("\nThe device is %s again, and its effect is %s."
+          % ("on" if lit else "off", effect or "the one it had"))
+    if effect is None:
+        print("It was in a mode and not on an effect, and a mode is not "
+              "a thing to select. Pick one in the app if it looks wrong.")
+
 
 def do_find(args):
     print("Asking for %s, %.0f seconds" % (SERVICE, args.seconds))
@@ -426,7 +463,7 @@ def do_walk(args):
     if not order:
         print("The device reports no panels.")
         return 1
-    was = selected(args.ip, args.token)
+    was = before(args.ip, args.token)
     where, port = external(args.ip, args.token)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     print("Lighting one panel at a time, %.1f seconds each. Watch the device."
@@ -448,7 +485,7 @@ def do_walk(args):
         sock.sendto(frame(order, [(0, 0, 0)] * len(order)), (where, port))
         sock.close()
         restore(args.ip, args.token, was)
-    print("\nThe device has its effect back: %s" % (was or "none"))
+    _said_back(was)
     return 0
 
 
@@ -468,7 +505,7 @@ def do_stream(args):
     if not order:
         print("The device reports no panels.")
         return 1
-    was = selected(args.ip, args.token)
+    was = before(args.ip, args.token)
     where, port = external(args.ip, args.token)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     rates = [int(one) for one in args.rates.split(",")]
@@ -498,7 +535,7 @@ def do_stream(args):
         sock.sendto(frame(order, [(0, 0, 0)] * len(order)), (where, port))
         sock.close()
         restore(args.ip, args.token, was)
-    print("\nThe device has its effect back: %s" % (was or "none"))
+    _said_back(was)
     print("Report the highest rate with no steps in the movement.")
     return 0
 

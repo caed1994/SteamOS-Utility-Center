@@ -227,6 +227,23 @@ class ShapeTest(unittest.TestCase):
         for named in ("/etc/", "systemctl", "sudo", "install -m"):
             self.assertNotIn(named, code, named)
 
+    def test_a_mode_is_never_selected_as_an_effect(self):
+        """*Solid*, *Dynamic* and *ExtControl* are modes of the device.
+
+        A select of one does nothing. The first walk on a Lines left it in
+        *ExtControl* and lit, and the device was off before it, because the
+        restore read *Solid* and tried to select it.
+        """
+        with open(PROBE) as handle:
+            text = handle.read()
+        body = text.split("def before(")[1].split("\ndef ")[0]
+        self.assertIn('startswith("*")', body)
+        # And the on state is carried whatever the effect was, because that
+        # is the half a person notices.
+        self.assertIn("state/on", body)
+        back = text.split("def restore(")[1].split("\ndef ")[0]
+        self.assertIn('"on": {"value"', back)
+
     def test_it_gives_the_device_its_effect_back(self):
         """Streaming replaces what the device draws, so the probe restores it.
 
@@ -238,6 +255,7 @@ class ShapeTest(unittest.TestCase):
         for command in ("do_walk", "do_stream"):
             body = text.split("def %s(" % command)[1].split("\\ndef ")[0]
             self.assertIn("restore(", body, command)
+            self.assertIn("before(", body, command)
             self.assertIn("finally:", body, command)
 
 
