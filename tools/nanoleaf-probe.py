@@ -20,6 +20,7 @@ board is USB only, which this project already knows.
     tools/nanoleaf-probe.py read  --ip 192.168.1.41 --token XXXX
     tools/nanoleaf-probe.py walk  --ip 192.168.1.41 --token XXXX
     tools/nanoleaf-probe.py stream --ip 192.168.1.41 --token XXXX
+    tools/nanoleaf-probe.py forget --ip 192.168.1.41 --token XXXX
 
 What each answer decides:
 
@@ -34,6 +35,9 @@ What each answer decides:
             sentence is the whole layout of the board in the module.
     stream  the rate. Nanoleaf recommends no more than 10 a second, and a
             measurement on the machine beats a recommendation.
+    forget  whether a token can be taken back. The window needs that for
+            the button that removes a device, and a person who read a token
+            out loud needs it at once.
 """
 
 import argparse
@@ -311,6 +315,16 @@ def external(ip, token):
     return where, int(port)
 
 
+def forget(ip, token):
+    """Takes that token back. The device keeps its other tokens.
+
+    One DELETE on the token itself. This is what the window needs for the
+    button that removes a device: a removal that left the token on the
+    device would leave a key to it on every machine that ever paired.
+    """
+    return call(ip, "/api/v1/%s" % token, method="DELETE")
+
+
 def selected(ip, token):
     """Which effect the device draws now, so this can give it back."""
     try:
@@ -489,6 +503,13 @@ def do_stream(args):
     return 0
 
 
+def do_forget(args):
+    forget(args.ip, args.token)
+    print("The device no longer knows that token.")
+    print("Pair again to get another one. The button opens the window.")
+    return 0
+
+
 def main(argv=None):
     parent = argparse.ArgumentParser(add_help=False)
     parent.add_argument("--ip", help="the address of the device")
@@ -524,9 +545,13 @@ def main(argv=None):
     one.add_argument("--rates", default="5,10,15,20,30")
     one.set_defaults(run=do_stream)
 
+    one = commands.add_parser("forget", parents=[parent],
+                              help="take a token back")
+    one.set_defaults(run=do_forget)
+
     args = parser.parse_args(argv)
-    if args.run in (do_read, do_walk, do_stream) and not (args.ip
-                                                          and args.token):
+    if (args.run in (do_read, do_walk, do_stream, do_forget)
+            and not (args.ip and args.token)):
         parser.error("%s needs --ip and --token" % args.command)
     try:
         return args.run(args)
