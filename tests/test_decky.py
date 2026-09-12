@@ -373,6 +373,19 @@ class PageTest(unittest.TestCase):
         # And no effect list for a device that cannot take one.
         self.assertIn("{one.ok && (", block)
 
+    def test_the_switch_comes_before_the_effect_in_both_blocks(self):
+        """Whether a light is on comes before what it draws.
+
+        And two blocks in one section that ask the same two questions must
+        ask them in the same order. The board had them the other way round.
+        """
+        section = self.text.split('<PanelSection title="Nanoleaf">')[1]
+        board = section.split("devices.map((one)")[0]
+        device = section.split("devices.map((one)")[1]
+        for name, block in (("the board", board), ("a device", device)):
+            self.assertLess(block.index("<ToggleField"),
+                            block.index("<Choice"), name)
+
     def test_the_devices_have_no_slider_either(self):
         """Brightness is on the page in Desktop Mode, with every other one."""
         for part in self.text.split("<SliderField")[1:]:

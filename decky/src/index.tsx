@@ -542,6 +542,20 @@ function Content() {
               </div>
             </PanelSectionRow>
           )}
+          {/*
+            The switch first and the effect under it, which is the order the
+            devices of the network have below. Whether a light is on comes
+            before what it draws, and two blocks in one section that ask the
+            same two questions must ask them in the same order.
+          */}
+          <PanelSectionRow>
+            <ToggleField
+              label="Light the board"
+              checked={Boolean(board.ENABLED)}
+              disabled={held.busy || !held.pegboard?.ok}
+              onChange={(on: boolean) => write("pegboard", { ENABLED: on })}
+            />
+          </PanelSectionRow>
           <PanelSectionRow>
             <Choice
               label="Effect"
@@ -549,14 +563,6 @@ function Content() {
               value={effect}
               disabled={held.busy || !held.pegboard?.ok}
               onPick={(value) => pick("pegboard", "EFFECT", value)}
-            />
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ToggleField
-              label="Light the board"
-              checked={Boolean(board.ENABLED)}
-              disabled={held.busy || !held.pegboard?.ok}
-              onChange={(on: boolean) => write("pegboard", { ENABLED: on })}
             />
           </PanelSectionRow>
         </Fragment>
