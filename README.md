@@ -910,6 +910,7 @@ decky/                    the Game Mode plugin
 firmware/led-client/      PlatformIO project for ESP8266/ESP32
 scripts/                  the appliers and the shared installer code
 tools/make-previews.py    rebuilds the animations on this page
+tools/nanoleaf-probe.py   asks a Nanoleaf device on the network what it takes
 tools/ste-check.py        checks the text against docs/STYLE.md
 docs/PROTOCOL.md          frame format and message types
 docs/STYLE.md             how to write the text in this project
