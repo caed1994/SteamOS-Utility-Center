@@ -321,27 +321,20 @@ POWER = [
     ]),
 ]
 
-# The Nanoleaf board. A module of its own and a page of its own: it is a
-# second device, and nothing it does depends on the LED bar.
+# The settings of the Nanoleaf board on USB. The card of the devices on the
+# network is further down this page and is not a table. See _build_network.
 #
 # The keys carry PEGBOARD_ and the settings file does not. This window keeps
 # every setting of every page in one flat dictionary, and the board shares a
 # dozen names with the bar: FPS, SPEED, GAMMA, BRIGHTNESS, the colours of the
 # load gauge. Without the prefix the two pages would write each other's
 # values. _collect_pegboard takes it off again. See PEGBOARD_KEYS.
-PEGBOARD_NOTE = (
-    "The board runs on its own. Nothing that Steam shows on the LED bar "
-    "reaches it, and removing the LED bar module leaves it lit.\n\n"
-    "The frame rate is in the settings file and not on this page. It is not "
-    "a matter of taste: above 40 a board draws single LEDs with the wrong "
-    "byte, and a slider that goes there is a slider that breaks the "
-    "picture.\n\n"
-    "The effects take the 64 LEDs in the order the board has them, up the "
-    "left side and down the right, so they travel once around it. Rainbow "
-    "wave is the exception: it is the rainbow drawn on half the board and "
-    "put on both sides, so the colour rises on the two sides at once.\n\n"
-    "Patrol is the one effect that draws in a colour you pick. The others "
-    "make their own.")
+#
+# This page carries no note. It held four paragraphs: why the board runs on
+# its own, why the frame rate is not a slider, the order of the 64 LEDs, and
+# which effect takes a colour. None of those is a question a person asks
+# while they pick an effect. They are in the README and in the comments of
+# pegboard.py, where somebody looking for them looks.
 
 PEGBOARD = [
     ("The board", [
@@ -391,7 +384,7 @@ APP = [
 # each of them: a page of prose under two drop-downs is read by nobody.
 SECTION_SETTINGS = {
     "keyboard": (SYSTEM, None),
-    "pegboard": (PEGBOARD, PEGBOARD_NOTE),
+    "pegboard": (PEGBOARD, None),
     "power": (POWER, None),
     "app": (APP, None),
 }
@@ -435,27 +428,28 @@ APP_KEYS = frozenset(appsettings.DEFAULTS)
 # for each section. The pages of the LED strip are the inner level, in one
 # section.
 #
-# Each entry is (key, title, subtitle, icon). The key names a section, and
-# SidebarEntry holds the icon names.
+# Each entry is (key, title, icon). The key names a section, and SidebarEntry
+# holds the icon names.
+#
+# One line and no second one. Each entry carried a subtitle: "Configure the
+# lighting", "Governor, EPP and the card". They were a second thing to read on
+# the way to a page whose name already said what it was, and the widest of
+# them set the width of the rail: the titles alone are 65 pixels narrower.
 SECTIONS = (
-    ("strip", "LED Strip", "Configure the lighting", "strip"),
+    ("strip", "LED Strip", "strip"),
     # It was "Pegboard". The key stays "pegboard": the code names a section
     # by its key, and the settings file, the units and the applier on every
     # installed machine carry that name. The title is the maker, because a
     # second Nanoleaf device belongs on this page and not on a page of its
-    # own. The subtitle names the device that is here now.
-    ("pegboard", "Nanoleaf", "Pegboard Desk Dock", "strip"),
-    ("power", "CPU & GPU power", "Governor, EPP and the card", "bolt"),
-    ("cec", "HDMI CEC Mods", "Control and tweaks", "screen"),
+    # own.
+    ("pegboard", "Nanoleaf", "strip"),
+    ("power", "CPU & GPU power", "bolt"),
+    ("cec", "HDMI CEC Mods", "screen"),
     # It was "Keyboard Layout". The drives are here too now, and both are
     # settings of the machine rather than of the bar. The key stays "keyboard",
     # because the code refers to a section by that key and a rename of it is a
     # rename in every place that names the section.
-    # "Keyboard, drives and Game Mode" was here. The page holds four things
-    # now, and the rail measured 451 against a budget of 420 at the font of
-    # somebody else's desktop. A name for the group and not a list of what is
-    # in it: the next thing on this page must not need a new subtitle.
-    ("keyboard", "System", "System Settings", "keys"),
+    ("keyboard", "System", "keys"),
     # This is not a page of the LED strip, and it was a page of the strip
     # before. It reports on the *installation*: the kernel module, the
     # units, the udev rule, and the services that stay alive across Game
@@ -464,16 +458,16 @@ SECTIONS = (
     # already reported on more than the bar before this window held a
     # second subject. Each section from now adds its own checks to the
     # same list.
-    ("status", "Status", "How every part is doing", "wrench"),
+    ("status", "Status", "wrench"),
     # Last of the run, and the only one that is about this window rather than
     # about the machine. Above About, which is not a thing you configure.
-    ("app", "App Settings", "Appearance and updates", "sliders"),
+    ("app", "App Settings", "sliders"),
 )
 
 # Sits at the foot of the sidebar rather than in the list: it is not a thing
 # you configure, and putting it in the run of four would have somebody hunting
 # for the setting it holds.
-ABOUT = ("about", "About", "Info and credits", "info")
+ABOUT = ("about", "About", "info")
 
 # What the About section says. A table rather than prose in the builder so it
 # reads as the short list of facts it is, and so a line can be added without
@@ -628,17 +622,16 @@ _IMAGES = []
 BUTTON_HEIGHT = 36
 CARD_RADIUS = material.SHAPE_MEDIUM
 
-# The sidebar at the left edge. It is wide enough for the longest subtitle at
-# the font size of the desktop. It is tall enough for two lines with space
-# around them. The tests measure both values against the entries.
+# The sidebar at the left edge. It is wide enough for the longest name at the
+# font size of the desktop, and tall enough for a touch. The tests measure
+# both values against the entries.
 SIDEBAR_WIDTH = 268
 # The maximum width of the rail, for a desktop with a larger font. It also
 # gives the space after the longest name.
 #
-# The two lines in an entry are canvas text. Canvas text does not wrap and
-# does not become shorter. The canvas cuts it at the edge. A rail that is too
-# narrow therefore removes the end of each subtitle. See
-# Panel._sidebar_width.
+# The name in an entry is canvas text. Canvas text does not wrap and does not
+# become shorter. The canvas cuts it at the edge. A rail that is too narrow
+# therefore removes the end of a name. See Panel._sidebar_width.
 SIDEBAR_WIDTH_MAX = 420
 SIDEBAR_TEXT_PAD = 20
 SIDEBAR_ENTRY_HEIGHT = 60
@@ -2128,7 +2121,7 @@ class SidebarEntry:
     def __init__(self, parent, roles, fonts, entry, on_pick,
                  width=SIDEBAR_WIDTH):
         self.roles = roles
-        self.key, title, subtitle, icon = entry
+        self.key, title, icon = entry
         self.on_pick = on_pick
         self.selected = False
         self.hovering = False
@@ -2155,13 +2148,11 @@ class SidebarEntry:
         self.ground = self.canvas.create_image(0, 0, anchor="nw",
                                                image=self._grounds["rest"])
         self._draw_icon(icon)
+        # On the middle line. It was 9 pixels above it, with a subtitle 10
+        # below, and one line in the place of two sits between the two.
         self.title = self.canvas.create_text(
-            SIDEBAR_TEXT_X, SIDEBAR_ENTRY_HEIGHT // 2 - 9, anchor="w",
+            SIDEBAR_TEXT_X, SIDEBAR_ENTRY_HEIGHT // 2, anchor="w",
             text=title, font=fonts["title"], fill=roles["on_surface"])
-        self.subtitle = self.canvas.create_text(
-            SIDEBAR_TEXT_X, SIDEBAR_ENTRY_HEIGHT // 2 + 10, anchor="w",
-            text=subtitle, font=fonts["subtitle"],
-            fill=roles["on_surface_variant"])
 
         self.canvas.bind("<Button-1>", lambda _event: self.on_pick(self.key))
         self.canvas.bind("<Enter>", lambda _event: self._hover(True))
@@ -2256,7 +2247,7 @@ class SidebarEntry:
         self._repaint()
 
     def _repaint(self):
-        """The pill, and the two texts that have to stay legible on it."""
+        """The pill, and the text that has to stay legible on it."""
         state = ("selected" if self.selected
                  else "hover" if self.hovering else "rest")
         self.canvas.itemconfigure(self.ground, image=self._grounds[state])
@@ -2268,7 +2259,6 @@ class SidebarEntry:
         rest = self.roles["on_secondary_container" if lit
                           else "on_surface_variant"]
         self.canvas.itemconfigure(self.title, fill=title)
-        self.canvas.itemconfigure(self.subtitle, fill=rest)
         for item, option in self.icon:
             self.canvas.itemconfigure(item, **{option: rest})
 
@@ -2628,7 +2618,7 @@ class Panel:
         # caught here rather than showing an empty page.
         self._section_pages["strip"] = None      # placed by _add_section
         self._add_section("strip", strip_outer)
-        for key, _title, _subtitle, _icon in SECTIONS:
+        for key, _title, _icon in SECTIONS:
             if key == "strip":
                 continue
             if key in SECTION_SETTINGS:
@@ -2808,8 +2798,7 @@ class Panel:
         foot of the window now. See _build_apply.
         """
         family, size = self.roles["_font"]
-        fonts = {"title": (family, size, "bold"),
-                 "subtitle": (family, size + TYPE_SUPPORT)}
+        fonts = {"title": (family, size, "bold")}
         width = self._sidebar_width(fonts)
         self._sidebar_entries = {}
         for entry in SECTIONS:
@@ -2825,7 +2814,7 @@ class Panel:
         A measurement and not a fixed value, for the same reason as the
         control heights: the font of the desktop gives the width of a name.
         Canvas text does not wrap and shows no mark for a cut, so a wider font
-        removed the end of each subtitle.
+        removed the end of a name.
 
         Never narrower than it was, and capped, so an enormous font gives a
         wider rail rather than a window that is all rail.
@@ -2836,9 +2825,8 @@ class Panel:
         # SECTIONS and not SECTIONS + (ABOUT,): About is a button at the foot
         # of the window and not an entry of this list, so its name must not
         # decide how wide this list is.
-        for _key, title, subtitle, _icon in SECTIONS:
-            want = max(want, measures["title"].measure(title),
-                       measures["subtitle"].measure(subtitle))
+        for _key, title, _icon in SECTIONS:
+            want = max(want, measures["title"].measure(title))
         return min(SIDEBAR_WIDTH_MAX,
                    max(SIDEBAR_WIDTH, SIDEBAR_TEXT_X + want + SIDEBAR_TEXT_PAD))
 

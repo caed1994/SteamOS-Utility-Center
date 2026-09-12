@@ -1471,7 +1471,7 @@ class LiveWindowTest(unittest.TestCase):
             self.assertEqual(lit, [] if key == "about" else [key])
 
     def test_the_header_names_the_section_that_is_open(self):
-        for key, title, _subtitle, _icon in self.panel_module.SECTIONS:
+        for key, title, _icon in self.panel_module.SECTIONS:
             self.panel._open_section(key)
             self.root.update()
             self.assertEqual(self.panel.section_title.cget("text"), title)
@@ -1767,7 +1767,7 @@ class LiveWindowTest(unittest.TestCase):
         # window and not the open section. Without that key, this test reports
         # one incorrect label one time for each visited section.
         checked, wrong = 0, {}
-        for section, _t, _s, _i in self.panel_module.SECTIONS + (
+        for section, _title, _icon in self.panel_module.SECTIONS + (
                 self.panel_module.ABOUT,):
             self.panel._open_section(section)
             self.root.update()
@@ -1814,7 +1814,7 @@ class LiveWindowTest(unittest.TestCase):
                                     "background")).lower()
 
         wrong = {}
-        for section, _t, _s, _i in self.panel_module.SECTIONS + (
+        for section, _title, _icon in self.panel_module.SECTIONS + (
                 self.panel_module.ABOUT,):
             self.panel._open_section(section)
             self.root.update()
@@ -3942,7 +3942,7 @@ class SidebarWidthTest(unittest.TestCase):
     Its two lines are canvas text. Canvas text does not wrap and does not
     become shorter, and the canvas cuts it at its edge. The font of the desktop
     gives the width. The fixed width was sufficient for the default of Plasma,
-    and it removed the end of each subtitle at a larger font.
+    and it removed the end of a name at a larger font.
     """
 
     @classmethod
@@ -3961,9 +3961,7 @@ class SidebarWidthTest(unittest.TestCase):
             self.root = None
 
     def _fonts(self, size):
-        return {"title": ("DejaVu Sans", size, "bold"),
-                "subtitle": ("DejaVu Sans",
-                             size + self.panel_module.TYPE_SUPPORT)}
+        return {"title": ("DejaVu Sans", size, "bold")}
 
     def test_a_bigger_font_gets_a_wider_rail(self):
         small = self.panel._sidebar_width(self._fonts(9))
@@ -4383,7 +4381,7 @@ class ShortWordsTest(unittest.TestCase):
         group into two names raised on the section that has one. Nothing
         outside a window called that code, so no test saw it.
         """
-        for key, _title, _subtitle, _icon in self.panel_module.SECTIONS:
+        for key, _title, _icon in self.panel_module.SECTIONS:
             self.panel._open_section(key)
             self.root.update()
 

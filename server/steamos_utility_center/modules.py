@@ -73,15 +73,19 @@ SAYS = {
                   "firmware, and the two watchers that run in your session.",
         "needs": "an ESP board on USB, with a WS2812 strip on it.",
     },
+    # The board on USB, and that board only. The Nanoleaf page also holds the
+    # devices of that maker which are on the network, and those need none of
+    # this: an effect on one of them is an HTTP call to an address on the LAN.
+    # So "needs" says so, or a person with a Lines and no board reads this
+    # card as the price of the page. See nanoleaf.py.
     PEGBOARD: {
         "title": "Nanoleaf",
-        "does": "Lights the Nanoleaf Pegboard Desk Dock, which has no "
-                "program for Linux of its own. It draws one effect that you "
-                "pick, and it runs on its own: nothing that Steam shows on "
-                "the LED bar reaches it.",
+        "does": "Lights the Nanoleaf Pegboard Desk Dock, the board that "
+                "hangs on USB. It draws one effect that you pick.",
         "brings": "a service for the board, a settings file of its own, and "
                   "a program that applies a change.",
-        "needs": "a Nanoleaf Pegboard Desk Dock on USB.",
+        "needs": "a Nanoleaf Pegboard Desk Dock on USB. The Nanoleaf devices "
+                 "on your network need none of this.",
     },
     POWER: {
         "title": "CPU and GPU power",

@@ -1338,11 +1338,13 @@ class PanelSettingsTest(unittest.TestCase):
                           "HDMI CEC Mods", "System", "Status",
                           "App Settings"])
         self.assertEqual(ast.literal_eval(assigned["ABOUT"])[0], "about")
-        # Every one of them says what it is for. A sidebar of five titles with
-        # a blank line under one of them is a sidebar that failed to draw.
+        # Three fields and not four. Each entry carried a subtitle, and they
+        # were a second thing to read on the way to a page whose name already
+        # said what it was. The widest of them also set the width of the rail.
         for entry in sections + (ast.literal_eval(assigned["ABOUT"]),):
+            self.assertEqual(len(entry), 3, entry[0])
+            self.assertTrue(entry[1].strip(), entry[0])
             self.assertTrue(entry[2].strip(), entry[0])
-            self.assertTrue(entry[3].strip(), entry[0])
 
     def test_the_unbuilt_sections_say_what_they_will_do(self):
         # A section that only says "coming soon" is indistinguishable from one
