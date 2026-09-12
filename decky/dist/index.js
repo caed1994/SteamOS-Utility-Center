@@ -160,6 +160,7 @@ const held = {
     status: null,
     strip: null,
     pegboard: null,
+    nanoleaf: null,
     power: null,
     cec: null,
     gpu: null,
@@ -199,13 +200,14 @@ function Content() {
     // seconds it replaced the full answer with one that had none, and every
     // switch on the page went to off by itself.
     const refresh = async () => {
-        const [whole, one, two, three, four, five] = await Promise.all([
+        const [whole, one, two, three, four, five, six] = await Promise.all([
             getFullStatus(),
             getArea("strip"),
             getArea("power"),
             getArea("cec"),
             getArea("gpu"),
             getArea("pegboard"),
+            getArea("nanoleaf"),
         ]);
         held.status = whole;
         held.strip = one;
@@ -213,6 +215,7 @@ function Content() {
         held.cec = three;
         held.gpu = four;
         held.pegboard = five;
+        held.nanoleaf = six;
         draw();
     };
     SP_REACT.useEffect(() => {
@@ -252,11 +255,22 @@ function Content() {
     const write = (area, updates) => void change(() => setArea(area, updates));
     // The value to draw: what was pressed, or what the machine holds.
     const shown = (area, key, value, fallback = "") => held.chosen[area + "." + key] ?? String(value ?? fallback);
+    // One device of the network, which is a thing to act on and not a setting.
+    // The token is the key in `chosen`, so two devices keep two values.
+    const play = (token, effect) => {
+        held.chosen["nanoleaf." + token] = effect;
+        draw();
+        write("nanoleaf", { token, effect });
+    };
+    const playing = (one) => held.chosen["nanoleaf." + one.token] ?? String(one.effect ?? "");
     const pick = (area, key, value) => {
         held.chosen[area + "." + key] = value;
         draw();
         write(area, { [key]: value });
     };
+    // The devices of the network, from the answer of the command.
+    const devices = (Array.isArray(held.nanoleaf?.settings?.devices)
+        ? held.nanoleaf?.settings?.devices : []);
     // The option lists, built one time for each answer of the command.
     //
     // They were rebuilt at every render before. A Dropdown that holds the
@@ -265,6 +279,17 @@ function Content() {
     const rainbowOptions = SP_REACT.useMemo(() => options(held.strip?.offers?.RAINBOW_SHOWS), [held.strip]);
     const sceneOptions = SP_REACT.useMemo(() => options(held.strip?.offers?.DESKTOP_SCENE), [held.strip]);
     const effectOptions = SP_REACT.useMemo(() => labelled(held.pegboard?.offers?.EFFECT), [held.pegboard]);
+    // The effects of each device, by the token that names it. The names come
+    // off the device, so they are used as they are: words() is for a value of
+    // a settings file and these are already the words of a person.
+    const deviceOptions = SP_REACT.useMemo(() => {
+        const out = {};
+        for (const one of devices) {
+            out[one.token] = (one.effects ?? []).map((name) => ({ data: name, label: name }));
+        }
+        return out;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [held.nanoleaf]);
     const governorOptions = SP_REACT.useMemo(() => options((held.power?.offers ?? {}).governors), [held.power]);
     const eppOptions = SP_REACT.useMemo(() => options((held.power?.offers ?? {}).epp), [held.power]);
     const knobs = (Array.isArray(held.gpu?.offers?.knobs) ? held.gpu?.offers?.knobs : []);
@@ -373,7 +398,8 @@ function Content() {
     const boardHere = Boolean(held.pegboard?.offers?.here);
     const governor = shown("power", "CPU_GOVERNOR", cpu.CPU_GOVERNOR);
     const preference = shown("power", "CPU_EPP", cpu.CPU_EPP);
-    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [(held.said !== "" || held.status?.sudo_rule === false) && (SP_JSX.jsxs(DFL.PanelSection, { children: [held.said !== "" && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d85c5c" }, children: held.said }) })), held.status?.sudo_rule === false && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d9a441" }, children: "Nothing here can change a setting. Install the panel again in Desktop Mode to get the rule that permits it." }) }))] })), held.status?.modules?.length === 0 && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d9a441" }, children: "No module is installed. The control panel in Desktop Mode installs the LED bar, the CPU and GPU power, HDMI CEC and the drives, each from its own page." }) }) })), has("led") && (SP_JSX.jsxs(DFL.PanelSection, { title: "LED bar", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Rainbow slot", options: rainbowOptions, value: rainbow, disabled: held.busy || !held.strip?.ok, onPick: (value) => pick("strip", "RAINBOW_SHOWS", value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Desktop scene", options: sceneOptions, value: scene, disabled: held.busy || !held.strip?.ok, onPick: (value) => pick("strip", "DESKTOP_SCENE", value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Notifications", checked: Boolean(settings.NOTIFY), disabled: held.busy || !held.strip?.ok, onChange: (on) => write("strip", { NOTIFY: on }) }) })] })), has("pegboard") && (SP_JSX.jsxs(DFL.PanelSection, { title: "Nanoleaf", children: [!boardHere && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", opacity: 0.75 }, children: "No board answered on the USB bus. What you set here is kept, and the board draws it when you plug one in." }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Effect", options: effectOptions, value: effect, disabled: held.busy || !held.pegboard?.ok, onPick: (value) => pick("pegboard", "EFFECT", value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Light the board", checked: Boolean(board.ENABLED), disabled: held.busy || !held.pegboard?.ok, onChange: (on) => write("pegboard", { ENABLED: on }) }) })] })), has("power") && (SP_JSX.jsx(DFL.PanelSection, { title: "CPU power", children: Number(offered.policies ?? 0) === 0 ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em" }, children: "This machine has no cpufreq, so there is nothing to set." }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Governor", options: governorOptions, value: governor, disabled: held.busy || !held.power?.ok, onPick: (value) => pick("power", "CPU_GOVERNOR", value) }) }), Array.isArray(offered.epp) && offered.epp.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Energy preference", options: eppOptions, value: preference, disabled: held.busy || !held.power?.ok, onPick: (value) => pick("power", "CPU_EPP", value) }) }))] })) })), has("power") && (SP_JSX.jsx(DFL.PanelSection, { title: "Graphics card", children: !Boolean((held.gpu?.settings ?? {}).available) ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em" }, children: "LACT is not running, so there is nothing to set." }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [knobs.length === 0 ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em" }, children: "LACT reports no control for this card." }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [knobs.map((knob) => (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.SliderField, { label: knob.label + (knob.unit ? " (" + knob.unit + ")" : ""), value: held.wanted[knob.key] ?? knob.start, min: knob.min, max: knob.max, step: 1, notchTicksVisible: false, showValue: true, disabled: held.busy, onChange: (value) => {
+    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [(held.said !== "" || held.status?.sudo_rule === false) && (SP_JSX.jsxs(DFL.PanelSection, { children: [held.said !== "" && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d85c5c" }, children: held.said }) })), held.status?.sudo_rule === false && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d9a441" }, children: "Nothing here can change a setting. Install the panel again in Desktop Mode to get the rule that permits it." }) }))] })), held.status?.modules?.length === 0 && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d9a441" }, children: "No module is installed. The control panel in Desktop Mode installs the LED bar, the CPU and GPU power, HDMI CEC and the drives, each from its own page." }) }) })), has("led") && (SP_JSX.jsxs(DFL.PanelSection, { title: "LED bar", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Rainbow slot", options: rainbowOptions, value: rainbow, disabled: held.busy || !held.strip?.ok, onPick: (value) => pick("strip", "RAINBOW_SHOWS", value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Desktop scene", options: sceneOptions, value: scene, disabled: held.busy || !held.strip?.ok, onPick: (value) => pick("strip", "DESKTOP_SCENE", value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Notifications", checked: Boolean(settings.NOTIFY), disabled: held.busy || !held.strip?.ok, onChange: (on) => write("strip", { NOTIFY: on }) }) })] })), (has("pegboard") || devices.length > 0) && (SP_JSX.jsxs(DFL.PanelSection, { title: "Nanoleaf", children: [has("pegboard") && (SP_JSX.jsxs(SP_REACT.Fragment, { children: [!boardHere && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", opacity: 0.75 }, children: "No board answered on the USB bus. What you set here is kept, and the board draws it when you plug one in." }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Effect", options: effectOptions, value: effect, disabled: held.busy || !held.pegboard?.ok, onPick: (value) => pick("pegboard", "EFFECT", value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Light the board", checked: Boolean(board.ENABLED), disabled: held.busy || !held.pegboard?.ok, onChange: (on) => write("pegboard", { ENABLED: on }) }) })] })), devices.map((one) => (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: (one.name || one.ip || "Nanoleaf")
+                                        + (one.ok ? "" : " (no answer)"), checked: Boolean(one.on), disabled: held.busy || !one.ok, onChange: (on) => write("nanoleaf", { token: one.token, on }) }) }), one.ok && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Effect", options: deviceOptions[one.token] ?? [], value: playing(one), disabled: held.busy, onPick: (value) => play(one.token, value) }) }))] }, one.token)))] })), has("power") && (SP_JSX.jsx(DFL.PanelSection, { title: "CPU power", children: Number(offered.policies ?? 0) === 0 ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em" }, children: "This machine has no cpufreq, so there is nothing to set." }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Governor", options: governorOptions, value: governor, disabled: held.busy || !held.power?.ok, onPick: (value) => pick("power", "CPU_GOVERNOR", value) }) }), Array.isArray(offered.epp) && offered.epp.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Energy preference", options: eppOptions, value: preference, disabled: held.busy || !held.power?.ok, onPick: (value) => pick("power", "CPU_EPP", value) }) }))] })) })), has("power") && (SP_JSX.jsx(DFL.PanelSection, { title: "Graphics card", children: !Boolean((held.gpu?.settings ?? {}).available) ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em" }, children: "LACT is not running, so there is nothing to set." }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [knobs.length === 0 ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em" }, children: "LACT reports no control for this card." }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [knobs.map((knob) => (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.SliderField, { label: knob.label + (knob.unit ? " (" + knob.unit + ")" : ""), value: held.wanted[knob.key] ?? knob.start, min: knob.min, max: knob.max, step: 1, notchTicksVisible: false, showValue: true, disabled: held.busy, onChange: (value) => {
                                             held.wanted[knob.key] = value;
                                             draw();
                                         } }) }, knob.key))), held.keeping === "" ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: held.busy || Object.keys(held.wanted).length === 0, onClick: () => void send(), children: "Send to the card" }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d9a441" }, children: held.keeping }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: held.busy, onClick: () => void keep(), children: "Keep it" }) })] }))] })), card !== "" && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Cooling Boost", checked: boosted, disabled: held.busy || held.keeping !== "", onChange: (on) => void boostFan(on) }) }))] })) })), has("cec") && (SP_JSX.jsx(DFL.PanelSection, { title: "Television", children: features.map((feature) => (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: feature.label, checked: Boolean(switches[feature.name]), disabled: held.busy, onChange: (on) => write("cec", { [feature.name]: on }) }) }, feature.name))) }))] }));

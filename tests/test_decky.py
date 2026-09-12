@@ -326,6 +326,59 @@ class PageTest(unittest.TestCase):
         for name in ("Rainbow wave", "rainbow-wave"):
             self.assertNotIn(name, self.text)
 
+    def test_the_devices_of_the_network_are_in_the_same_section(self):
+        """One section for the maker, and not one for each device.
+
+        The board on USB is a module and the devices on the network are not:
+        an effect on one of those is an HTTP call to an address on the LAN.
+        So the section stands where either of the two is.
+        """
+        self.assertIn('(has("pegboard") || devices.length > 0)', self.text)
+        self.assertIn('getArea("nanoleaf")', self.text)
+        self.assertIn("devices.map((one)", self.text)
+
+    def test_a_device_is_named_by_its_token_and_not_by_its_name(self):
+        """A name repeats on a network and an address moves with the lease.
+
+        The token is also the key of what a person picked, so two devices
+        keep two values while the machine answers.
+        """
+        self.assertIn('write("nanoleaf", { token: one.token, on })', self.text)
+        self.assertIn('held.chosen["nanoleaf." + token]', self.text)
+        self.assertIn("key={one.token}", self.text)
+
+    def test_the_effects_of_a_device_come_off_that_device(self):
+        """They are the effects a person put on it with the app of Nanoleaf.
+
+        A list in this file would go out of date the first time they change
+        one. The lists are built for each answer of the command and not for
+        each render, for the same reason as every other list here.
+        """
+        self.assertIn("const deviceOptions = useMemo(", self.text)
+        self.assertIn("one.effects ?? []", self.text)
+        self.assertIn("options={deviceOptions[one.token] ?? []}", self.text)
+
+    def test_a_device_that_does_not_answer_keeps_its_row(self):
+        """The record says it is paired, and the network says no more today.
+
+        A row that vanished would leave somebody with a light they cannot
+        reach and nothing on the screen to say why. The reason goes in the
+        name of it, because a description under a control is a paragraph in
+        a space the width of a thumb.
+        """
+        block = self.text.split("devices.map((one)")[1].split(
+            "</PanelSection>")[0]
+        self.assertIn("(no answer)", block)
+        self.assertIn("disabled={held.busy || !one.ok}", block)
+        # And no effect list for a device that cannot take one.
+        self.assertIn("{one.ok && (", block)
+
+    def test_the_devices_have_no_slider_either(self):
+        """Brightness is on the page in Desktop Mode, with every other one."""
+        for part in self.text.split("<SliderField")[1:]:
+            one = part[:part.index("/>")]
+            self.assertNotIn("nanoleaf", one, one[:200])
+
     def test_the_card_is_sent_by_a_button_and_kept_by_a_second_one(self):
         """LACT's own safety, and it must not be worked around.
 

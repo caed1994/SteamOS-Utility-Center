@@ -450,8 +450,14 @@ here draws a line: a walk along the order this project would use jumped about
 the figure rather than following it. See `tools/nanoleaf-probe.py`, which took
 both measurements.
 
-Game Mode reaches the same devices through the control command, in the
-`nanoleaf` [area](#the-command-that-speaks-json).
+Game Mode has them as well, in the **Nanoleaf** section of the Quick Access
+menu: a switch for each paired device with its name on it, and the effects of
+that device under it. One section holds the board and the devices on the
+network, because they are one maker and the menu is the width of a thumb. A
+device that does not answer keeps its switch with the reason in its name.
+
+There is no brightness there, for the same reason no other slider is: a
+slider sends a write at every step it passes.
 
 ### What it took
 

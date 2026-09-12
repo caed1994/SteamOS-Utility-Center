@@ -22,7 +22,7 @@ import {
   SliderField,
   ToggleField,
 } from "@decky/ui";
-import { useEffect, useMemo, useReducer } from "react";
+import { Fragment, useEffect, useMemo, useReducer } from "react";
 import { FaLightbulb } from "react-icons/fa";
 
 // -- what the command answers -----------------------------------------------
@@ -40,6 +40,25 @@ type Status = Answer & {
 };
 
 type Feature = { name: string; label: string };
+
+// One Nanoleaf device on the network, as the command reports it.
+//
+// The token names it: a name repeats on a network and an address moves with
+// the lease. `effects` are the effects on the device, put there with the app
+// of Nanoleaf, so this file holds no list of them. A device that is off or
+// away arrives with ok false and a reason, and it keeps its row: the record
+// says it is paired, and the network says no more than that today. See
+// server/steamos_utility_center/nanoleaf.py.
+type Device = {
+  token: string;
+  name?: string;
+  ip?: string;
+  ok?: boolean;
+  on?: boolean;
+  effect?: string;
+  effects?: string[];
+  error?: string;
+};
 
 // One control of the graphics card, as the daemon reports it. The card
 // decides which of these exist: a control with no range is a control that the
@@ -162,6 +181,7 @@ const held = {
   status: null as Status | null,
   strip: null as Area | null,
   pegboard: null as Area | null,
+  nanoleaf: null as Area | null,
   power: null as Area | null,
   cec: null as Area | null,
   gpu: null as Area | null,
@@ -204,13 +224,14 @@ function Content() {
   // seconds it replaced the full answer with one that had none, and every
   // switch on the page went to off by itself.
   const refresh = async () => {
-    const [whole, one, two, three, four, five] = await Promise.all([
+    const [whole, one, two, three, four, five, six] = await Promise.all([
       getFullStatus(),
       getArea("strip"),
       getArea("power"),
       getArea("cec"),
       getArea("gpu"),
       getArea("pegboard"),
+      getArea("nanoleaf"),
     ]);
     held.status = whole;
     held.strip = one;
@@ -218,6 +239,7 @@ function Content() {
     held.cec = three;
     held.gpu = four;
     held.pegboard = five;
+    held.nanoleaf = six;
     draw();
   };
 
@@ -263,11 +285,28 @@ function Content() {
   const shown = (area: string, key: string, value: unknown, fallback = "") =>
     held.chosen[area + "." + key] ?? String(value ?? fallback);
 
+  // One device of the network, which is a thing to act on and not a setting.
+  // The token is the key in `chosen`, so two devices keep two values.
+  const play = (token: string, effect: string) => {
+    held.chosen["nanoleaf." + token] = effect;
+    draw();
+    write("nanoleaf", { token, effect });
+  };
+
+  const playing = (one: Device) =>
+    held.chosen["nanoleaf." + one.token] ?? String(one.effect ?? "");
+
   const pick = (area: string, key: string, value: string) => {
     held.chosen[area + "." + key] = value;
     draw();
     write(area, { [key]: value });
   };
+
+  // The devices of the network, from the answer of the command.
+  const devices = (
+    Array.isArray(held.nanoleaf?.settings?.devices)
+      ? held.nanoleaf?.settings?.devices : []
+  ) as Device[];
 
   // The option lists, built one time for each answer of the command.
   //
@@ -280,6 +319,18 @@ function Content() {
     () => options(held.strip?.offers?.DESKTOP_SCENE), [held.strip]);
   const effectOptions = useMemo(
     () => labelled(held.pegboard?.offers?.EFFECT), [held.pegboard]);
+  // The effects of each device, by the token that names it. The names come
+  // off the device, so they are used as they are: words() is for a value of
+  // a settings file and these are already the words of a person.
+  const deviceOptions = useMemo(() => {
+    const out: Record<string, Pick[]> = {};
+    for (const one of devices) {
+      out[one.token] = (one.effects ?? []).map(
+        (name) => ({ data: name, label: name }));
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [held.nanoleaf]);
   const governorOptions = useMemo(
     () => options((held.power?.offers ?? {}).governors), [held.power]);
   const eppOptions = useMemo(
@@ -472,33 +523,79 @@ function Content() {
       </PanelSection>
       )}
 
-      {has("pegboard") && (
+      {/*
+        One section for the maker and not one for each device. The board on
+        USB is a module, and the devices on the network are not: an effect on
+        one of those is an HTTP call to an address on the LAN, and it needs no
+        module at all. So the section is here where either of the two is, and
+        each half stands behind what it needs.
+      */}
+      {(has("pegboard") || devices.length > 0) && (
       <PanelSection title="Nanoleaf">
-        {!boardHere && (
+        {has("pegboard") && (
+        <Fragment>
+          {!boardHere && (
+            <PanelSectionRow>
+              <div style={{ fontSize: "0.8em", opacity: 0.75 }}>
+                No board answered on the USB bus. What you set here is kept,
+                and the board draws it when you plug one in.
+              </div>
+            </PanelSectionRow>
+          )}
           <PanelSectionRow>
-            <div style={{ fontSize: "0.8em", opacity: 0.75 }}>
-              No board answered on the USB bus. What you set here is kept, and
-              the board draws it when you plug one in.
-            </div>
+            <Choice
+              label="Effect"
+              options={effectOptions}
+              value={effect}
+              disabled={held.busy || !held.pegboard?.ok}
+              onPick={(value) => pick("pegboard", "EFFECT", value)}
+            />
           </PanelSectionRow>
+          <PanelSectionRow>
+            <ToggleField
+              label="Light the board"
+              checked={Boolean(board.ENABLED)}
+              disabled={held.busy || !held.pegboard?.ok}
+              onChange={(on: boolean) => write("pegboard", { ENABLED: on })}
+            />
+          </PanelSectionRow>
+        </Fragment>
         )}
-        <PanelSectionRow>
-          <Choice
-            label="Effect"
-            options={effectOptions}
-            value={effect}
-            disabled={held.busy || !held.pegboard?.ok}
-            onPick={(value) => pick("pegboard", "EFFECT", value)}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ToggleField
-            label="Light the board"
-            checked={Boolean(board.ENABLED)}
-            disabled={held.busy || !held.pegboard?.ok}
-            onChange={(on: boolean) => write("pegboard", { ENABLED: on })}
-          />
-        </PanelSectionRow>
+
+        {/*
+          One block for each device of the network. The switch carries the
+          name, because a device is what a person recognises and "On" is not.
+          A device that does not answer keeps its row, and the reason goes in
+          its name: a description under a control is a paragraph in a space
+          the width of a thumb. The row stays because the record says it is
+          paired, and one that vanished would leave somebody with a light
+          they cannot reach and nothing on the screen to say why.
+        */}
+        {devices.map((one) => (
+        <Fragment key={one.token}>
+          <PanelSectionRow>
+            <ToggleField
+              label={(one.name || one.ip || "Nanoleaf")
+                     + (one.ok ? "" : " (no answer)")}
+              checked={Boolean(one.on)}
+              disabled={held.busy || !one.ok}
+              onChange={(on: boolean) =>
+                write("nanoleaf", { token: one.token, on })}
+            />
+          </PanelSectionRow>
+          {one.ok && (
+            <PanelSectionRow>
+              <Choice
+                label="Effect"
+                options={deviceOptions[one.token] ?? []}
+                value={playing(one)}
+                disabled={held.busy}
+                onPick={(value) => play(one.token, value)}
+              />
+            </PanelSectionRow>
+          )}
+        </Fragment>
+        ))}
       </PanelSection>
       )}
 
