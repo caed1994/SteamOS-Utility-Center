@@ -413,10 +413,11 @@ def follow(state, home=None, tries=None, rest=None):
 
 
 def main(argv=None):
-    """The two units call this with "on" or "off".
+    """The three units call this with "on" or "off".
 
     See server/steamos-utility-center-nanoleaf.service, which turns the
-    lights on at a boot and off at a shutdown, and the resume unit beside it.
+    lights on at a boot and off at a shutdown, and the sleep and resume units
+    beside it, which hold the two sides of a suspend.
 
     It returns zero either way. A lamp that did not answer is not a fault of
     this machine, and a unit that fails at every suspend is a red line in

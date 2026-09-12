@@ -544,18 +544,39 @@ class FollowTest(Room):
 
 
 class UnitTest(unittest.TestCase):
-    """The two units, and what the installers do with them."""
+    """The three units, and what the installers do with them.
+
+    Four moments: a boot, a shutdown, a suspend and a wake. The first unit
+    holds the boot and the shutdown, and the other two hold the sides of a
+    sleep.
+    """
 
     REPO = os.path.join(HERE, "..")
+    NAMES = ("steamos-utility-center-nanoleaf.service",
+             "steamos-utility-center-nanoleaf-sleep.service",
+             "steamos-utility-center-nanoleaf-resume.service")
 
     def _unit(self, name):
         with open(os.path.join(self.REPO, "server", name)) as handle:
             return handle.read()
 
+    @staticmethod
+    def _lines(text, start=""):
+        """The directives of a unit, without its comments.
+
+        Each of these three units carries a comment that names the shape that
+        did not work, and it names it in the words of a directive. A test
+        that read the whole file passes on the explanation alone: the test
+        below for Before=sleep.target held while that line was gone, because
+        the comment above it says the same words.
+        """
+        return [one for one in text.splitlines()
+                if one[:1] not in ("#", "") and one.startswith(start)]
+
     def setUp(self):
-        self.main = self._unit("steamos-utility-center-nanoleaf.service")
-        self.resume = self._unit(
-            "steamos-utility-center-nanoleaf-resume.service")
+        """Each unit as its directives, so no test here reads a comment."""
+        self.main, self.sleep, self.resume = [
+            "\n".join(self._lines(self._unit(name))) for name in self.NAMES]
 
     def test_a_boot_turns_them_on_and_a_shutdown_turns_them_off(self):
         """The stop of the unit is the off, and systemd stops it before it
@@ -567,41 +588,144 @@ class UnitTest(unittest.TestCase):
         self.assertIn("WantedBy=multi-user.target", self.main)
         self.assertIn("After=network-online.target", self.main)
 
-    def test_a_suspend_stops_it_and_that_stop_is_the_off(self):
-        """One unit for three of the four moments. See its own comment."""
-        self.assertIn("Conflicts=sleep.target", self.main)
-        self.assertIn("Before=sleep.target", self.main)
+    def test_a_suspend_turns_them_off_from_a_unit_of_its_own(self):
+        """Before=sleep.target with WantedBy=sleep.target, which is the pair
+        that the strip and the board here both use.
 
-    def test_a_wake_starts_it_again(self):
+        One link covers a suspend, a hibernate and a hybrid sleep alike,
+        because each of those targets pulls in sleep.target.
+        """
+        self.assertIn("DefaultDependencies=no", self.sleep)
+        self.assertIn("Before=sleep.target", self.sleep)
+        self.assertIn("WantedBy=sleep.target", self.sleep)
+        self.assertEqual([one.split()[-1] for one in
+                          self._lines(self.sleep, "Exec")], ["off"])
+
+    def test_the_main_unit_does_not_try_to_cover_the_suspend_as_well(self):
+        """It carried Conflicts=sleep.target and Before=sleep.target once, so
+        that its ExecStop covered three moments instead of two.
+
+        The boot and the shutdown did what they say and a suspend left the
+        lights on. The unit above is longer and it works, so the shape that
+        did not work must not come back.
+        """
+        self.assertNotIn("Conflicts=", self.main)
+        self.assertNotIn("sleep.target", self.main)
+
+    def test_a_wake_lights_them_again(self):
+        """It makes the call itself.
+
+        It ran `systemctl start` on the main unit while that unit was stopped
+        for the suspend. The main unit is not stopped any more, and a start of
+        a unit that is already active does nothing.
+        """
         self.assertIn("After=suspend.target", self.resume)
         self.assertIn("WantedBy=suspend.target", self.resume)
-        self.assertIn("systemctl start steamos-utility-center-nanoleaf",
-                      self.resume)
+        self.assertEqual([one.split()[-1] for one in
+                          self._lines(self.resume, "Exec")], ["on"])
+        self.assertNotIn("systemctl", self.resume)
+
+    def test_each_side_of_a_sleep_names_all_four_ways_to_wake(self):
+        """The down side names sleep.target, which each of the four reaches.
+
+        The up side names the four: sleep.target is reached on the way down,
+        so a unit ordered after it runs before the machine sleeps.
+        """
+        for target in ("suspend.target", "hibernate.target",
+                       "hybrid-sleep.target", "suspend-then-hibernate.target"):
+            self.assertIn(target, self.resume, target)
+        self.assertEqual(self._lines(self.sleep, "WantedBy="),
+                         ["WantedBy=sleep.target"])
 
     def test_it_runs_as_the_person_who_paired_them_and_not_as_root(self):
         """The record is in that person's home and holds a token for each
         device. systemd gives a unit with User= the HOME of that account, so
         no path is written into the unit."""
-        self.assertIn("User=@WATCHER_USER@", self.main)
+        for name, text in zip(self.NAMES, (self.main, self.sleep,
+                                           self.resume)):
+            self.assertIn("User=@WATCHER_USER@", text, name)
 
-    def test_neither_side_waits_for_ever(self):
-        for name, text in (("main", self.main),):
+    def test_no_side_waits_for_ever(self):
+        for name, text in zip(self.NAMES, (self.main, self.sleep,
+                                           self.resume)):
             self.assertIn("TimeoutStartSec=", text, name)
-            self.assertIn("TimeoutStopSec=", text, name)
+        self.assertIn("TimeoutStopSec=", self.main)
+
+    def test_a_suspend_waits_a_shorter_time_than_a_boot(self):
+        """The way up asks a device that did not answer again, because a lamp
+        one second after a boot is not reachable yet. Nothing waits for that.
+
+        A suspend waits for the unit that turns them off, so that side asks
+        one time. A lamp that missed the message stays lit until the wake,
+        which is better than a suspend that waits.
+        """
+        def seconds(text):
+            line = [one for one in text.splitlines()
+                    if one.startswith("TimeoutStartSec=")][0]
+            return int(line.split("=", 1)[1])
+
+        self.assertLess(seconds(self.sleep), seconds(self.main))
+        self.assertEqual(seconds(self.resume), seconds(self.main))
+
+    def test_an_update_of_steamos_keeps_all_three(self):
+        """A unit in /etc belongs to the image, and an update boots another.
+
+        Without its name on this list the feature is simply gone after an
+        update, and nothing reports that.
+        """
+        from steamos_utility_center import mounts
+        for name in self.NAMES:
+            self.assertIn("/etc/systemd/system/%s" % name,
+                          mounts.PROJECT_FILES, name)
 
     def test_the_core_installs_them_and_the_uninstaller_removes_them(self):
         """The core, which writes no other unit. The devices are core too."""
+        paths = ("NANOLEAF_HELPER_PATH", "NANOLEAF_UNIT_PATH",
+                 "NANOLEAF_SLEEP_UNIT_PATH", "NANOLEAF_RESUME_UNIT_PATH")
         with open(os.path.join(self.REPO, "install.sh")) as handle:
             install = handle.read()
         core = install.split("# --- the modules ---")[0]
-        for wanted in ("NANOLEAF_HELPER_PATH", "NANOLEAF_UNIT_PATH",
-                       "NANOLEAF_RESUME_UNIT_PATH", "watcher_user_dirs"):
+        for wanted in paths + ("watcher_user_dirs",):
             self.assertIn(wanted, core, wanted)
         with open(os.path.join(self.REPO, "uninstall.sh")) as handle:
             gone = handle.read()
-        for wanted in ("NANOLEAF_HELPER_PATH", "NANOLEAF_UNIT_PATH",
-                       "NANOLEAF_RESUME_UNIT_PATH"):
+        for wanted in paths:
             self.assertIn(wanted, gone, wanted)
+        with open(os.path.join(self.REPO, "scripts", "user-unit.sh")) as h:
+            shared = h.read()
+        for wanted in paths:
+            self.assertIn("%s=" % wanted, shared, wanted)
+
+    def test_each_unit_is_enabled_and_disabled_by_name(self):
+        """A unit that nothing enables has no link, and systemd never starts
+        it: the file is where it belongs and the feature is simply gone.
+
+        A unit that nothing disables leaves its link behind at a remove, and
+        that link then names a file that is gone.
+
+        The write of a unit names it as well, so each word here is asked for
+        on the one line that carries it and not in the block.
+        """
+        def orders(text, word):
+            """The lines of a shell script that run one systemctl word."""
+            return [one for one in text.splitlines()
+                    if "systemctl %s" % word in one or (
+                        one.lstrip().startswith('"$NAME-'))]
+
+        with open(os.path.join(self.REPO, "install.sh")) as handle:
+            install = handle.read()
+        block = install.split("NANOLEAF_HELPER_PATH")[1].split(
+            "# --- the modules ---")[0]
+        with open(os.path.join(self.REPO, "uninstall.sh")) as handle:
+            gone = handle.read()
+        for name in self.NAMES:
+            short = name.replace("steamos-utility-center", "$NAME")
+            self.assertTrue(
+                [one for one in orders(block, "enable") if short in one],
+                "nothing enables %s" % name)
+            self.assertTrue(
+                [one for one in orders(gone, "disable") if short in one],
+                "nothing disables %s" % name)
 
     def test_a_machine_with_no_desktop_user_gets_no_unit(self):
         """There is no home to read the record from, so there is nothing to

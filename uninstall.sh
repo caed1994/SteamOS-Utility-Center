@@ -229,13 +229,18 @@ if [[ -n "${WATCHER_USER:-}" ]] && linger_is_on "$WATCHER_USER"; then
     echo "Turned lingering back off for $WATCHER_USER."
 fi
 
-# The two units that let the Nanoleaf devices on the network follow this
-# machine. The record of those devices is in a home directory and stays: it
-# holds the tokens, and a second install reads them back.
+# The three units that let the Nanoleaf devices on the network follow this
+# machine. Disabled first, or the links in multi-user.target.wants,
+# sleep.target.wants and suspend.target.wants stay behind and name a unit that
+# is gone.
+#
+# The record of those devices is in a home directory and stays: it holds the
+# tokens, and a second install reads them back.
 systemctl disable --now "$NAME-nanoleaf.service" >/dev/null 2>&1 || true
-systemctl disable "$NAME-nanoleaf-resume.service" >/dev/null 2>&1 || true
+systemctl disable "$NAME-nanoleaf-sleep.service" \
+  "$NAME-nanoleaf-resume.service" >/dev/null 2>&1 || true
 rm -f "$NANOLEAF_HELPER_PATH" "$NANOLEAF_UNIT_PATH" \
-  "$NANOLEAF_RESUME_UNIT_PATH"
+  "$NANOLEAF_SLEEP_UNIT_PATH" "$NANOLEAF_RESUME_UNIT_PATH"
 
 rm -f "$UDEV_PATH"
 # The suspend helper and the two units that call it. Disabled first, or the

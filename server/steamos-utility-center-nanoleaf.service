@@ -1,18 +1,22 @@
 [Unit]
 # Lets the Nanoleaf devices on the network follow the machine.
 #
-# Four moments and two units. This one holds three of them:
+# Four moments and three units. This one holds two of them:
 #
 #   a boot      ExecStart turns them on.
-#   a suspend   Conflicts with sleep.target, so systemd stops this unit on
-#               the way down and Before=sleep.target makes that stop finish
-#               first. The stop is ExecStop, which turns them off.
-#   a shutdown  the same stop, and systemd stops this before it takes the
-#               network down, because it stops in the reverse of the order
-#               it started.
+#   a shutdown  systemd stops this unit before it takes the network down,
+#               because it stops in the reverse of the order it started.
+#               That stop is ExecStop, which turns them off.
 #
-# The fourth is a wake, and that is the resume unit beside this one: it
-# starts this unit again, and ExecStart turns them on.
+# A suspend and a wake are the two units beside this one. Each of those
+# starts and does its own call, which is the shape the CEC toolkit and the
+# Pegboard both use in this project.
+#
+# The suspend was Conflicts=sleep.target and Before=sleep.target on this
+# unit, so that the stop above covered three moments instead of two. It did
+# not work: the boot and the shutdown did what they say and a suspend left
+# the lights on. The two units beside this one are longer, and they are the
+# pattern that works on the machine this project is for.
 #
 # It runs as the person who paired the devices and not as root. The record of
 # them is in that person's home directory and holds a token for each one, and
@@ -27,8 +31,6 @@ Description=Let the Nanoleaf devices on the network follow this machine
 Documentation=https://github.com/caed1994/SteamOS-Utility-Center
 Wants=network-online.target
 After=network-online.target
-Conflicts=sleep.target
-Before=sleep.target
 
 [Service]
 Type=oneshot
@@ -40,8 +42,8 @@ ExecStop=@INSTALL_DIR@/steamos-utility-center-nanoleaf off
 # seconds apart, because a lamp one second after a boot is not reachable yet.
 # Nothing waits for this unit, so those seconds delay no boot.
 TimeoutStartSec=40
-# The way down asks one time. A suspend waits here, and a lamp that missed
-# the message stays lit until the next boot, which is better than a suspend
+# The way down asks one time. A shutdown waits here, and a lamp that missed
+# the message stays lit until the next boot, which is better than a shutdown
 # that waits.
 TimeoutStopSec=15
 

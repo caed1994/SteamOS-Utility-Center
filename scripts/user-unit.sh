@@ -95,20 +95,25 @@ WAKE_STATE_PATH="$INSTALL_DIR/wake-state"
 KEEP_LIST_PATH="$ROOT/etc/atomic-update.conf.d/$NAME.conf"
 # What tells the strip about a suspend, in the same shape as the board above.
 # See scripts/sleep-led.sh.
+SLEEP_HELPER_PATH="$INSTALL_DIR/$NAME-sleep"
+SLEEP_UNIT_PATH="$UNIT_DIR/$NAME-sleep.service"
+RESUME_UNIT_PATH="$UNIT_DIR/$NAME-resume.service"
 # The Nanoleaf devices on the network, which follow the machine: on at a boot
-# and at a wake, off at a suspend and at a shutdown. Two units and one helper,
-# and the helper runs as the person who paired them. See
+# and at a wake, off at a suspend and at a shutdown. Three units and one
+# helper, and the helper runs as the person who paired them. See
 # server/steamos_utility_center/nanoleaf.py.
+#
+# One unit for each side of a sleep, in the shape that the strip and the board
+# above both take. The first unit holds the boot and the shutdown: it stays
+# active between them, and systemd stops it before it takes the network down.
 #
 # Part of the core and not a module, because the devices themselves are: an
 # effect on one of them is an HTTP call to an address on the LAN. A machine
 # where nothing is paired reads an empty record and the units do nothing.
 NANOLEAF_HELPER_PATH="$INSTALL_DIR/$NAME-nanoleaf"
 NANOLEAF_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf.service"
+NANOLEAF_SLEEP_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf-sleep.service"
 NANOLEAF_RESUME_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf-resume.service"
-SLEEP_HELPER_PATH="$INSTALL_DIR/$NAME-sleep"
-SLEEP_UNIT_PATH="$UNIT_DIR/$NAME-sleep.service"
-RESUME_UNIT_PATH="$UNIT_DIR/$NAME-resume.service"
 # Where both helpers were until the units took over.
 #
 # systemd runs each program in /usr/lib/systemd/system-sleep at the same two
