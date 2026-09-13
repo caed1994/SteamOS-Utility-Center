@@ -214,8 +214,14 @@ class SleepCostTest(unittest.TestCase):
     and it used to wait for those answers anyway.
 
     This runs the real script against a cec-ctl that behaves that way. It is
-    a clock test, so its limit is generous: the measurement was 1.6 seconds
-    and the version before it took 3.3.
+    a clock test, so its limit is generous.
+
+    The measurement was 1.6 seconds at one time, and it is 3.3 again. That
+    version reached 1.6 by sending four standby messages where the ladder has
+    six, and an older television stayed on at each shutdown. This test asked
+    for speed, got it, and said nothing about the cost, so StandbyLadderTest
+    counts the messages beside it. The limit here bounds the script and no
+    longer chases a number.
     """
 
     SILENT = """#!/bin/sh
@@ -255,8 +261,113 @@ exit 0
                            capture_output=True, timeout=60)
             return time.monotonic() - started
 
-    def test_a_television_that_answers_nothing_is_not_waited_for(self):
-        self.assertLess(self._cost(self.SILENT), 2.5)
+    def test_a_television_that_answers_nothing_is_not_asked_twice(self):
+        """Under the TimeoutStartSec of the unit, with room to spare. The
+        script sends its six messages and asks its one question."""
+        self.assertLess(self._cost(self.SILENT), 5.0)
+
+
+class StandbyLadderTest(unittest.TestCase):
+    """How many standby messages go on the wire, counted and not timed.
+
+    The ladder is six messages over about three seconds, because different
+    sets listen to different ones of the six. A version of this file sent
+    four of them to a set that reports no power status, on the reasoning that
+    the waits of the ladder exist for an answer that is not coming. That
+    holds for the waits. It does not hold for the messages, and an older
+    television then stayed on at each shutdown.
+
+    SleepCostTest beside this one did not catch it, because the run was
+    faster, which is what that test asks for. A clock says how long the
+    script took and never how much of the work it did. This counts the work.
+
+    Each run here is a real run of the script, so the class takes some
+    seconds. That is the price of measuring the thing itself.
+    """
+
+    ANSWERS = {
+        # cec-ctl waits about a second for a reply that is not coming.
+        "silent": "sleep 5; exit 0",
+        "standby": r"printf 'pwr-state: standby (0x01)\n'; exit 0",
+        "on": r"printf 'pwr-state: on (0x00)\n'; exit 0",
+    }
+
+    STUB = """#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    -S) printf '    Logical Address              : 4\n'; exit 0 ;;
+    --give-device-power-status) %s ;;
+  esac
+done
+printf '%%s\n' "$*" >> "$LOG"
+exit 0
+"""
+
+    def _messages(self, kind, **settings):
+        """Every standby message one "pre" run sends to this kind of set."""
+        with tempfile.TemporaryDirectory() as room:
+            fake = os.path.join(room, "cec-ctl")
+            with open(fake, "w") as handle:
+                handle.write(self.STUB % self.ANSWERS[kind])
+            os.chmod(fake, 0o755)
+            with open(os.path.join(CEC, "bin",
+                                   "steamos-cec-before-sleep")) as handle:
+                text = handle.read().replace("/usr/bin/cec-ctl", fake)
+            script = os.path.join(room, "before-sleep")
+            with open(script, "w") as handle:
+                handle.write(text)
+            device = os.path.join(room, "cec0")
+            open(device, "w").close()
+            log = os.path.join(room, "log")
+            open(log, "w").close()
+            place = dict(os.environ)
+            place.update({"STEAMOS_CEC_CONFIG": os.path.join(room, "none"),
+                          "STEAMOS_CEC_USER": getpass.getuser(),
+                          "CEC_DEVICE": device,
+                          "LOG": log})
+            place.update(settings)
+            subprocess.run(["bash", script, "pre"], env=place,
+                           capture_output=True, timeout=60)
+            with open(log) as handle:
+                return [line.strip() for line in handle
+                        if "--standby" in line or "cmd=0x36" in line]
+
+    def test_a_set_that_says_nothing_gets_the_whole_ladder(self):
+        """The case that broke. Four messages went out where six belong."""
+        self.assertEqual(len(self._messages("silent")), 6)
+
+    def test_a_set_that_says_it_is_on_gets_the_whole_ladder(self):
+        """The same six, by the other path: this one is asked each round and
+        answers each round, so nothing stops early."""
+        self.assertEqual(len(self._messages("on")), 6)
+
+    def test_the_broadcast_goes_out_as_often_as_the_set_does(self):
+        """A television that is off is not a receiver that is off, and the
+        broadcast to address 15 is what an AV receiver listens to."""
+        said = self._messages("silent")
+        to_set = [one for one in said if " 0 " in one or "--to 0" in one]
+        to_all = [one for one in said if "--to 15" in one or "-t 15" in one]
+        self.assertEqual(len(to_set), len(to_all))
+        self.assertEqual(len(to_all), 3)
+
+    def test_a_set_that_reports_standby_stops_the_ladder(self):
+        """The early exit, which is the half of this that measures something.
+
+        The set said that it is off, so the four messages after the first
+        pair have nothing left to turn off.
+        """
+        self.assertEqual(len(self._messages("standby")), 2)
+
+    def test_the_short_ladder_is_there_for_who_wants_it(self):
+        """One round with no wait, which is what every silent set got."""
+        self.assertEqual(
+            len(self._messages("silent", TV_STANDBY_ROUNDS="0")), 4)
+
+    def test_a_setting_that_is_not_a_number_falls_back(self):
+        """The value goes into `sleep`, and a typo in a configuration file
+        must not cost a television its standby."""
+        self.assertEqual(
+            len(self._messages("silent", TV_STANDBY_ROUNDS="zwei")), 6)
 
 
 class FixedHereTest(unittest.TestCase):
@@ -431,15 +542,25 @@ class FixedHereTest(unittest.TestCase):
                  if "/usr/bin/cec-ctl" in line and "timeout" not in line]
         self.assertEqual(loose, [], "these calls have no limit")
 
-    def test_a_set_that_says_nothing_does_not_wait_for_an_answer(self):
-        """The ladder waits before each further try, and it waits to leave
-        the television time to answer. A set that answers nothing has no
-        answer coming, so those waits bought two seconds of nothing on each
-        suspend and each shutdown.
+    def test_the_short_ladder_is_a_setting_and_not_the_default(self):
+        """A set that says nothing once got one round instead of two.
+
+        The waits of the ladder are there to leave time for an *answer*, and
+        a set that answers nothing has none coming. That was the reasoning,
+        and it holds for the waits and not for the messages: the second round
+        is two more standby messages, and an older television needed them.
+
+        So the short ladder is a value of TV_STANDBY_ROUNDS now, and every
+        set gets every round by default. StandbyLadderTest counts them.
         """
         helper = self._read("bin", "steamos-cec-before-sleep")
-        self.assertIn('[[ "$asking" == "1" ]] || rounds="0"', helper)
+        self.assertIn('TV_STANDBY_ROUNDS="${TV_STANDBY_ROUNDS:-0.5 1.0}"',
+                      helper)
+        self.assertIn('rounds="$TV_STANDBY_ROUNDS"', helper)
         self.assertIn("for delay in $rounds; do", helper)
+        self.assertNotIn('|| rounds="0"', helper)
+        self.assertIn("TV_STANDBY_ROUNDS",
+                      self._read("config", "steamos-cec-toolkit.conf.example"))
 
     def test_the_question_cannot_end_the_script_by_itself(self):
         """This file runs under `set -e`, where a command that returns
