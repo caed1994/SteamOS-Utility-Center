@@ -40,9 +40,13 @@ TAG="steamos-utility-center-nanoleaf"
 # asks logind which of the two it is. The property is true from the moment
 # logind announces the sleep until the machine is awake again.
 #
-# A machine that gives no answer gets the off. busctl is part of systemd and
-# is always there, so an empty answer means that something else is wrong, and
-# dark lamps are the safer half of that.
+# The answer is the type and the value, so "b false" on a machine that a
+# person is at, and "b true" from the announcement of the sleep until the
+# wake. Both were read on the machine this is for.
+#
+# Any other answer gets the off. busctl is part of systemd and is always
+# there, so something else is wrong at that point, and of the two halves dark
+# lamps are the safer one.
 state="$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
          org.freedesktop.login1.Manager PreparingForSleep 2>/dev/null)"
 if [ "$state" = "b false" ]; then
