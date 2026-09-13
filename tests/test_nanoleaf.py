@@ -544,17 +544,17 @@ class FollowTest(Room):
 
 
 class UnitTest(unittest.TestCase):
-    """The three units, and what the installers do with them.
+    """The two units, and what the installers do with them.
 
-    Four moments: a boot, a shutdown, a suspend and a wake. The first unit
-    holds the boot and the shutdown, and the other two hold the sides of a
-    sleep.
+    Four moments in three places. This unit holds the boot and the shutdown,
+    the resume unit holds the wake, and the suspend is a hook of
+    NetworkManager. See HookTest for that third place.
     """
 
     REPO = os.path.join(HERE, "..")
     NAMES = ("steamos-utility-center-nanoleaf.service",
-             "steamos-utility-center-nanoleaf-sleep.service",
              "steamos-utility-center-nanoleaf-resume.service")
+    DEAD = "steamos-utility-center-nanoleaf-sleep.service"
 
     def _unit(self, name):
         with open(os.path.join(self.REPO, "server", name)) as handle:
@@ -564,18 +564,18 @@ class UnitTest(unittest.TestCase):
     def _lines(text, start=""):
         """The directives of a unit, without its comments.
 
-        Each of these three units carries a comment that names the shape that
-        did not work, and it names it in the words of a directive. A test
-        that read the whole file passes on the explanation alone: the test
-        below for Before=sleep.target held while that line was gone, because
-        the comment above it says the same words.
+        Each of these units records the shapes that did not work, and it
+        records them in the words of a directive. A test that read the whole
+        file passes on the explanation alone: the first version of the test
+        for Before=sleep.target held while that line was gone, because the
+        comment above it said the same words.
         """
         return [one for one in text.splitlines()
                 if one[:1] not in ("#", "") and one.startswith(start)]
 
     def setUp(self):
         """Each unit as its directives, so no test here reads a comment."""
-        self.main, self.sleep, self.resume = [
+        self.main, self.resume = [
             "\n".join(self._lines(self._unit(name))) for name in self.NAMES]
 
     def test_a_boot_turns_them_on_and_a_shutdown_turns_them_off(self):
@@ -588,29 +588,23 @@ class UnitTest(unittest.TestCase):
         self.assertIn("WantedBy=multi-user.target", self.main)
         self.assertIn("After=network-online.target", self.main)
 
-    def test_a_suspend_turns_them_off_from_a_unit_of_its_own(self):
-        """Before=sleep.target with WantedBy=sleep.target, which is the pair
-        that the strip and the board here both use.
+    def test_no_unit_tries_to_cover_the_suspend(self):
+        """Two shapes were measured on the machine and both failed.
 
-        One link covers a suspend, a hibernate and a hybrid sleep alike,
-        because each of those targets pulls in sleep.target.
+        First Conflicts=sleep.target on the unit below, so that its ExecStop
+        covered the suspend. Then a unit of its own at Before=sleep.target.
+        Both run after NetworkManager takes the interface down, and the call
+        then reports Errno 101, which says there is no route. A unit is the
+        wrong place for this moment, so no unit here names that target.
         """
-        self.assertIn("DefaultDependencies=no", self.sleep)
-        self.assertIn("Before=sleep.target", self.sleep)
-        self.assertIn("WantedBy=sleep.target", self.sleep)
-        self.assertEqual([one.split()[-1] for one in
-                          self._lines(self.sleep, "Exec")], ["off"])
-
-    def test_the_main_unit_does_not_try_to_cover_the_suspend_as_well(self):
-        """It carried Conflicts=sleep.target and Before=sleep.target once, so
-        that its ExecStop covered three moments instead of two.
-
-        The boot and the shutdown did what they say and a suspend left the
-        lights on. The unit above is longer and it works, so the shape that
-        did not work must not come back.
-        """
-        self.assertNotIn("Conflicts=", self.main)
-        self.assertNotIn("sleep.target", self.main)
+        for name, said in zip(self.NAMES, (self.main, self.resume)):
+            self.assertNotIn("Conflicts=", said, name)
+            # By the whole name of the target. hybrid-sleep.target ends in
+            # the same seven characters, and the resume unit names it.
+            named = []
+            for line in said.splitlines():
+                named.extend(line.split("=", 1)[-1].split())
+            self.assertNotIn("sleep.target", named, name)
 
     def test_a_wake_lights_them_again(self):
         """It makes the call itself.
@@ -625,49 +619,29 @@ class UnitTest(unittest.TestCase):
                           self._lines(self.resume, "Exec")], ["on"])
         self.assertNotIn("systemctl", self.resume)
 
-    def test_each_side_of_a_sleep_names_all_four_ways_to_wake(self):
-        """The down side names sleep.target, which each of the four reaches.
+    def test_the_wake_names_all_four_ways_to_sleep(self):
+        """suspend.target and its three companions are reached after the
+        machine wakes, because each is ordered after the service that sleeps.
 
-        The up side names the four: sleep.target is reached on the way down,
-        so a unit ordered after it runs before the machine sleeps.
+        A unit that named sleep.target here would run on the way down.
         """
         for target in ("suspend.target", "hibernate.target",
                        "hybrid-sleep.target", "suspend-then-hibernate.target"):
             self.assertIn(target, self.resume, target)
-        self.assertEqual(self._lines(self.sleep, "WantedBy="),
-                         ["WantedBy=sleep.target"])
 
     def test_it_runs_as_the_person_who_paired_them_and_not_as_root(self):
         """The record is in that person's home and holds a token for each
         device. systemd gives a unit with User= the HOME of that account, so
         no path is written into the unit."""
-        for name, text in zip(self.NAMES, (self.main, self.sleep,
-                                           self.resume)):
-            self.assertIn("User=@WATCHER_USER@", text, name)
+        for name, said in zip(self.NAMES, (self.main, self.resume)):
+            self.assertIn("User=@WATCHER_USER@", said, name)
 
     def test_no_side_waits_for_ever(self):
-        for name, text in zip(self.NAMES, (self.main, self.sleep,
-                                           self.resume)):
-            self.assertIn("TimeoutStartSec=", text, name)
+        for name, said in zip(self.NAMES, (self.main, self.resume)):
+            self.assertIn("TimeoutStartSec=", said, name)
         self.assertIn("TimeoutStopSec=", self.main)
 
-    def test_a_suspend_waits_a_shorter_time_than_a_boot(self):
-        """The way up asks a device that did not answer again, because a lamp
-        one second after a boot is not reachable yet. Nothing waits for that.
-
-        A suspend waits for the unit that turns them off, so that side asks
-        one time. A lamp that missed the message stays lit until the wake,
-        which is better than a suspend that waits.
-        """
-        def seconds(text):
-            line = [one for one in text.splitlines()
-                    if one.startswith("TimeoutStartSec=")][0]
-            return int(line.split("=", 1)[1])
-
-        self.assertLess(seconds(self.sleep), seconds(self.main))
-        self.assertEqual(seconds(self.resume), seconds(self.main))
-
-    def test_an_update_of_steamos_keeps_all_three(self):
+    def test_an_update_of_steamos_keeps_them(self):
         """A unit in /etc belongs to the image, and an update boots another.
 
         Without its name on this list the feature is simply gone after an
@@ -681,7 +655,7 @@ class UnitTest(unittest.TestCase):
     def test_the_core_installs_them_and_the_uninstaller_removes_them(self):
         """The core, which writes no other unit. The devices are core too."""
         paths = ("NANOLEAF_HELPER_PATH", "NANOLEAF_UNIT_PATH",
-                 "NANOLEAF_SLEEP_UNIT_PATH", "NANOLEAF_RESUME_UNIT_PATH")
+                 "NANOLEAF_RESUME_UNIT_PATH", "NANOLEAF_HOOK_PATH")
         with open(os.path.join(self.REPO, "install.sh")) as handle:
             install = handle.read()
         core = install.split("# --- the modules ---")[0]
@@ -702,40 +676,134 @@ class UnitTest(unittest.TestCase):
 
         A unit that nothing disables leaves its link behind at a remove, and
         that link then names a file that is gone.
-
-        The write of a unit names it as well, so each word here is asked for
-        on the one line that carries it and not in the block.
         """
-        def orders(text, word):
-            """The lines of a shell script that run one systemctl word."""
+        def orders(text):
             return [one for one in text.splitlines()
-                    if "systemctl %s" % word in one or (
-                        one.lstrip().startswith('"$NAME-'))]
+                    if "systemctl " in one or one.lstrip().startswith('"$NAME-')]
 
         with open(os.path.join(self.REPO, "install.sh")) as handle:
-            install = handle.read()
-        block = install.split("NANOLEAF_HELPER_PATH")[1].split(
-            "# --- the modules ---")[0]
+            block = handle.read().split("NANOLEAF_HELPER_PATH")[1].split(
+                "# --- the modules ---")[0]
         with open(os.path.join(self.REPO, "uninstall.sh")) as handle:
             gone = handle.read()
         for name in self.NAMES:
             short = name.replace("steamos-utility-center", "$NAME")
             self.assertTrue(
-                [one for one in orders(block, "enable") if short in one],
+                [one for one in orders(block) if short in one],
                 "nothing enables %s" % name)
             self.assertTrue(
-                [one for one in orders(gone, "disable") if short in one],
+                [one for one in orders(gone) if short in one],
                 "nothing disables %s" % name)
 
-    def test_a_machine_with_no_desktop_user_gets_no_unit(self):
-        """There is no home to read the record from, so there is nothing to
-        run and nothing to run it as."""
-        with open(os.path.join(self.REPO, "install.sh")) as handle:
-            install = handle.read()
-        block = install.split("NANOLEAF_HELPER_PATH")[1].split(
-            "# --- the modules ---")[0]
-        self.assertIn("if watcher_user_dirs; then", block)
-        self.assertIn("else", block)
+    def test_the_unit_that_the_hook_replaced_is_taken_off_the_machine(self):
+        """The installer stopped writing it, and that removes nothing.
+
+        A machine that took the earlier version carries the unit and its link
+        in sleep.target.wants. Both run at each suspend and the call cannot
+        work, so both installers take it off.
+        """
+        self.assertFalse(
+            os.path.exists(os.path.join(self.REPO, "server", self.DEAD)),
+            "%s is still in the repository" % self.DEAD)
+        from steamos_utility_center import mounts
+        for path in mounts.PROJECT_FILES:
+            self.assertNotIn("nanoleaf-sleep", path, path)
+        for name in ("install.sh", "uninstall.sh"):
+            with open(os.path.join(self.REPO, name)) as handle:
+                self.assertIn("remove_dead_nanoleaf_sleep_unit",
+                              handle.read(), name)
+        with open(os.path.join(self.REPO, "scripts", "user-unit.sh")) as h:
+            shared = h.read()
+        body = shared.split("remove_dead_nanoleaf_sleep_unit()")[1]
+        self.assertIn("disable", body.split("}")[0])
+        self.assertIn("rm -f", body.split("}")[0])
+
+
+class HookTest(unittest.TestCase):
+    """The suspend, which NetworkManager runs and systemd does not.
+
+    A unit of the sleep transition is too late. NetworkManager answers the
+    PrepareForSleep signal of logind and takes the interface down, and that
+    is before any such unit starts. pre-down is the moment before the
+    disconnection, and NetworkManager waits there for this script.
+    """
+
+    REPO = os.path.join(HERE, "..")
+    HOOK = os.path.join(HERE, "..", "scripts", "nanoleaf-pre-down.sh")
+    WHERE = ("/etc/NetworkManager/dispatcher.d/pre-down.d/"
+             "50-steamos-utility-center-nanoleaf")
+
+    def setUp(self):
+        with open(self.HOOK) as handle:
+            self.text = handle.read()
+        self.code = "\n".join(line for line in self.text.splitlines()
+                               if not line.lstrip().startswith("#"))
+
+    def test_it_leaves_every_action_but_pre_down_alone(self):
+        """The dispatcher calls each script for each action it has."""
+        self.assertIn('[ "$2" = "pre-down" ] || exit 0', self.code)
+
+    def test_it_acts_for_a_sleep_and_not_for_a_cable(self):
+        """pre-down also arrives when somebody takes the cable out.
+
+        The lights follow the machine and not the cable, so the hook asks
+        logind which of the two this is. A machine that gives no answer gets
+        the off, because busctl is part of systemd and always there.
+        """
+        self.assertIn("PreparingForSleep", self.code)
+        self.assertIn('"b false"', self.code)
+        gate = self.code.split("PreparingForSleep")[1]
+        self.assertIn("exit 0", gate.split("runuser")[0])
+
+    def test_it_turns_them_off_and_never_on(self):
+        # The line that calls the helper, and not the one that names it for
+        # the journal tag.
+        calls = [line for line in self.code.splitlines()
+                 if "@INSTALL_DIR@/steamos-utility-center-nanoleaf" in line]
+        self.assertTrue(calls)
+        for line in calls:
+            self.assertIn(" off", line, line)
+        self.assertNotIn(" on", "".join(calls))
+
+    def test_it_drops_to_the_person_who_paired_them(self):
+        """NetworkManager runs this as root, and the record with the tokens
+        is in the home directory of another account."""
+        self.assertIn("runuser -u @WATCHER_USER@", self.code)
+        self.assertIn("@INSTALL_DIR@/steamos-utility-center-nanoleaf",
+                      self.code)
+
+    def test_the_installer_gives_it_what_networkmanager_asks_for(self):
+        """NetworkManager refuses a script that another account can write,
+        and one with no execute bit. Both refusals are silent."""
+        with open(os.path.join(self.REPO, "scripts", "user-unit.sh")) as h:
+            shared = h.read()
+        body = shared.split("write_hook()")[1].split("\n}")[0]
+        self.assertIn("chown root:root", body)
+        self.assertIn("chmod 0755", body)
+        self.assertIn("write_unit", body)
+
+    def test_it_is_where_networkmanager_looks(self):
+        with open(os.path.join(self.REPO, "scripts", "user-unit.sh")) as h:
+            shared = h.read()
+        self.assertIn("dispatcher.d/pre-down.d", shared)
+        self.assertIn("50-$NAME-nanoleaf", shared)
+
+    def test_an_update_of_steamos_keeps_it(self):
+        """It is in /etc, which belongs to the image that an update replaces.
+
+        Without this line a suspend leaves the lights on again after the next
+        update, and nothing reports it.
+        """
+        from steamos_utility_center import mounts
+        self.assertIn(self.WHERE, mounts.PROJECT_FILES)
+
+    def test_it_says_in_the_journal_what_it_decided(self):
+        """The two faults before this one were both silent. A suspend that
+        leaves the lights on now names itself in the journal."""
+        self.assertIn("logger -t", self.code)
+
+    def test_it_is_a_program_that_a_person_can_run(self):
+        self.assertTrue(os.access(self.HOOK, os.X_OK))
 
 
 class NoRightsTest(unittest.TestCase):

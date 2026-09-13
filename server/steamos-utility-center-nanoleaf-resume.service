@@ -1,13 +1,17 @@
 [Unit]
 # Lights the Nanoleaf devices on the network again after a wake.
 #
-# The other half of steamos-utility-center-nanoleaf-sleep.service. That one
-# turned them off on the way down, and this turns them on again.
+# The other half of the suspend. A hook of NetworkManager turns them off on
+# the way down, and this turns them on again. See
+# scripts/nanoleaf-pre-down.sh.
+#
+# The way up is a unit and the way down is not, because the two moments are
+# not alike. On the way down the interface goes away in the middle of the
+# work, and on the way up it is back before this unit starts.
 #
 # It makes the call itself. It ran `systemctl start` on the main unit before,
 # which was right while that unit was stopped for the suspend. It is not
-# stopped any more: the sleep unit beside this one does the off, and a start
-# of a unit that is already active does nothing.
+# stopped any more, and a start of an active unit does nothing.
 #
 # suspend.target and its three companions are reached after the machine wakes,
 # because each one is ordered after the service that does the sleeping. That

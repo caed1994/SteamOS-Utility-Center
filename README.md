@@ -462,38 +462,62 @@ slider sends a write at every step it passes.
 ### They follow the machine
 
 The paired devices go on when the machine boots or wakes, and off when it
-suspends or shuts down. Three units do it, and the installer writes them with
-the core:
+suspends or shuts down. Two units and one hook do it, and the installer
+writes them with the core:
 
 | | |
 | --- | --- |
 | a boot | `steamos-utility-center-nanoleaf.service` starts and turns them on |
 | a shutdown | systemd stops that unit before it takes the network down, because it stops in the reverse of the order it started, and the stop turns them off |
-| a suspend | `steamos-utility-center-nanoleaf-sleep.service` runs before `sleep.target` and turns them off |
+| a suspend | a hook in `/etc/NetworkManager/dispatcher.d/pre-down.d/` turns them off |
 | a wake | `steamos-utility-center-nanoleaf-resume.service` turns them on again |
 
-One unit for each side of a sleep, which is the shape the strip and the board
-also take. The first unit carried `Conflicts=sleep.target` instead, so that
-its stop covered a suspend as well: the boot and the shutdown did what they
-say and a suspend left the lights on.
+### Why the suspend is not a unit
 
-The units run as the person who paired the devices and not as root, because
-the record and its tokens are in that person's home directory. A machine
-where nothing is paired reads an empty record and all three units do nothing,
-which is why they are in the core rather than in a module.
+Because a unit is too late for a device on the network. NetworkManager
+answers the `PrepareForSleep` signal of logind and takes the interface down,
+and that is before the first unit of the sleep transition starts. Two shapes
+of unit were measured on the machine and both left the lights on. The journal
+gave the order and the reason:
+
+```text
+NM:       device (enp11s0): state change: disconnected -> unmanaged
+          (reason 'unmanaged-sleeping')
+systemd:  Starting Turn the Nanoleaf devices off before sleep...
+nanoleaf: 192.168.178.93 did not answer: [Errno 101] Network is unreachable
+```
+
+`Errno 101` is not a timeout. It says that there is no route any more. No
+order of units repairs it, because NetworkManager acts on a signal and not as
+a unit, so nothing in that transition is early enough.
+
+`pre-down` is the moment before the disconnection, and NetworkManager waits
+there for the hook. The call thus goes out while the route is still there.
+The hook asks logind whether a sleep is the reason, so that a cable somebody
+takes out leaves the lights alone.
+
+The strip and the board keep their units at `sleep.target`, and they are
+right to: a USB device is still there at that moment. The network is not.
+
+### The rest of it
+
+They run as the person who paired the devices and not as root, because the
+record and its tokens are in that person's home directory. A machine where
+nothing is paired reads an empty record and all three do nothing, which is
+why they are in the core rather than in a module.
 
 On the way up a device that does not answer is asked again, five times three
 seconds apart: the machine reaches its targets before a switch has learnt
-where a lamp is. Nothing waits for those units, so the seconds delay no boot
-and no wake. On the way down there is one try, because a suspend and a
-shutdown both wait there. A lamp that misses that one message stays lit until
-the machine comes back.
+where a lamp is. Nothing waits for that unit, so the seconds delay no wake.
+On the way down there is one try, because a suspend and a shutdown both wait
+there. A lamp that misses that one message stays lit until the machine comes
+back.
 
 There is no switch to turn this off yet. A device you pair follows the
 machine, and the one way out is to remove it from the card.
 
-Log: `journalctl -u steamos-utility-center-nanoleaf`, and the same command
-with `-sleep` or `-resume` on the end for the two sides of a sleep.
+Log: `journalctl -u steamos-utility-center-nanoleaf` for the units, and
+`journalctl -t steamos-utility-center-nanoleaf` for the hook.
 
 ### What it took
 

@@ -1,22 +1,18 @@
 [Unit]
 # Lets the Nanoleaf devices on the network follow the machine.
 #
-# Four moments and three units. This one holds two of them:
+# Four moments in three places. This unit holds two of them:
 #
 #   a boot      ExecStart turns them on.
 #   a shutdown  systemd stops this unit before it takes the network down,
 #               because it stops in the reverse of the order it started.
 #               That stop is ExecStop, which turns them off.
 #
-# A suspend and a wake are the two units beside this one. Each of those
-# starts and does its own call, which is the shape the CEC toolkit and the
-# Pegboard both use in this project.
-#
-# The suspend was Conflicts=sleep.target and Before=sleep.target on this
-# unit, so that the stop above covered three moments instead of two. It did
-# not work: the boot and the shutdown did what they say and a suspend left
-# the lights on. The two units beside this one are longer, and they are the
-# pattern that works on the machine this project is for.
+# A wake is the resume unit beside this one. A suspend is a hook of
+# NetworkManager, and it is not a unit at all: a unit of the sleep transition
+# runs after NetworkManager takes the interface down, and the call then has
+# no route. Two shapes of unit were measured and both left the lights on. See
+# scripts/nanoleaf-pre-down.sh.
 #
 # It runs as the person who paired the devices and not as root. The record of
 # them is in that person's home directory and holds a token for each one, and

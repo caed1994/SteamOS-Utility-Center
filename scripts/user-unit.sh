@@ -103,17 +103,25 @@ RESUME_UNIT_PATH="$UNIT_DIR/$NAME-resume.service"
 # helper, and the helper runs as the person who paired them. See
 # server/steamos_utility_center/nanoleaf.py.
 #
-# One unit for each side of a sleep, in the shape that the strip and the board
-# above both take. The first unit holds the boot and the shutdown: it stays
-# active between them, and systemd stops it before it takes the network down.
+# Two units and one hook of NetworkManager. The first unit holds the boot and
+# the shutdown: it stays active between them, and systemd stops it before it
+# takes the network down. The second unit lights them again after a wake.
+#
+# The suspend is the hook and not a unit, because a unit is too late for a
+# device on the network. See scripts/nanoleaf-pre-down.sh.
 #
 # Part of the core and not a module, because the devices themselves are: an
 # effect on one of them is an HTTP call to an address on the LAN. A machine
-# where nothing is paired reads an empty record and the units do nothing.
+# where nothing is paired reads an empty record and all three do nothing.
 NANOLEAF_HELPER_PATH="$INSTALL_DIR/$NAME-nanoleaf"
 NANOLEAF_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf.service"
-NANOLEAF_SLEEP_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf-sleep.service"
 NANOLEAF_RESUME_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf-resume.service"
+NANOLEAF_HOOK_DIR="$ROOT/etc/NetworkManager/dispatcher.d/pre-down.d"
+NANOLEAF_HOOK_PATH="$NANOLEAF_HOOK_DIR/50-$NAME-nanoleaf"
+# The unit that the hook replaced. It ran at Before=sleep.target, which is
+# after NetworkManager takes the interface down, so every suspend left the
+# lights on. An installation that keeps it runs a call that cannot work.
+NANOLEAF_DEAD_SLEEP_UNIT="$UNIT_DIR/$NAME-nanoleaf-sleep.service"
 # Where both helpers were until the units took over.
 #
 # systemd runs each program in /usr/lib/systemd/system-sleep at the same two
@@ -150,6 +158,29 @@ write_unit() {
         -e "s|@WATCHER_USER@|${WATCHER_USER:-root}|g" \
         "$template" > "$target"
     chmod 0644 "$target"
+}
+
+# The same, for a program that another daemon runs.
+#
+# NetworkManager refuses a script in its dispatcher directory that any account
+# but root can write, and it refuses one with no execute bit. Both refusals
+# are silent, so the mode here is a part of the feature.
+write_hook() {
+    local template="$1" target="$2"
+    write_unit "$template" "$target"
+    chown root:root "$target" 2>/dev/null || true
+    chmod 0755 "$target"
+}
+
+# Take the unit that the hook replaced off a machine that still carries it.
+#
+# Nothing else removes it: the installer stopped writing it, and a file that
+# an older run wrote stays where it is. Its link in sleep.target.wants goes
+# with it, or systemd names a unit that is gone at each suspend.
+remove_dead_nanoleaf_sleep_unit() {
+    systemctl disable --now "$NAME-nanoleaf-sleep.service" >/dev/null 2>&1 \
+        || true
+    rm -f "$NANOLEAF_DEAD_SLEEP_UNIT" 2>/dev/null || true
 }
 
 # Takes away a copy that an earlier install left in
