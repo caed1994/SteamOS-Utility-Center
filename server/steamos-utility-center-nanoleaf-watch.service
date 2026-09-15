@@ -1,0 +1,38 @@
+[Unit]
+# Turns the Nanoleaf devices on the network off at the moment a sleep begins.
+#
+# A program that runs all the time, which is the point of it. logind
+# announces a sleep, and NetworkManager answers the same announcement by
+# taking the interface down. One measurement on this machine:
+#
+#   .8172  NM: sleep requested
+#   .8450  enp11s0: activated -> deactivating, dhcp4: canceled, no lease
+#
+# Twenty-eight milliseconds to no address at all. A unit at
+# Before=sleep.target runs long after that. A hook at the pre-down of
+# NetworkManager has to start a dispatcher service, a runuser with a PAM
+# session and a Python first, and both shapes were measured losing.
+#
+# This one holds a delay lock at logind and reads the same signal. The call
+# goes out with no process to start, which is two to five milliseconds on a
+# LAN. The lock is what makes the suspend wait for it.
+#
+# The wake is the resume unit beside this one, which works and stays.
+#
+# Log: journalctl -u steamos-utility-center-nanoleaf-watch
+Description=Turn the Nanoleaf devices on the network off when a sleep begins
+Documentation=https://github.com/caed1994/SteamOS-Utility-Center
+Wants=network-online.target
+After=network-online.target dbus.service
+
+[Service]
+Type=simple
+User=@WATCHER_USER@
+ExecStart=@INSTALL_DIR@/steamos-utility-center-nanoleaf-watch
+# The bus goes away with a restart of D-Bus, and the delay lock goes with it.
+# A machine that comes back without this program sleeps with the lamps lit.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

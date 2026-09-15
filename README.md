@@ -462,39 +462,58 @@ slider sends a write at every step it passes.
 ### They follow the machine
 
 The paired devices go on when the machine boots or wakes, and off when it
-suspends or shuts down. Two units and one hook do it, and the installer
-writes them with the core:
+suspends or shuts down. Three units do it, and the installer writes them with
+the core:
 
 | | |
 | --- | --- |
 | a boot | `steamos-utility-center-nanoleaf.service` starts and turns them on |
 | a shutdown | systemd stops that unit before it takes the network down, because it stops in the reverse of the order it started, and the stop turns them off |
-| a suspend | a hook in `/etc/NetworkManager/dispatcher.d/pre-down.d/` turns them off |
+| a suspend | `steamos-utility-center-nanoleaf-watch.service` runs all the time and turns them off the moment logind announces a sleep |
 | a wake | `steamos-utility-center-nanoleaf-resume.service` turns them on again |
 
-### Why the suspend is not a unit
+### Why the suspend is a program and not a moment
 
-Because a unit is too late for a device on the network. NetworkManager
-answers the `PrepareForSleep` signal of logind and takes the interface down,
-and that is before the first unit of the sleep transition starts. Two shapes
-of unit were measured on the machine and both left the lights on. The journal
-gave the order and the reason:
+Because the moment is twenty-eight milliseconds wide. logind announces the
+sleep, NetworkManager answers the same announcement by taking the interface
+down, and the journal of the machine gives the width:
 
 ```text
-NM:       device (enp11s0): state change: disconnected -> unmanaged
-          (reason 'unmanaged-sleeping')
-systemd:  Starting Turn the Nanoleaf devices off before sleep...
-nanoleaf: 192.168.178.93 did not answer: [Errno 101] Network is unreachable
+.8172  NM: sleep requested
+.8450  enp11s0: activated -> deactivating, dhcp4: canceled, no lease
 ```
 
-`Errno 101` is not a timeout. It says that there is no route any more. No
-order of units repairs it, because NetworkManager acts on a signal and not as
-a unit, so nothing in that transition is early enough.
+After that a call reports `Errno 101`, which is not a timeout. It says there
+is no route any more.
 
-`pre-down` is the moment before the disconnection, and NetworkManager waits
-there for the hook. The call thus goes out while the route is still there.
-The hook asks logind whether a sleep is the reason, so that a cable somebody
-takes out leaves the lights alone.
+Three shapes were measured and two lost:
+
+| | |
+| --- | --- |
+| `Conflicts=sleep.target` on the first unit | its stop runs after the whole delay phase |
+| a unit at `Before=sleep.target` | the same, one step earlier and still too late |
+| a hook at the `pre-down` of NetworkManager | it held the right place for one SteamOS version, and an update moved the place |
+
+The hook is worth a word, because it worked. NetworkManager waits at
+`pre-down` for its dispatcher scripts, so the call went out while the route
+was there. Then a SteamOS update changed the order: the dispatcher service
+now starts after the lease is gone, and a `runuser` with a PAM session and a
+Python start after that.
+
+So the suspend belongs to a program that is already running. It holds a delay
+lock at logind, it reads the same signal NetworkManager reads, and it makes
+the call with no process to start first. That is two to five milliseconds on
+a LAN against those twenty-eight. The lock is what makes the suspend wait for
+the call.
+
+It stays a race, because logind gives the signal to every holder of a delay
+lock at once and the locks have no order between them. So the time of each
+call goes in the journal:
+
+```text
+journalctl -u steamos-utility-center-nanoleaf-watch
+off in 4 ms: Lines A5F4
+```
 
 The strip and the board keep their units at `sleep.target`, and they are
 right to: a USB device is still there at that moment. The network is not.
@@ -516,8 +535,9 @@ back.
 There is no switch to turn this off yet. A device you pair follows the
 machine, and the one way out is to remove it from the card.
 
-Log: `journalctl -u steamos-utility-center-nanoleaf` for the units, and
-`journalctl -t steamos-utility-center-nanoleaf` for the hook.
+Log: `journalctl -u steamos-utility-center-nanoleaf` for the boot and the
+shutdown, and the same command with `-watch` or `-resume` on the end for the
+two sides of a sleep.
 
 ### What it took
 

@@ -8,11 +8,11 @@
 #               because it stops in the reverse of the order it started.
 #               That stop is ExecStop, which turns them off.
 #
-# A wake is the resume unit beside this one. A suspend is a hook of
-# NetworkManager, and it is not a unit at all: a unit of the sleep transition
-# runs after NetworkManager takes the interface down, and the call then has
-# no route. Two shapes of unit were measured and both left the lights on. See
-# scripts/nanoleaf-pre-down.sh.
+# A wake is the resume unit beside this one. A suspend is the watch unit, a
+# program that runs all the time: the announcement of a sleep and the loss of
+# the address are twenty-eight milliseconds apart, and anything that has to
+# start first arrives after that. Three shapes were measured and two lost.
+# See server/steamos_utility_center/sleepwatch.py.
 #
 # It runs as the person who paired the devices and not as root. The record of
 # them is in that person's home directory and holds a token for each one, and

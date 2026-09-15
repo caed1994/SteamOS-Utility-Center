@@ -229,21 +229,22 @@ if [[ -n "${WATCHER_USER:-}" ]] && linger_is_on "$WATCHER_USER"; then
     echo "Turned lingering back off for $WATCHER_USER."
 fi
 
-# The two units and the hook that let the Nanoleaf devices on the network
-# follow this machine. The units are disabled first, or the links in
-# multi-user.target.wants and suspend.target.wants stay behind and name a
-# unit that is gone.
+# The three units that let the Nanoleaf devices on the network follow this
+# machine. Disabled first, or the links in multi-user.target.wants and
+# suspend.target.wants stay behind and name a unit that is gone.
 #
-# remove_dead_nanoleaf_sleep_unit takes the third unit off a machine that an
-# older run of the installer wrote it to. See scripts/user-unit.sh.
+# remove_dead_nanoleaf_suspend takes the two earlier shapes of the suspend
+# off a machine that an older run of the installer wrote them to. See
+# scripts/user-unit.sh.
 #
 # The record of those devices is in a home directory and stays: it holds the
 # tokens, and a second install reads them back.
-systemctl disable --now "$NAME-nanoleaf.service" >/dev/null 2>&1 || true
+systemctl disable --now "$NAME-nanoleaf.service" \
+  "$NAME-nanoleaf-watch.service" >/dev/null 2>&1 || true
 systemctl disable "$NAME-nanoleaf-resume.service" >/dev/null 2>&1 || true
-remove_dead_nanoleaf_sleep_unit
-rm -f "$NANOLEAF_HELPER_PATH" "$NANOLEAF_UNIT_PATH" \
-  "$NANOLEAF_RESUME_UNIT_PATH" "$NANOLEAF_HOOK_PATH"
+remove_dead_nanoleaf_suspend
+rm -f "$NANOLEAF_HELPER_PATH" "$NANOLEAF_WATCH_PATH" "$NANOLEAF_UNIT_PATH" \
+  "$NANOLEAF_RESUME_UNIT_PATH" "$NANOLEAF_WATCH_UNIT_PATH"
 
 rm -f "$UDEV_PATH"
 # The suspend helper and the two units that call it. Disabled first, or the

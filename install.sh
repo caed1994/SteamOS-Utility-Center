@@ -360,11 +360,11 @@ fi
 # It writes no udev rule and no sudoers line of its own. Each of those arrives
 # with a module, and a machine with no module has none of them.
 #
-# It writes two units and one hook of NetworkManager, and those are the
-# exception. They let the Nanoleaf devices on the network follow the machine,
-# and those devices are core: an effect on one of them is an HTTP call to an
-# address on the LAN, and pairing one needs no rights. A machine where
-# nothing is paired reads an empty record and all three do nothing.
+# It writes three units, and those are the exception. They let the Nanoleaf
+# devices on the network follow the machine, and those devices are core: an
+# effect on one of them is an HTTP call to an address on the LAN, and pairing
+# one needs no rights. A machine where nothing is paired reads an empty
+# record and all three do nothing.
 
 # Before a single new file is written. The old install has to be stopped and
 # out of the way first: its service holds the serial port the new one is about
@@ -423,38 +423,43 @@ ln -sfn "$INSTALL_DIR/steamos-utility-centerctl" "$CTL_COMMAND_LINK" 2>/dev/null
 # What lets the Nanoleaf devices on the network follow the machine: on at a
 # boot and at a wake, off at a suspend and at a shutdown.
 #
-# Two units and one hook, in the core, which writes no unit otherwise. They
-# are here and not in a module because the devices are: an effect on one of
-# them is an HTTP call to an address on the LAN, and pairing one needs no
-# rights at all. A machine where nothing is paired reads an empty record, and
-# all three then do nothing at all.
+# Three units in the core, which writes none otherwise. They are here and not
+# in a module because the devices are: an effect on one of them is an HTTP
+# call to an address on the LAN, and pairing one needs no rights at all. A
+# machine where nothing is paired reads an empty record, and all three then
+# do nothing at all.
 #
-# The unit holds the boot and the shutdown, the second unit holds the wake,
-# and the hook holds the suspend. The suspend was a unit as well, at
-# Before=sleep.target. It ran after NetworkManager took the interface down,
-# so the call had no route and every suspend left the lights on. See
-# scripts/nanoleaf-pre-down.sh.
+# The first holds the boot and the shutdown, the second holds the wake, and
+# the third runs all the time and holds the suspend. That third one is a
+# program and not a moment, because the moment is twenty-eight milliseconds
+# wide: logind announces the sleep, NetworkManager answers the same
+# announcement, and the address is gone. A unit of the sleep transition and a
+# hook at the pre-down of NetworkManager were both measured losing that. See
+# server/steamos_utility_center/sleepwatch.py.
 #
 # They run as the person who paired the devices, because the record and its
 # tokens are in that person's home directory. A machine with no such user
-# gets neither: there is no home to read the record from.
+# gets none of them: there is no home to read the record from.
 install -m 0755 "$SOURCE_DIR/server/steamos-utility-center-nanoleaf" \
     "$NANOLEAF_HELPER_PATH"
-remove_dead_nanoleaf_sleep_unit
+install -m 0755 "$SOURCE_DIR/server/steamos-utility-center-nanoleaf-watch" \
+    "$NANOLEAF_WATCH_PATH"
+remove_dead_nanoleaf_suspend
 if watcher_user_dirs; then
     say "Installing the Nanoleaf network units for $WATCHER_USER"
     write_unit "$SOURCE_DIR/server/$NAME-nanoleaf.service" \
         "$NANOLEAF_UNIT_PATH"
     write_unit "$SOURCE_DIR/server/$NAME-nanoleaf-resume.service" \
         "$NANOLEAF_RESUME_UNIT_PATH"
-    install -d -m 0755 "$NANOLEAF_HOOK_DIR"
-    write_hook "$SOURCE_DIR/scripts/nanoleaf-pre-down.sh" \
-        "$NANOLEAF_HOOK_PATH"
+    write_unit "$SOURCE_DIR/server/$NAME-nanoleaf-watch.service" \
+        "$NANOLEAF_WATCH_UNIT_PATH"
     systemctl daemon-reload
     systemctl enable --now "$NAME-nanoleaf.service" >/dev/null 2>&1 \
         || warn "could not enable $NAME-nanoleaf.service"
     systemctl enable "$NAME-nanoleaf-resume.service" >/dev/null 2>&1 \
         || warn "could not enable $NAME-nanoleaf-resume.service"
+    systemctl enable --now "$NAME-nanoleaf-watch.service" >/dev/null 2>&1 \
+        || warn "could not enable $NAME-nanoleaf-watch.service"
 else
     warn "no desktop user found, so the Nanoleaf devices on the network"
     warn "will not follow this machine"

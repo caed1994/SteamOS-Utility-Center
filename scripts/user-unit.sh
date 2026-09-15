@@ -103,25 +103,31 @@ RESUME_UNIT_PATH="$UNIT_DIR/$NAME-resume.service"
 # helper, and the helper runs as the person who paired them. See
 # server/steamos_utility_center/nanoleaf.py.
 #
-# Two units and one hook of NetworkManager. The first unit holds the boot and
-# the shutdown: it stays active between them, and systemd stops it before it
-# takes the network down. The second unit lights them again after a wake.
+# Three units. The first holds the boot and the shutdown: it stays active
+# between them, and systemd stops it before it takes the network down. The
+# second lights them again after a wake. The third runs all the time and
+# holds the suspend.
 #
-# The suspend is the hook and not a unit, because a unit is too late for a
-# device on the network. See scripts/nanoleaf-pre-down.sh.
+# The suspend needs a program that already runs. logind announces the sleep
+# and NetworkManager answers it by taking the interface down, and the address
+# is gone twenty-eight milliseconds later. A unit of the sleep transition
+# starts long after that, and a hook at the pre-down of NetworkManager has a
+# dispatcher service and a PAM session to start first. Both were measured
+# losing. See server/steamos_utility_center/sleepwatch.py.
 #
 # Part of the core and not a module, because the devices themselves are: an
 # effect on one of them is an HTTP call to an address on the LAN. A machine
 # where nothing is paired reads an empty record and all three do nothing.
 NANOLEAF_HELPER_PATH="$INSTALL_DIR/$NAME-nanoleaf"
+NANOLEAF_WATCH_PATH="$INSTALL_DIR/$NAME-nanoleaf-watch"
 NANOLEAF_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf.service"
 NANOLEAF_RESUME_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf-resume.service"
-NANOLEAF_HOOK_DIR="$ROOT/etc/NetworkManager/dispatcher.d/pre-down.d"
-NANOLEAF_HOOK_PATH="$NANOLEAF_HOOK_DIR/50-$NAME-nanoleaf"
-# The unit that the hook replaced. It ran at Before=sleep.target, which is
-# after NetworkManager takes the interface down, so every suspend left the
-# lights on. An installation that keeps it runs a call that cannot work.
+NANOLEAF_WATCH_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf-watch.service"
+# What held the suspend before, and what an older run of the installer left
+# on this machine. Each one runs a call that cannot reach a lamp any more,
+# and each one is removed rather than left to fail at every suspend.
 NANOLEAF_DEAD_SLEEP_UNIT="$UNIT_DIR/$NAME-nanoleaf-sleep.service"
+NANOLEAF_DEAD_HOOK="$ROOT/etc/NetworkManager/dispatcher.d/pre-down.d/50-$NAME-nanoleaf"
 # Where both helpers were until the units took over.
 #
 # systemd runs each program in /usr/lib/systemd/system-sleep at the same two
@@ -160,27 +166,17 @@ write_unit() {
     chmod 0644 "$target"
 }
 
-# The same, for a program that another daemon runs.
+# Take the two earlier shapes of the suspend off a machine that carries them.
 #
-# NetworkManager refuses a script in its dispatcher directory that any account
-# but root can write, and it refuses one with no execute bit. Both refusals
-# are silent, so the mode here is a part of the feature.
-write_hook() {
-    local template="$1" target="$2"
-    write_unit "$template" "$target"
-    chown root:root "$target" 2>/dev/null || true
-    chmod 0755 "$target"
-}
-
-# Take the unit that the hook replaced off a machine that still carries it.
-#
-# Nothing else removes it: the installer stopped writing it, and a file that
-# an older run wrote stays where it is. Its link in sleep.target.wants goes
-# with it, or systemd names a unit that is gone at each suspend.
-remove_dead_nanoleaf_sleep_unit() {
+# Nothing else removes them: the installer stopped writing them, and a file
+# that an older run wrote stays where it is. The link of the unit in
+# sleep.target.wants goes with it, or systemd names a unit that is gone at
+# each suspend. The hook stays silent and adds one failed call to the journal
+# at each suspend.
+remove_dead_nanoleaf_suspend() {
     systemctl disable --now "$NAME-nanoleaf-sleep.service" >/dev/null 2>&1 \
         || true
-    rm -f "$NANOLEAF_DEAD_SLEEP_UNIT" 2>/dev/null || true
+    rm -f "$NANOLEAF_DEAD_SLEEP_UNIT" "$NANOLEAF_DEAD_HOOK" 2>/dev/null || true
 }
 
 # Takes away a copy that an earlier install left in

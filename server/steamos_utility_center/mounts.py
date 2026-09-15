@@ -546,8 +546,11 @@ PROJECT_FILES = (
     # server/steamos_utility_center/nanoleaf.py.
     "/etc/systemd/system/steamos-utility-center-nanoleaf.service",
     "/etc/systemd/system/steamos-utility-center-nanoleaf-resume.service",
+    "/etc/systemd/system/steamos-utility-center-nanoleaf-watch.service",
     "/etc/systemd/system/multi-user.target.wants/"
     "steamos-utility-center-nanoleaf.service",
+    "/etc/systemd/system/multi-user.target.wants/"
+    "steamos-utility-center-nanoleaf-watch.service",
     "/etc/systemd/system/suspend.target.wants/"
     "steamos-utility-center-nanoleaf-resume.service",
     "/etc/systemd/system/hibernate.target.wants/"
@@ -556,11 +559,6 @@ PROJECT_FILES = (
     "steamos-utility-center-nanoleaf-resume.service",
     "/etc/systemd/system/suspend-then-hibernate.target.wants/"
     "steamos-utility-center-nanoleaf-resume.service",
-    # And the suspend, which is a hook of NetworkManager and not a unit. A
-    # unit runs after NetworkManager takes the interface down, and the call
-    # then has no route. See scripts/nanoleaf-pre-down.sh.
-    "/etc/NetworkManager/dispatcher.d/pre-down.d/"
-    "50-steamos-utility-center-nanoleaf",
     # Controller wake. See scripts/wake-apply.sh.
     "/etc/systemd/system/steamos-utility-center-wake.service",
     "/etc/systemd/system/multi-user.target.wants/"

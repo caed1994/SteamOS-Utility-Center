@@ -417,7 +417,7 @@ def main(argv=None):
 
     See server/steamos-utility-center-nanoleaf.service, which turns the
     lights on at a boot and off at a shutdown, the resume unit beside it for
-    the wake, and scripts/nanoleaf-pre-down.sh for the suspend.
+    the wake, and sleepwatch.py for the suspend.
 
     It returns zero either way. A lamp that did not answer is not a fault of
     this machine, and a unit that fails at every suspend is a red line in

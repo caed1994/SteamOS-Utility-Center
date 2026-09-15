@@ -1,9 +1,9 @@
 [Unit]
 # Lights the Nanoleaf devices on the network again after a wake.
 #
-# The other half of the suspend. A hook of NetworkManager turns them off on
-# the way down, and this turns them on again. See
-# scripts/nanoleaf-pre-down.sh.
+# The other half of the suspend. The watch unit turns them off on the way
+# down, and this turns them on again. See
+# server/steamos_utility_center/sleepwatch.py.
 #
 # The way up is a unit and the way down is not, because the two moments are
 # not alike. On the way down the interface goes away in the middle of the
