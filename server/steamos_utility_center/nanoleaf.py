@@ -360,10 +360,17 @@ def select(device, effect):
          body={"select": effect})
 
 
-def switch(device, on):
-    """Turns the device on or off."""
+def switch(device, on, timeout=TIMEOUT):
+    """Turns the device on or off.
+
+    The limit is an argument because the way into a suspend has a shorter
+    one. There the answer cannot arrive: the message goes out while the
+    interface is up, and the interface goes away before the device replies.
+    Waiting the whole limit there holds the suspend for nothing. See
+    sleepwatch.py.
+    """
     call(device["ip"], "/api/v1/%s/state" % device["token"], method="PUT",
-         body={"on": {"value": bool(on)}})
+         body={"on": {"value": bool(on)}}, timeout=timeout)
 
 
 def dim(device, level):
@@ -373,7 +380,7 @@ def dim(device, level):
          body={"brightness": {"value": level}})
 
 
-def follow(state, home=None, tries=None, rest=None):
+def follow(state, home=None, tries=None, rest=None, timeout=TIMEOUT):
     """Turns every paired device on, or off, and says what it did.
 
     This is what makes the lights follow the machine: on at a boot and at a
@@ -402,7 +409,7 @@ def follow(state, home=None, tries=None, rest=None):
         trouble = []
         for one in left:
             try:
-                switch(one, state)
+                switch(one, state, timeout)
             except NanoleafError as exc:
                 again.append(one)
                 trouble.append("%s: %s" % (one.get("name") or one["ip"], exc))

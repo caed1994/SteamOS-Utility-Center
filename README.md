@@ -512,8 +512,17 @@ call goes in the journal:
 
 ```text
 journalctl -u steamos-utility-center-nanoleaf-watch
-off in 4 ms: Lines A5F4
+off in 41 ms: Lines A5F4
+sent in 502 ms, no answer before the network went: Lines A5F4: ... timed out
 ```
+
+Both of those lines are a lamp that went off. The second one says that the
+message went out and the reply had nothing to come back over, which is the
+ordinary case here: urllib writes the request and then waits, so the message
+is on the wire in milliseconds and the interface goes some milliseconds
+after it. The wait is half a second and not the 2.5 of the rest of this
+module, because a suspend waits here and a reply that cannot arrive is not
+worth two more seconds of it.
 
 The strip and the board keep their units at `sleep.target`, and they are
 right to: a USB device is still there at that moment. The network is not.

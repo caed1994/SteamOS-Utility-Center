@@ -437,6 +437,24 @@ class FollowTest(Room):
         nanoleaf.add(DEVICE, self.home)
         nanoleaf.add(OTHER, self.home)
 
+    def test_the_limit_it_is_given_reaches_the_device(self):
+        """A caller with a shorter limit has a reason for it.
+
+        sleepwatch passes half a second, because on the way into a suspend
+        the answer has nothing to come back over. A follow that kept the
+        limit to itself would wait the whole 2.5 seconds of the module at
+        every suspend, and nothing would report it.
+        """
+        said = []
+        kept = nanoleaf.switch
+        nanoleaf.switch = lambda device, on, timeout=None: said.append(timeout)
+        try:
+            self._both()
+            nanoleaf.follow(False, home=self.home, timeout=0.25)
+        finally:
+            nanoleaf.switch = kept
+        self.assertEqual(said, [0.25, 0.25])
+
     def test_it_switches_every_paired_device(self):
         talker = self._talk()
         self._both()

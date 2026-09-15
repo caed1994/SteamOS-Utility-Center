@@ -328,7 +328,7 @@ class ReportTest(unittest.TestCase):
             return clock.pop(0)
 
         kept = sleepwatch.nanoleaf.follow
-        sleepwatch.nanoleaf.follow = lambda state, home: {
+        sleepwatch.nanoleaf.follow = lambda state, home, timeout=None: {
             "done": ["Lines A5F4"], "trouble": []}
         try:
             import io
@@ -340,6 +340,46 @@ class ReportTest(unittest.TestCase):
             sleepwatch.nanoleaf.follow = kept
         self.assertIn("12 ms", said.getvalue())
         self.assertIn("Lines A5F4", said.getvalue())
+
+    def test_the_way_into_a_suspend_does_not_wait_for_an_answer(self):
+        """The answer cannot arrive: the interface goes away first.
+
+        The first version used the ordinary limit of the module and held
+        every suspend for its whole 2.5 seconds, for a reply that had nothing
+        to come back over. The lamp went off at that suspend all the same.
+        """
+        said = {}
+
+        def follow(state, home=None, timeout=None):
+            said["timeout"] = timeout
+            return {"done": [], "trouble": []}
+
+        kept = sleepwatch.nanoleaf.follow
+        sleepwatch.nanoleaf.follow = follow
+        try:
+            sleepwatch.darken()
+        finally:
+            sleepwatch.nanoleaf.follow = kept
+        self.assertEqual(said["timeout"], sleepwatch.SLEEP_TIMEOUT)
+        self.assertLess(sleepwatch.SLEEP_TIMEOUT, sleepwatch.nanoleaf.TIMEOUT)
+
+    def test_a_device_that_gives_no_answer_is_not_called_a_fault(self):
+        """It is the ordinary case here, and a line that reads as a failure
+        sends the next reader of this journal after the wrong thing."""
+        import contextlib
+        import io as pipes
+
+        kept = sleepwatch.nanoleaf.follow
+        sleepwatch.nanoleaf.follow = lambda state, home=None, timeout=None: {
+            "done": [], "trouble": ["Lines A5F4: 1.2.3.4 did not answer"]}
+        try:
+            said = pipes.StringIO()
+            with contextlib.redirect_stdout(said):
+                sleepwatch.darken()
+        finally:
+            sleepwatch.nanoleaf.follow = kept
+        self.assertIn("sent in", said.getvalue())
+        self.assertIn("no answer before the network went", said.getvalue())
 
 
 if __name__ == "__main__":

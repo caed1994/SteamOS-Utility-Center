@@ -77,6 +77,21 @@ WHY = "Turn the Nanoleaf devices on the network off"
 # child that is alive after this much time holds it.
 HOLD_CHECK = 0.5
 
+# How long to wait for the answer of a device on the way into a suspend.
+#
+# The answer cannot arrive. The message goes out while the interface is up,
+# and the interface goes away some milliseconds later, so the reply has
+# nothing to come back over. The first version used the ordinary limit of the
+# module and held every suspend for its whole 2.5 seconds:
+#
+#   after 2531 ms, Lines A5F4: 192.168.178.93 did not answer: timed out
+#
+# The lamp went off at that suspend. urllib writes the request and then waits,
+# so the message was on the wire within milliseconds and the wait bought
+# nothing. A device that does answer answers in some tens of milliseconds, so
+# this is room for that and no more.
+SLEEP_TIMEOUT = 0.5
+
 # What a message of D-Bus carries before its body.
 HEAD = 16
 SIGNAL_TYPE = 4
@@ -270,16 +285,21 @@ def darken(home=None, now=None):
     """Turn them off, and report what it cost.
 
     The time is the whole point of this program, so it is measured and not
-    asserted. It runs from the signal to the last answer.
+    asserted. It runs from the signal to the last answer or to the limit.
+
+    A device that gives no answer here is the ordinary case and not a fault.
+    The message goes out and the interface goes away, so the reply has
+    nothing to come back over. The lamp acts on the message either way.
     """
     now = time.monotonic if now is None else now
     started = now()
-    said = nanoleaf.follow(False, home)
+    said = nanoleaf.follow(False, home, timeout=SLEEP_TIMEOUT)
     took = (now() - started) * 1000.0
     if said["done"]:
         say("off in %.0f ms: %s" % (took, ", ".join(said["done"])))
     for line in said["trouble"]:
-        say("after %.0f ms, %s" % (took, line))
+        say("sent in %.0f ms, no answer before the network went: %s"
+            % (took, line))
     if not said["done"] and not said["trouble"]:
         say("no Nanoleaf device on the network is paired here")
     return said
