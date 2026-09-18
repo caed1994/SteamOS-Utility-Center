@@ -18,6 +18,7 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "..", "server"))
 
 from steamos_utility_center import cec                                  # noqa: E402
@@ -43,6 +44,103 @@ def status(**changes):
     }
     found.update(changes)
     return found
+
+
+class DeadFeatureTest(unittest.TestCase):
+    """A switch that is on with nothing behind it.
+
+    The switch asks systemd whether the unit is enabled, and that is the
+    right question for a switch. It is not the question "does this work".
+    Four of the features are a program that runs all the time, and each
+    carries Restart=on-failure: one that cannot start stays in "activating"
+    for ever and never reaches "failed". The page then shows the switch on,
+    the feature does nothing, and nothing says so.
+
+    Measured on a machine: SteamOS went from Python 3.13 to 3.14, the copy of
+    dbus_next for the old version was invisible to the new one, and three
+    features died in that loop with every switch still reading "on".
+    """
+
+    def machine(self, **states):
+        return {"services": {name: {"is_enabled": on, "is_active": running,
+                                    "active": said}
+                             for name, (on, running, said) in states.items()}}
+
+    def test_a_watcher_that_is_on_and_not_running_is_named(self):
+        found = cec.dead_features(
+            self.machine(**{"tv-standby": (True, False, "activating")}))
+        self.assertEqual(found, ["tv-standby"])
+
+    def test_one_that_runs_is_not(self):
+        found = cec.dead_features(
+            self.machine(**{"tv-standby": (True, True, "active")}))
+        self.assertEqual(found, [])
+
+    def test_one_that_is_off_is_not(self):
+        """Off and not running is the ordinary state, not a fault."""
+        found = cec.dead_features(
+            self.machine(**{"tv-standby": (False, False, "inactive")}))
+        self.assertEqual(found, [])
+
+    def test_activating_counts_as_not_running(self):
+        """That is the whole shape of it.
+
+        Restart=on-failure holds a unit that cannot start in "activating"
+        between the attempts, so it is never "failed" and a check for
+        "failed" alone finds nothing.
+        """
+        said = self.machine(**{"tv-standby": (True, False, "activating")})
+        self.assertEqual(cec.says_about(said, "tv-standby"), "activating")
+        self.assertTrue(cec.dead_features(said))
+
+    def test_a_oneshot_is_never_named(self):
+        """power-standby and boot-wake are not running between two sleeps.
+
+        boot-wake carries Type=simple like the watchers, and it still runs at
+        the start of a session and exits. So the list is a list and not a
+        reading of Type=.
+        """
+        self.assertNotIn("boot-wake", cec.WATCHERS)
+        self.assertNotIn("power-standby", cec.WATCHERS)
+        self.assertNotIn("resume-wake", cec.WATCHERS)
+        self.assertNotIn("external-volume", cec.WATCHERS)
+
+    def test_they_come_in_the_order_of_the_page(self):
+        found = cec.dead_features(self.machine(**{
+            "gamescope-recovery": (True, False, "activating"),
+            "steam-button": (True, False, "activating"),
+            "tv-standby": (True, False, "activating")}))
+        self.assertEqual(found, ["steam-button", "tv-standby",
+                                 "gamescope-recovery"])
+
+    def test_every_watcher_has_a_unit_that_runs_all_the_time(self):
+        """Against Type= in the units the toolkit ships."""
+        where = os.path.join(REPO, "cec-toolkit", "systemd", "user")
+        for name in cec.WATCHERS:
+            unit = os.path.join(where, "steamos-cec-%s.service"
+                                % {"tv-standby": "tv-standby-suspend"}
+                                .get(name, name))
+            with open(unit, encoding="utf-8") as handle:
+                self.assertIn("Type=simple", handle.read(), name)
+
+    def test_only_the_three_that_import_it_are_named_for_dbus_next(self):
+        """steam-button imports it inside a try and has a path without it.
+
+        The first version of the constant named all four, from a grep that
+        read the import and not the try around it. cec-toolkit/docs says the
+        same as the code.
+        """
+        where = os.path.join(REPO, "cec-toolkit", "bin")
+        for name in cec.NEEDS_DBUS:
+            script = "steamos-cec-%s" % {"tv-standby": "tv-standby-suspend"}\
+                .get(name, name)
+            with open(os.path.join(where, script), encoding="utf-8") as handle:
+                first = [line for line in handle
+                         if line.startswith("from dbus_next")
+                         or line.startswith("import dbus_next")]
+            self.assertTrue(first, "%s does not import it at the top" % name)
+        self.assertNotIn("steam-button", cec.NEEDS_DBUS)
+        self.assertEqual(set(cec.NEEDS_DBUS) - set(cec.WATCHERS), set())
 
 
 class FeatureTableTest(unittest.TestCase):

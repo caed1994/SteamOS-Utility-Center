@@ -106,6 +106,35 @@ FEATURES = (
 # The same table, keyed by name, for a caller that has a name only.
 BY_NAME = {name: (kind, label, said) for name, kind, label, said in FEATURES}
 
+# The features whose program runs all the time.
+#
+# For these, "switched on" and "not running" is a fault: the feature is off
+# and the switch says it is on. For each other feature it is the ordinary
+# state. power-standby and resume-wake are oneshots that systemd pulls in at
+# a sleep, external-volume is a configuration file and no unit at all, and
+# boot-wake runs at the start of a session and exits. See feature_on.
+#
+# WatcherTest holds this list against Type= in the units of the toolkit.
+WATCHERS = ("steam-button", "tv-standby", "input-away-suspend",
+            "gamescope-recovery")
+
+# The three of them that import dbus_next at the first line, and die without
+# it.
+#
+# That module belongs to neither this project nor SteamOS, and the toolkit's
+# installer warns about it rather than installing it. A machine that loses it
+# keeps the switches on and runs none of the three: each unit carries
+# Restart=on-failure, so it stays in "activating" and never reaches "failed".
+#
+# Measured on a machine, after SteamOS went from Python 3.13 to 3.14: the
+# copy of the module for the old version is invisible to the new one.
+#
+# steam-button is not here. It imports the module inside a try and has a
+# path for a machine without it, which is what cec-toolkit/docs says. The
+# first version of this constant named all four, from a grep that read the
+# import and not the try around it.
+NEEDS_DBUS = ("tv-standby", "input-away-suspend", "gamescope-recovery")
+
 # What the machine must have before any of this can operate, and what to say
 # when it does not. The toolkit also checks these and reports a clear error.
 # They are here so that the panel can say so *before* the installation.
@@ -249,6 +278,32 @@ def feature_on(status, name):
         return bool(status.get(RESUME_WAKE_REPORT))
     where = "services" if kind == USER_SERVICE else "system_services"
     return bool(status.get(where, {}).get(name, {}).get("is_enabled"))
+
+
+def dead_features(status):
+    """The features that are switched on and whose program is not running.
+
+    A switch reads "enabled", because that is the question the switch asks.
+    This is the other half: the unit is enabled and systemd does not have it
+    running. An answer of "activating" lands here as well, and that is the
+    shape of a program that starts, stops and starts again for ever.
+
+    Returns the names, in the order of the page.
+    """
+    out = []
+    for name in WATCHERS:
+        if not feature_on(status, name):
+            continue
+        state = status.get("services", {}).get(name) or {}
+        if state and not state.get("is_active"):
+            out.append(name)
+    return [name for name, _kind, _label, _said in FEATURES if name in out]
+
+
+def says_about(status, name):
+    """What systemd answers about one feature's unit, for a message."""
+    state = status.get("services", {}).get(name) or {}
+    return str(state.get("active") or "").strip() or "not running"
 
 
 def resume_wake_command():

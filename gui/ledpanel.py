@@ -435,6 +435,38 @@ def cec_part(status, installed, source_dir=None):
     # the machine stayed as old as it was. It answered every question, so the
     # page reported it as ready, and the five fixes of this fork were not on
     # the machine.
+    # A switch that is on with nothing behind it.
+    #
+    # The switch asks systemd whether the unit is enabled, which is the right
+    # question for a switch. It is not the question "does this work". Four of
+    # these features are a program that runs all the time, and each carries
+    # Restart=on-failure: one that cannot start stays in "activating" for
+    # ever and never reaches "failed". The page then shows the switch on, the
+    # feature does nothing, and nothing says so.
+    #
+    # Measured on a machine: SteamOS went from Python 3.13 to 3.14 and left
+    # dbus_next behind, and all four died in that loop.
+    dead = cec_module.dead_features(status)
+    if dead:
+        return Part("cec", "HDMI CEC", False,
+                    "%d feature(s) are on and not running: %s."
+                    % (len(dead), ", ".join(cec_module.BY_NAME[name][1]
+                                            for name in dead)),
+                    detail + ["%s: systemd says %s."
+                              % (cec_module.BY_NAME[name][1],
+                                 cec_module.says_about(status, name))
+                              for name in dead]
+                    + ([
+                        "These need the python module dbus_next: %s. A "
+                        "SteamOS update can take it away, and a new Python "
+                        "version does not see the copy that the old one had."
+                        % ", ".join(cec_module.BY_NAME[name][1]
+                                    for name in dead
+                                    if name in cec_module.NEEDS_DBUS)]
+                        if [one for one in dead
+                            if one in cec_module.NEEDS_DBUS] else [])
+                    + ["journalctl --user -u <unit> says why."])
+
     if source_dir and cec_module.out_of_date(status, source_dir):
         return Part("cec", "HDMI CEC", False,
                     "Ready on %s, and older than this clone: %s against %s."

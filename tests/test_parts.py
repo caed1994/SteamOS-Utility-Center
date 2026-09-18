@@ -648,3 +648,64 @@ class CountTest(unittest.TestCase):
 
 if __name__ == "__main__":                                  # pragma: no cover
     unittest.main()
+
+
+class CecDeadFeatureTest(unittest.TestCase):
+    """What the Status page says about a switch with nothing behind it.
+
+    The card reported "Ready on /dev/cec0, 3 feature(s) on" while two of the
+    three were in a restart loop. "On" came from `is-enabled`, which is what
+    a switch asks. The card is the place that has to ask the other question.
+    """
+
+    READY = {"device": "/dev/cec0", "exists": True,
+             "readable": True, "writable": True}
+
+    def machine(self, **states):
+        return {"cec_device": dict(self.READY), "system_services": {},
+                "services": {name: {"is_enabled": on, "is_active": running,
+                                    "active": said}
+                             for name, (on, running, said) in states.items()}}
+
+    def test_a_healthy_machine_is_still_ready(self):
+        part = ledpanel.cec_part(
+            self.machine(**{"tv-standby": (True, True, "active")}), True)
+        self.assertIs(part.ok, True)
+        self.assertIn("Ready on", part.verdict)
+
+    def test_one_that_is_on_and_dead_is_a_fault(self):
+        part = ledpanel.cec_part(
+            self.machine(**{"tv-standby": (True, False, "activating")}), True)
+        self.assertIs(part.ok, False)
+        self.assertIn("on and not running", part.verdict)
+        self.assertIn("Sleep when the television does", part.verdict)
+
+    def test_the_detail_repeats_what_systemd_said(self):
+        part = ledpanel.cec_part(
+            self.machine(**{"tv-standby": (True, False, "activating")}), True)
+        self.assertTrue(any("activating" in line for line in part.detail))
+        self.assertTrue(any("journalctl" in line for line in part.detail))
+
+    def test_the_module_is_named_for_the_three_that_need_it(self):
+        part = ledpanel.cec_part(
+            self.machine(**{"tv-standby": (True, False, "activating")}), True)
+        self.assertTrue(any("dbus_next" in line for line in part.detail))
+
+    def test_it_is_not_named_for_the_one_that_does_not(self):
+        """steam-button has a path for a machine with no dbus_next.
+
+        A message that named it would send a person after a module that is
+        not the reason.
+        """
+        part = ledpanel.cec_part(
+            self.machine(**{"steam-button": (True, False, "failed")}), True)
+        self.assertIs(part.ok, False)
+        self.assertFalse(any("dbus_next" in line for line in part.detail))
+
+    def test_an_adapter_that_is_gone_is_reported_first(self):
+        """Nothing runs without it, so that is the first thing to say."""
+        said = self.machine(**{"tv-standby": (True, False, "activating")})
+        said["cec_device"]["writable"] = False
+        part = ledpanel.cec_part(said, True)
+        self.assertIs(part.ok, False)
+        self.assertIn("cannot be reached", part.verdict)
