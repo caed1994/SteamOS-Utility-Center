@@ -535,6 +535,15 @@ install -m 0755 "$SOURCE_DIR/server/steamos-utility-center-nanoleaf-watch" \
     "$NANOLEAF_WATCH_PATH"
 remove_dead_nanoleaf_suspend
 if watcher_user_dirs; then
+    # The account, written down for a boot.
+    #
+    # The units below run as this person, because the record of the paired
+    # devices and its tokens are in their home directory. At a boot there is
+    # nobody to ask, so a repair reads the answer from this file. The sudoers
+    # rule names the same account. See
+    # server/steamos_utility_center/repair.py.
+    printf '%s\n' "$WATCHER_USER" > "$WATCHER_RECORD_PATH"
+    chmod 0644 "$WATCHER_RECORD_PATH"
     say "Installing the Nanoleaf network units for $WATCHER_USER"
     write_unit "$SOURCE_DIR/server/$NAME-nanoleaf.service" \
         "$NANOLEAF_UNIT_PATH"
@@ -553,6 +562,24 @@ else
     warn "no desktop user found, so the Nanoleaf devices on the network"
     warn "will not follow this machine"
 fi
+
+# What writes the files of /etc and /usr back, at the next boot.
+#
+# A SteamOS update builds the new image in the other partition slot. /usr
+# comes from that image every time, so the short command names above are gone
+# after every update. /etc comes from it as well, and the keep-list below asks
+# SteamOS to carry this project across. That request is the official way and
+# it works. This unit is the answer for the update that does not honour it.
+#
+# Everything it reads is in /var: the unit templates, the copy of the toolbox
+# and the record of the desktop user. It writes no settings file. See
+# server/steamos_utility_center/repair.py.
+say "Installing the boot-time repair to $REPAIR_HELPER_PATH"
+install -m 0755 "$SOURCE_DIR/scripts/repair.sh" "$REPAIR_HELPER_PATH"
+write_unit "$SOURCE_DIR/server/$NAME-repair.service" "$REPAIR_UNIT_PATH"
+systemctl daemon-reload
+systemctl enable "$NAME-repair.service" >/dev/null 2>&1 \
+    || warn "could not enable $NAME-repair.service"
 
 # --- the modules ------------------------------------------------------------
 #

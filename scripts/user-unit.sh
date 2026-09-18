@@ -135,6 +135,18 @@ UNIT_TEMPLATE_DIR="$INSTALL_DIR/units"
 # still works from here and the update page needs nothing else. A download
 # with no git in it gets a plain copy, and the update page then says so.
 SOURCE_COPY="$INSTALL_DIR/source"
+# What writes back the files that a SteamOS update takes, at the next boot.
+#
+# The helper and the record are in /var and the unit is in /etc, because only
+# /etc is a place systemd reads units from. See
+# server/steamos_utility_center/repair.py.
+REPAIR_HELPER_PATH="$INSTALL_DIR/$NAME-repair"
+REPAIR_UNIT_PATH="$UNIT_DIR/$NAME-repair.service"
+# The desktop user the Nanoleaf units run as, written down for a boot.
+#
+# The installer reads that account from whoever called it. At a boot there is
+# nobody to ask, so a repair reads it from here.
+WATCHER_RECORD_PATH="$INSTALL_DIR/watcher-user"
 NANOLEAF_HELPER_PATH="$INSTALL_DIR/$NAME-nanoleaf"
 NANOLEAF_WATCH_PATH="$INSTALL_DIR/$NAME-nanoleaf-watch"
 NANOLEAF_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf.service"

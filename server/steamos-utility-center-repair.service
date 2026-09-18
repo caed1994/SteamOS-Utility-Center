@@ -1,0 +1,39 @@
+[Unit]
+# Writes back what a SteamOS update took away, at each boot.
+#
+# An update builds the new image in the other partition slot. /usr comes from
+# that image every time, so the three short command names in /usr/local/bin
+# are gone after every update. /etc comes from the image as well, and
+# /etc/atomic-update.conf.d/steamos-utility-center.conf asks SteamOS to carry
+# this project across. That file is the official way and it works. This unit
+# is the answer for the update that does not honour it.
+#
+# Everything a repair reads is in /var, which is its own partition: the unit
+# templates, the copy of the toolbox and the record of the desktop user.
+#
+# It writes no settings file. /etc/steamos-utility-center.conf holds answers
+# a person gave, and a default over the top of one is a loss with no message.
+#
+# One hole stays. This unit is itself in /etc, so an image that ignores the
+# keep-list takes it too. The panel is the answer there: the toolbox is in
+# /var, so the window opens, the diagnosis button reads the machine, and the
+# repair button re-runs the installer.
+#
+# Log: journalctl -u steamos-utility-center-repair
+Description=Write back the files of the SteamOS Utility Center
+Documentation=https://github.com/caed1994/SteamOS-Utility-Center
+# After the local filesystems, because it reads /var and writes /etc.
+After=local-fs.target
+# Before the target it starts services for, so a service that came back
+# starts at the time it starts on any other boot.
+Before=multi-user.target
+# Nothing to repair from on a machine where this is not installed.
+ConditionPathExists=/var/lib/steamos-utility-center/steamos-utility-center
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=@INSTALL_DIR@/steamos-utility-center-repair
+
+[Install]
+WantedBy=multi-user.target

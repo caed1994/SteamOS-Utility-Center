@@ -76,6 +76,9 @@ OWNERS = {
     # them is an HTTP call to an address on the LAN, and pairing one needs no
     # rights at all. See nanoleaf.py.
     "steamos-utility-center-nanoleaf": CORE,
+    # What writes the rest of this list back at a boot. Core, because every
+    # installation has files that a SteamOS update takes.
+    "steamos-utility-center-repair": CORE,
     "steamos-utility-center-sleep": modules.LED,
     "steamos-utility-center-resume": modules.LED,
     "steamos-utility-center.service": modules.LED,
@@ -94,6 +97,7 @@ PROGRAMS = {
     "steamos-utility-centerctl": CORE,
     "steamos-utility-center-nanoleaf": CORE,
     "steamos-utility-center-nanoleaf-watch": CORE,
+    "steamos-utility-center-repair": CORE,
     "steamos-utility-center-config-apply": modules.LED,
     "steamos-utility-center-sleep": modules.LED,
     "steamos-utility-center-power": modules.POWER,

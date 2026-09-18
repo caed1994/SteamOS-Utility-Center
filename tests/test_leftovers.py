@@ -105,8 +105,8 @@ class ResolveTest(unittest.TestCase):
                 self.assertNotIn("$", value, name)
 
 
-class LeftoverTest(unittest.TestCase):
-    """Every file a module owns is reached when the module is taken off."""
+class Reader(unittest.TestCase):
+    """The shared reading of a removal. It carries no test of its own."""
 
     def setUp(self):
         self.value = shell_values()
@@ -160,6 +160,26 @@ class LeftoverTest(unittest.TestCase):
                        for line in lines)
         return False
 
+    def under(self, path, lines):
+        """Whether an `rm -r` of a directory above this path takes it.
+
+        uninstall.sh ends with one `rm -rf` of /var/lib/steamos-utility-center
+        and that reaches every program, every template and the copy of the
+        toolbox. A test that asked for each of those by name would ask for a
+        line that is right to leave out.
+        """
+        for name, value in self.value.items():
+            if not value or not path.startswith(value.rstrip("/") + "/"):
+                continue
+            if any(re.search(r"\brm\s+-[a-z]*r", line) and "$" + name in line
+                   for line in lines):
+                return True
+        return False
+
+
+class LeftoverTest(Reader):
+    """Every file a module owns is reached when the module is taken off."""
+
     def test_every_module_takes_its_own_files_with_it(self):
         missed = []
         for module, where in REMOVERS.items():
@@ -187,6 +207,104 @@ class LeftoverTest(unittest.TestCase):
             if module == modules.CEC:
                 continue            # its own installer, in cec-toolkit
             self.assertIn(module, REMOVERS, module)
+
+
+class UninstallTest(Reader):
+    """Every file of this project is reached by uninstall.sh.
+
+    LeftoverTest above asks the same question of each module removal, and it
+    asks it only about the files that module owns. The core owns files as
+    well: the units of the Nanoleaf devices, the boot-time repair, the
+    sudoers rule and the entry points. Nothing read those at all.
+
+    A mutation found it. The line that disables the repair unit was taken
+    out of uninstall.sh and the whole suite passed, which left a machine with
+    a unit in /etc and a link in multi-user.target.wants after a removal that
+    said "Removed."
+    """
+
+    def everything(self):
+        """Every file this project writes outside a home directory."""
+        out = list(mounts.PROJECT_FILES)
+        out += [os.path.join(checkup.INSTALL_DIR, name)
+                for name in checkup.PROGRAMS]
+        out += [mounts.KEEP_LIST, checkup.SOURCE_COPY,
+                self.value["UNIT_TEMPLATE_DIR"],
+                self.value["WATCHER_RECORD_PATH"]]
+        return sorted(set(out))
+
+    def test_it_reaches_every_file_of_this_project(self):
+        with io.open(os.path.join(REPO, "uninstall.sh")) as handle:
+            body = handle.read()
+        lines = self.orders(body)
+        missed = [path for path in self.everything()
+                  if not self.reached(path, body) and not self.under(path, lines)]
+        self.assertEqual(missed, [])
+
+
+class InstallTest(Reader):
+    """Every program the diagnosis asks for is one the installer writes.
+
+    checkup.PROGRAMS is the list that card reads a machine against. A name in
+    it that install.sh never writes is a red line on every machine, for ever,
+    and the repair button does not clear it. The two lists were never read
+    against each other.
+    """
+
+    def destinations(self):
+        """Where each `install -m 07..` line of the installer puts a file."""
+        with io.open(os.path.join(REPO, "install.sh")) as handle:
+            text = handle.read().replace("\\\n", " ")
+        out = []
+        for line in text.splitlines():
+            if not re.search(r"\binstall\s+-m\s+07", line):
+                continue
+            out.append(re.sub(r"\$\{?([A-Z_][A-Z0-9_]*)\}?",
+                              lambda m: self.value.get(m.group(1), m.group(0)),
+                              line))
+        return out
+
+    def test_the_installer_writes_every_program(self):
+        where = self.destinations()
+        missed = [name for name in checkup.PROGRAMS
+                  if not any(os.path.join(checkup.INSTALL_DIR, name) in line
+                             for line in where)]
+        self.assertEqual(missed, [])
+
+    def test_it_copies_units_and_nothing_else_into_the_template_directory(self):
+        """server/ holds three .conf files beside the unit templates.
+
+        A copy of every file there would put the settings of a person within
+        reach of a repair, and a repair writes a template back without
+        asking. repair.plan looks at the unit directory alone, and this is
+        the other half of that promise.
+        """
+        with io.open(os.path.join(REPO, "install.sh")) as handle:
+            lines = handle.read().splitlines()
+        copies = [line for line in lines if "$UNIT_TEMPLATE_DIR" in line
+                  and "install " in line and "install -d" not in line]
+        self.assertEqual(len(copies), 1)
+        self.assertIn("/server/*.service", copies[0])
+
+    def test_it_writes_down_the_account_the_units_run_as(self):
+        """A repair at a boot reads that record to fill in @WATCHER_USER@.
+
+        Without it every unit that runs as the desktop user is skipped, and
+        the Nanoleaf devices stop following the machine after an update.
+
+        The line has to be inside `if watcher_user_dirs`, because that is
+        what sets the name. Outside it the record is an empty file, which
+        reads as no record at all.
+        """
+        with io.open(os.path.join(REPO, "install.sh")) as handle:
+            lines = handle.read().splitlines()
+        wrote = [i for i, line in enumerate(lines)
+                 if "$WATCHER_RECORD_PATH" in line and ">" in line]
+        self.assertEqual(len(wrote), 1, "one line writes the record")
+        self.assertIn("$WATCHER_USER", lines[wrote[0]])
+        above = [line for line in lines[:wrote[0]]
+                 if re.match(r"\s*(if|fi)\b", line)]
+        self.assertEqual(above[-1].strip(), "if watcher_user_dirs; then")
 
 
 class PurgeTest(unittest.TestCase):

@@ -559,6 +559,12 @@ PROJECT_FILES = (
     "steamos-utility-center-nanoleaf-resume.service",
     "/etc/systemd/system/suspend-then-hibernate.target.wants/"
     "steamos-utility-center-nanoleaf-resume.service",
+    # What writes the files of this list back at a boot, for an image that
+    # does not honour the list itself. Part of the core. See
+    # server/steamos_utility_center/repair.py.
+    "/etc/systemd/system/steamos-utility-center-repair.service",
+    "/etc/systemd/system/multi-user.target.wants/"
+    "steamos-utility-center-repair.service",
     # Controller wake. See scripts/wake-apply.sh.
     "/etc/systemd/system/steamos-utility-center-wake.service",
     "/etc/systemd/system/multi-user.target.wants/"

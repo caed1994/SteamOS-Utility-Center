@@ -246,6 +246,12 @@ remove_dead_nanoleaf_suspend
 rm -f "$NANOLEAF_HELPER_PATH" "$NANOLEAF_WATCH_PATH" "$NANOLEAF_UNIT_PATH" \
   "$NANOLEAF_RESUME_UNIT_PATH" "$NANOLEAF_WATCH_UNIT_PATH"
 
+# What wrote the files of /etc back at each boot. Disabled first, or the link
+# in multi-user.target.wants stays behind and names a unit that is gone. The
+# helper itself is in $INSTALL_DIR, which the rm -rf below takes.
+systemctl disable "$NAME-repair.service" >/dev/null 2>&1 || true
+rm -f "$REPAIR_UNIT_PATH"
+
 rm -f "$UDEV_PATH"
 # The suspend helper and the two units that call it. Disabled first, or the
 # links in sleep.target.wants and suspend.target.wants stay behind and name a

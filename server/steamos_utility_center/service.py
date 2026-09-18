@@ -18,6 +18,7 @@ import time
 
 from . import config as config_module
 from . import desktop, elf, load, mounts, notify, phone, render
+from . import repair
 from . import link as link_module
 from . import serialport, shim
 from . import steamworks
@@ -1596,6 +1597,37 @@ def run_write_mounts(record):
     return 0
 
 
+def run_repair(write=False):
+    """Reports what a SteamOS update took, and writes it back when asked.
+
+    Plain lines and no JSON. scripts/repair.sh reads the output of the check
+    to decide whether to unlock the read-only filesystem, and a shell that
+    tests for empty output needs no parser.
+
+    Two exits: 0 when the machine is in order or the writing worked, and 1
+    when something is gone that this cannot write. The second one is the
+    machine a person has to look at. See server/steamos_utility_center/
+    repair.py.
+    """
+    found = repair.plan()
+    if not write:
+        for line in repair.lines(found):
+            print(line)
+        return 1 if (found["orphans"] or found["skipped"]) else 0
+
+    if not repair.needed(found):
+        print("nothing to write back")
+        return 1 if (found["orphans"] or found["skipped"]) else 0
+    try:
+        done = repair.run(found)
+    except (OSError, ValueError) as exc:
+        print("the repair stopped: %s" % exc, file=sys.stderr)
+        return 1
+    for line in repair.lines(done, did=True):
+        print(line)
+    return 1 if (done["orphans"] or done["skipped"]) else 0
+
+
 def run_list_ports():
     ports = serialport.list_ports()
     if not ports:
@@ -1814,6 +1846,16 @@ def build_parser():
                             "the keep-list that carries them across a SteamOS "
                             "update. Needs root; scripts/apply-mounts.sh is "
                             "what calls it")
+    modes.add_argument("--repair-check", action="store_true",
+                       dest="repair_check",
+                       help="report what a SteamOS update took away from /etc "
+                            "and /usr, and write nothing. Prints one line per "
+                            "file, and nothing at all on a machine that is in "
+                            "order")
+    modes.add_argument("--repair", action="store_true",
+                       help="write those files back, from the templates and "
+                            "the copy of the toolbox under /var. Needs root; "
+                            "scripts/repair.sh is what calls it")
     modes.add_argument("--simulate", metavar="EFFECT",
                        help="render one effect continuously (off, manual, normal, "
                             "rainbow, breath, patrol, factory, demo)")
@@ -1842,6 +1884,10 @@ def main(argv=None):
     if args.write_mounts:
         configure_logging("warning")
         return run_write_mounts(args.write_mounts)
+
+    if args.repair_check or args.repair:
+        configure_logging("warning")
+        return run_repair(write=args.repair)
 
     overrides = {
         "DEVICE": args.device,

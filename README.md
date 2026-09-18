@@ -508,6 +508,7 @@ against what this project writes and names every difference:
 | the units | and the links in the `.wants` directories that make systemd start them |
 | the keep-list | it is there, and it names every file |
 | the programs | under `/var/lib/steamos-utility-center`, and each one can run |
+| the toolbox | the copy the menu entry opens, and whether the panel can run |
 | the settings files | reported and never repaired: they hold what a person chose |
 | the short command names | a SteamOS update takes these, and the full path works either way |
 | the password rule | or "only root can look", which is not the same as "gone" |
@@ -522,6 +523,55 @@ server/steamos_utility_center/checkup.py.
 Every fault of the last months had one shape: a file went and nothing said
 so. A link in a `.wants` directory can name a unit that is gone, and systemd
 reports that into a boot log nobody reads.
+
+### It writes itself back at the next boot
+
+`steamos-utility-center-repair.service` runs at each boot and writes back
+what an update took. A SteamOS update builds the new image in the other
+partition slot. `/usr` comes from that image every time, so the three short
+command names in `/usr/local/bin` are gone after every one. `/etc` comes from
+it as well, and `/etc/atomic-update.conf.d/steamos-utility-center.conf` asks
+SteamOS to carry this project across. That request is the official way and it
+works. The unit is the answer for the update that does not honour it.
+
+Everything it reads is in `/var`, which is its own partition: the unit
+templates in `units/`, the copy of the toolbox in `source/` and the account
+in `watcher-user`. It writes:
+
+| | |
+| --- | --- |
+| the units | from the templates, with the paths and the account filled in |
+| the `.wants` links | which is what makes systemd start them |
+| the udev rule | from the copy of the toolbox |
+| the keep-list | from the record of the drives, so a drive keeps its line |
+| the password rule | which `ctl` builds rather than copies |
+| the short command names | the one thing every update takes |
+
+It never writes a settings file. `/etc/steamos-utility-center.conf` holds
+your LED count, your serial port and your effect, and a default over the top
+of those is a loss with no message. The diagnosis card says the same: those
+files are reported and never repaired.
+
+A boot where nothing is gone costs one Python start and leaves the
+filesystem read-only. Only a boot that finds something missing unlocks it.
+A service that came back is started in the same run, because systemd worked
+out the boot before the file was there.
+
+One hole stays, and it is better written down than hidden. The unit is
+itself in `/etc`, so an image that ignores the keep-list takes the repair
+with everything else. The panel is the answer there: the toolbox is in
+`/var`, so the window opens, the diagnosis card reads the machine and the
+repair button re-runs the installer.
+
+You can run it by hand:
+
+```bash
+sudo /var/lib/steamos-utility-center/steamos-utility-center-repair
+journalctl -u steamos-utility-center-repair -b
+```
+
+`steamos-utility-center --repair-check` prints the same list and writes
+nothing.
 
 ### They follow the machine
 
