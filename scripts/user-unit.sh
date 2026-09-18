@@ -758,8 +758,15 @@ refresh_desktop_caches() {  # refresh_desktop_caches <applications dir>
 #
 # It gives every module and not the installed ones only, because the caller
 # needs both halves: which to install, and which to offer.
+# PYTHONDONTWRITEBYTECODE, here and below. Both run as root and both import
+# the package from the clone, which belongs to a person. Python writes
+# __pycache__ beside the source it imports, so each install left root-owned
+# .pyc files in their clone and `rm -rf` on it then needed sudo. The clone is
+# a thing to throw away, and that promise breaks on a file its owner cannot
+# remove.
 module_states() {   # module_states [home of the desktop user]
-    PYTHONPATH="$SOURCE_DIR/server" python3 -c '
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$SOURCE_DIR/server" \
+        python3 -c '
 import sys
 from steamos_utility_center import modules
 home = sys.argv[1] or None
@@ -773,7 +780,8 @@ for name in modules.ORDER:
 # The panel puts the same sentences on the page. They are in modules.py, so
 # the page and this text cannot become different.
 module_says() {     # module_says <name>
-    PYTHONPATH="$SOURCE_DIR/server" python3 -c '
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$SOURCE_DIR/server" \
+        python3 -c '
 import sys, textwrap
 from steamos_utility_center import modules
 name = sys.argv[1]

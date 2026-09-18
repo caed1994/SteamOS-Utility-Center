@@ -20,6 +20,9 @@ that are not there: `rm -f "$UNIT_PATH"` holds no file name at all.
 import io
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import sys
 import unittest
 
@@ -344,6 +347,81 @@ class InstallTest(Reader):
         above = [line for line in lines[:wrote[0]]
                  if re.match(r"\s*(if|fi)\b", line)]
         self.assertEqual(above[-1].strip(), "if watcher_user_dirs; then")
+
+
+class ClonePycTest(unittest.TestCase):
+    """An install leaves no bytecode in the clone.
+
+    install.sh and uninstall.sh run as root, and three of their steps import
+    the package from the clone to read it. Python writes __pycache__ beside
+    the source it imports, so each install left root-owned .pyc files in a
+    directory that belongs to a person. `rm -rf` on their own clone then
+    failed on every one of them.
+
+    The clone is a thing this project tells people to throw away, and that
+    promise breaks on a file its owner cannot remove.
+    """
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.source = os.path.join(self.root, "clone")
+        os.makedirs(os.path.join(self.source, "server"))
+        shutil.copytree(
+            os.path.join(REPO, "server", "steamos_utility_center"),
+            os.path.join(self.source, "server", "steamos_utility_center"),
+            ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(os.path.join(REPO, "scripts"),
+                        os.path.join(self.source, "scripts"))
+
+    def _bytecode(self):
+        found = []
+        for where, dirs, names in os.walk(self.source):
+            found += [os.path.join(where, name) for name in names
+                      if name.endswith(".pyc")]
+        return found
+
+    def test_reading_the_modules_writes_none(self):
+        """module_states in scripts/user-unit.sh, which both scripts call."""
+        answer = subprocess.run(
+            ["bash", "-c",
+             'set -e\nSOURCE_DIR="%s"\nsource "%s/scripts/user-unit.sh"\n'
+             "module_states\n" % (self.source, self.source)],
+            capture_output=True, text=True,
+            cwd=self.root, env=dict(os.environ, ROOT=self.root))
+        self.assertEqual(answer.returncode, 0, answer.stderr)
+        self.assertIn("led ", answer.stdout)
+        self.assertEqual(self._bytecode(), [])
+
+    def test_describing_a_module_writes_none(self):
+        answer = subprocess.run(
+            ["bash", "-c",
+             'set -e\nSOURCE_DIR="%s"\nsource "%s/scripts/user-unit.sh"\n'
+             "module_says led\n" % (self.source, self.source)],
+            capture_output=True, text=True,
+            cwd=self.root, env=dict(os.environ, ROOT=self.root))
+        self.assertEqual(answer.returncode, 0, answer.stderr)
+        self.assertEqual(self._bytecode(), [])
+
+    def test_every_python_run_against_the_clone_says_so(self):
+        """The rule, for a call that somebody adds later.
+
+        The two tests above run the calls that exist today. This one holds
+        the rule itself, so a fourth call does not bring the fault back.
+        """
+        missed = []
+        for name in ("install.sh", "uninstall.sh",
+                     os.path.join("scripts", "user-unit.sh"),
+                     os.path.join("scripts", "update.sh")):
+            with io.open(os.path.join(REPO, name)) as handle:
+                text = handle.read().replace("\\\n", " ")
+            for number, line in enumerate(text.splitlines(), 1):
+                if "python3" not in line or "$SOURCE_DIR" not in line:
+                    continue
+                if "PYTHONDONTWRITEBYTECODE" in line:
+                    continue
+                missed.append("%s:%d %s" % (name, number, line.strip()))
+        self.assertEqual(missed, [])
 
 
 class PurgeTest(unittest.TestCase):

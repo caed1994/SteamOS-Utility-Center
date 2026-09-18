@@ -477,6 +477,12 @@ It costs about 8 MB. `decky/node_modules` is left out: 130 MB of another
 project's build that nothing here reads, beside a `dist` that is already
 built.
 
+Nothing an install leaves in your clone belongs to root. Three steps of it
+import the package from there to read it, and Python writes `__pycache__`
+beside the source it imports. Each install thus left root-owned `.pyc` files
+in a directory that is yours, and `rm -rf` on your own clone then failed on
+every one of them. The three now run with `PYTHONDONTWRITEBYTECODE=1`.
+
 The copy belongs to you, and the directory above it belongs to root. Git
 refuses a repository that belongs to somebody else, so a copy owned by root
 gave the update page no fetch at all. The appliers, the unit templates and

@@ -318,7 +318,14 @@ if installing led; then
 
     if [[ -z "$SERIAL_PORT" ]]; then
         say "Detected USB serial devices:"
-        if ! python3 "$SOURCE_DIR/server/steamos-utility-center" \
+        # No bytecode. This runs as root and it imports the package from
+        # the clone, which belongs to a person. Python writes __pycache__
+        # beside the source it imports, so each install left root-owned .pyc
+        # files in their clone and `rm -rf` on it then needed sudo. The
+        # clone is a thing to throw away, and that promise breaks on a file
+        # that the owner cannot remove.
+        if ! PYTHONDONTWRITEBYTECODE=1 \
+                python3 "$SOURCE_DIR/server/steamos-utility-center" \
                 --list-ports 2>/dev/null; then
             echo "   (none - plug the ESP in, or set the port later in $CONFIG_PATH)"
         fi
