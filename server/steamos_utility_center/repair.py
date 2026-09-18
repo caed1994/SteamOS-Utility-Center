@@ -15,11 +15,18 @@ carry this project across. That file is the official way and it works, and it
 is a request to another program. This module is what answers for the update
 that does not honour it.
 
+Everything it reads belongs to root. The toolbox copy in
+/var/lib/steamos-utility-center/source belongs to the desktop user, because
+git refuses a clone that somebody else owns and the update page has to fetch
+into it. So nothing here reads that directory: this runs as root at a boot,
+with nobody to look at the file first, and a udev rule names a program that
+udev then runs as root.
+
 What it writes back:
 
 - the unit files, from the templates in /var/lib/steamos-utility-center/units
 - the links in the .wants directories, which are what starts them
-- the udev rule, from the copy of the toolbox in /var
+- the udev rule, from the copy in /var/lib/steamos-utility-center/udev
 - the keep-list itself, and the sudoers rule (ctl and mounts write those two)
 - the short command names in /usr/local/bin
 
@@ -63,9 +70,6 @@ INSTALL_DIR = checkup.INSTALL_DIR
 # The unit files as the installer copied them, before any substitution.
 TEMPLATE_DIR = os.path.join(INSTALL_DIR, "units")
 
-# The copy of this project, which carries the udev rule.
-SOURCE_COPY = checkup.SOURCE_COPY
-
 # The account the Nanoleaf units run as, written down at install time.
 #
 # A unit reads the record of the paired devices from the home directory of
@@ -73,9 +77,18 @@ SOURCE_COPY = checkup.SOURCE_COPY
 # answer here. See install.sh.
 WATCHER_PATH = os.path.join(INSTALL_DIR, "watcher-user")
 
-# The udev rule, and where the copy of the toolbox carries it.
+# The udev rule, and the copy of it that the installer keeps.
+#
+# It is beside the unit templates and not in the toolbox copy. The copy
+# belongs to the desktop user, because git refuses a clone that somebody else
+# owns and the update page has to fetch. This file is installed into /etc by
+# root, at a boot, with nobody to read it first, and a udev rule names a
+# program that udev then runs as root. So it comes from a directory that
+# belongs to root.
 UDEV_RULE = "/etc/udev/rules.d/99-steamos-utility-center.rules"
-UDEV_SOURCE = "udev/99-steamos-utility-center.rules"
+UDEV_TEMPLATE_DIR = os.path.join(INSTALL_DIR, "udev")
+UDEV_TEMPLATE = os.path.join(UDEV_TEMPLATE_DIR,
+                             os.path.basename(UDEV_RULE))
 
 # The mark in a template, and what answers it.
 #
@@ -196,11 +209,11 @@ def plan(here=None, root="", home=None, present=None):
     # machine: it unlocked its filesystem at every boot and wrote nothing.
     udev = []
     if UDEV_RULE in want and _needs(UDEV_RULE, root):
-        if os.path.isfile(os.path.join(root + SOURCE_COPY, UDEV_SOURCE)):
+        if os.path.isfile(root + UDEV_TEMPLATE):
             udev.append(UDEV_RULE)
         else:
             orphans.append(UDEV_RULE)
-            why[UDEV_RULE] = "%s has no %s" % (SOURCE_COPY, UDEV_SOURCE)
+            why[UDEV_RULE] = "there is no %s" % UDEV_TEMPLATE
 
     keep = []
     if _needs(mounts.KEEP_LIST, root):
@@ -304,10 +317,10 @@ def write_commands(found, root=""):
 
 
 def write_udev(found, root=""):
-    """Copies the udev rule back, from the copy of the toolbox in /var."""
+    """Copies the udev rule back, from the copy the installer keeps."""
     done = []
     for path in found["udev"]:
-        source = os.path.join(root + SOURCE_COPY, UDEV_SOURCE)
+        source = root + UDEV_TEMPLATE
         if not os.path.isfile(source):
             continue
         whole = root + path

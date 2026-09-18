@@ -125,6 +125,12 @@ RESUME_UNIT_PATH="$UNIT_DIR/$NAME-resume.service"
 # clone to read, and a person can move or delete one. /var is its own
 # partition, so a copy here is a copy an update cannot take.
 UNIT_TEMPLATE_DIR="$INSTALL_DIR/units"
+# The udev rule, kept for the same repair.
+#
+# It is here and not in the toolbox copy, because the copy belongs to the
+# desktop user and a repair installs this file as root with nobody to ask. A
+# udev rule names a program, and udev runs that program as root.
+UDEV_TEMPLATE_DIR="$INSTALL_DIR/udev"
 # The toolbox itself, on the partition that a SteamOS update keeps.
 #
 # The menu entry points in here and not into the clone, so a person can throw

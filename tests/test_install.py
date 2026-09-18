@@ -1308,6 +1308,16 @@ class InstalledStampTest(unittest.TestCase):
 
     def test_the_installer_writes_the_commit_it_installed_from(self):
         self.assertIn("$STAMP_PATH", self.installer)
+
+    def test_the_stamp_records_the_branch_after_the_commit(self):
+        """scripts/update.sh reads it to adopt a copy with no history.
+
+        The panel reads the first word, so the second one costs it nothing.
+        See ledpanel.installed_commit.
+        """
+        self.assertIn(r"""printf '%s %s\n' "$stamp" "$stamp_branch" """
+                      '> "$STAMP_PATH"', self.installer)
+        self.assertIn("symbolic-ref --quiet --short HEAD", self.installer)
         self.assertIn("rev-parse HEAD", self.installer)
 
     def test_it_reads_the_clone_as_a_directory_git_will_talk_about(self):

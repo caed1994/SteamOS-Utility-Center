@@ -230,6 +230,7 @@ class UninstallTest(Reader):
                 for name in checkup.PROGRAMS]
         out += [mounts.KEEP_LIST, checkup.SOURCE_COPY,
                 self.value["UNIT_TEMPLATE_DIR"],
+                self.value["UDEV_TEMPLATE_DIR"],
                 self.value["WATCHER_RECORD_PATH"]]
         return sorted(set(out))
 
@@ -285,6 +286,44 @@ class InstallTest(Reader):
                   and "install " in line and "install -d" not in line]
         self.assertEqual(len(copies), 1)
         self.assertIn("/server/*.service", copies[0])
+
+    def test_the_udev_rule_is_kept_outside_the_toolbox_copy(self):
+        """A repair installs it into /etc as root at a boot, unread.
+
+        A udev rule names a program and udev runs that program as root. The
+        toolbox copy belongs to the desktop user, so a rule taken from there
+        is a way to become root at the next boot with no password. The
+        template directory belongs to root, as the unit templates do.
+        """
+        self.assertTrue(self.value["UDEV_TEMPLATE_DIR"].startswith(
+            checkup.INSTALL_DIR + "/"))
+        self.assertFalse(self.value["UDEV_TEMPLATE_DIR"].startswith(
+            checkup.SOURCE_COPY))
+        with io.open(os.path.join(REPO, "install.sh")) as handle:
+            text = handle.read()
+        self.assertIn('install -m 0644 "$SOURCE_DIR/udev/99-$NAME.rules" '
+                      '"$UDEV_TEMPLATE_DIR/"', text)
+
+    def test_the_copy_goes_to_the_person_who_updates_it(self):
+        """git refuses a repository that belongs to somebody else.
+
+        It says "detected dubious ownership" and stops, so a copy owned by
+        root gave the update page no fetch and no fast-forward. The parent
+        directory stays with root: the appliers are in it, and the sudoers
+        rule names them and asks for no password.
+        """
+        with io.open(os.path.join(REPO, "install.sh")) as handle:
+            text = handle.read()
+        chowns = [line.strip() for line in text.splitlines()
+                  if "chown -R" in line and "SOURCE_COPY" in line]
+        self.assertTrue(chowns)
+        self.assertTrue(any("$WATCHER_USER" in line for line in chowns),
+                        "nothing gives the copy to the desktop user")
+        # And the mend runs from inside the copy as well, or the remedy that
+        # the update page names does nothing.
+        body = block("copy_toolbox")
+        early = body[:body.index("return 0")]
+        self.assertIn("give_away_toolbox", early)
 
     def test_it_writes_down_the_account_the_units_run_as(self):
         """A repair at a boot reads that record to fill in @WATCHER_USER@.

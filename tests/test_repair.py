@@ -70,13 +70,21 @@ class Room(unittest.TestCase):
             handle.write(name + "\n")
 
     def toolbox(self):
-        """The copy of this project, which carries the udev rule."""
-        for name in (repair.UDEV_SOURCE,) + checkup.TOOLBOX:
-            whole = os.path.join(self.root + repair.SOURCE_COPY, name)
+        """The copy of this project, and the udev rule beside the templates.
+
+        The rule is not in the copy. A repair installs it into /etc as root
+        at a boot, and the copy belongs to the desktop user.
+        """
+        for name in checkup.TOOLBOX:
+            whole = os.path.join(self.root + checkup.SOURCE_COPY, name)
             os.makedirs(os.path.dirname(whole), exist_ok=True)
             with open(whole, "w") as handle:
-                handle.write('ACTION=="add", SUBSYSTEM=="tty"\n')
+                handle.write("# built for a test\n")
             os.chmod(whole, 0o755)
+        whole = self.root + repair.UDEV_TEMPLATE
+        os.makedirs(os.path.dirname(whole), exist_ok=True)
+        with open(whole, "w") as handle:
+            handle.write('ACTION=="add", SUBSYSTEM=="tty"\n')
 
     def build(self, here=ALL, skip=()):
         """A machine with everything on it, less the names of `skip`."""
@@ -261,12 +269,34 @@ class WriteTest(Room):
         for path in mounts.PROJECT_FILES:
             self.assertIn(path, text)
 
-    def test_it_writes_the_udev_rule_from_the_copy_of_the_toolbox(self):
+    def test_it_writes_the_udev_rule_from_the_copy_beside_the_templates(self):
         rule = repair.UDEV_RULE
         self.build()
         self.take(rule)
         self.run_it()
         with open(self.root + rule) as handle:
+            self.assertIn("SUBSYSTEM", handle.read())
+
+    def test_it_reads_nothing_from_the_toolbox_copy(self):
+        """The copy belongs to the desktop user, and this runs as root.
+
+        A repair installs a udev rule into /etc with nobody to read it first,
+        and a udev rule names a program that udev runs as root. A file from a
+        directory that the desktop session can write is thus a way to become
+        root at the next boot with no password. So the whole copy is taken
+        away here and a repair still writes everything.
+        """
+        self.build()
+        shutil.rmtree(self.root + checkup.SOURCE_COPY)
+        for path in checkup.wanted(ALL) + [mounts.KEEP_LIST]:
+            if os.path.lexists(self.root + path) \
+                    and not (path.endswith(".conf")
+                             and "/systemd/" not in path):
+                self.take(path)
+        self.run_it(runner=self.runner)
+        left = repair.plan(here=ALL, root=self.root)
+        self.assertFalse(repair.needed(left))
+        with open(self.root + repair.UDEV_RULE) as handle:
             self.assertIn("SUBSYSTEM", handle.read())
 
     def test_it_links_the_short_command_names_again(self):
@@ -413,8 +443,7 @@ class NeedTest(Room):
 
         def no_udev_source():
             self.build()
-            os.unlink(os.path.join(self.root + repair.SOURCE_COPY,
-                                   repair.UDEV_SOURCE))
+            os.unlink(self.root + repair.UDEV_TEMPLATE)
             self.take(repair.UDEV_RULE)
 
         def bad_record():
@@ -498,12 +527,11 @@ class NeedTest(Room):
         sends a person to read the source of this."""
         self.setUp()
         self.build()
-        os.unlink(os.path.join(self.root + repair.SOURCE_COPY,
-                               repair.UDEV_SOURCE))
+        os.unlink(self.root + repair.UDEV_TEMPLATE)
         self.take(repair.UDEV_RULE)
         said = " ".join(repair.lines(self.plan()))
         self.assertIn(repair.UDEV_RULE, said)
-        self.assertIn(repair.UDEV_SOURCE, said)
+        self.assertIn(repair.UDEV_TEMPLATE, said)
 
 
 class TemplateTest(unittest.TestCase):

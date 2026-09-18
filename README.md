@@ -468,15 +468,35 @@ it: the panel, the installer behind its repair and module buttons, the
 appliers and the firmware project are all on the partition that a SteamOS
 update keeps.
 
-It is a shallow clone of your clone where git can make one, with `origin`
-pointed at the same remote yours has. `git pull` from the copy thus works and
-the update page needs nothing else. Measured on a depth of one: a fetch, a
-count of the commits behind, and a fast-forward. A download with no git in it
-gets a plain copy of the files, and the update page says what to do.
+It is a shallow clone of your clone, with `origin` pointed at the same remote
+yours has. `git pull` from the copy thus works and the update page needs
+nothing else. Measured with the clone deleted: a fetch, a count of the
+commits behind, and a fast-forward all run from the copy.
 
 It costs about 8 MB. `decky/node_modules` is left out: 130 MB of another
 project's build that nothing here reads, beside a `dist` that is already
 built.
+
+The copy belongs to you, and the directory above it belongs to root. Git
+refuses a repository that belongs to somebody else, so a copy owned by root
+gave the update page no fetch at all. The appliers, the unit templates and
+the udev rule stay with root one directory up: the password rule names the
+appliers and asks for nothing, and the boot repair installs the udev rule
+into `/etc` with nobody to read it first.
+
+The installer runs as root on a clone that belongs to you, and git calls that
+somebody else's repository too. `git -c safe.directory=...` does not reach
+the second git that a clone starts to read the source, so the clone step
+failed on every install and the copy ended up with no history. A config file
+does reach it. `GIT_TEST_ASSUME_DIFFERENT_OWNER` is how git's own tests ask
+for that refusal, and tests/test_update.py uses it to keep the clone step
+honest on any machine.
+
+A copy that carries no history, from a zip download, is one the update page
+turns into a clone where it stands: it fetches, it points the branch at what
+it fetched, and it overwrites no file. What differs from the branch is then
+listed rather than gone. The branch comes from the second word of
+`installed-from`, which the installer writes for exactly this.
 
 The menu entry pointed into the clone before, because the repair button
 re-runs `install.sh` and that only existed there.

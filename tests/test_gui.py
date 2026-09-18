@@ -897,6 +897,23 @@ class InstalledCommitTest(unittest.TestCase):
             self.addCleanup(lambda: setattr(ledpanel, "STAMP_PATH", was))
             self.assertEqual(ledpanel.installed_commit(), "abc1234def")
 
+    def test_a_stamp_with_a_branch_after_it_still_reads_as_the_commit(self):
+        """The installer writes "<commit> <branch>".
+
+        scripts/update.sh reads the branch to adopt a copy that carries no
+        history of its own. This side reads the first word, and a second word
+        that broke it would report every machine as out of date.
+        """
+        import tempfile
+        with tempfile.TemporaryDirectory() as where:
+            path = os.path.join(where, "installed-from")
+            with open(path, "w") as handle:
+                handle.write("abc1234def experimental\n")
+            was = ledpanel.STAMP_PATH
+            ledpanel.STAMP_PATH = path
+            self.addCleanup(lambda: setattr(ledpanel, "STAMP_PATH", was))
+            self.assertEqual(ledpanel.installed_commit(), "abc1234def")
+
 
 class ProfileListingTest(unittest.TestCase):
     """What the profile dialog offers, and where a name ends up."""

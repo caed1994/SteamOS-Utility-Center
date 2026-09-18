@@ -276,6 +276,243 @@ class PanelUpdateHelpersTest(UpdateScriptTest):
         self.assertTrue(ledpanel.module_changed(self.clone, ""))
 
 
+class AdoptTest(UpdateScriptTest):
+    """A copy of the files with no history, which has to become a clone.
+
+    This is the zip download, and the install whose own clone step failed.
+    The person asked for one thing: the clone they started with is something
+    they can throw away, and updating has to work without it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # The same files, with no .git at all.
+        self.plain = os.path.join(self.root, "downloaded")
+        shutil.copytree(self.clone, self.plain,
+                        ignore=shutil.ignore_patterns(".git"))
+        self.assertFalse(os.path.exists(os.path.join(self.plain, ".git")))
+
+    def _adopt(self, *args):
+        return subprocess.run(
+            ["bash", os.path.join(self.plain, "scripts", "update.sh")]
+            + list(args),
+            cwd=self.root, capture_output=True, text=True,
+            env=dict(os.environ, PROJECT_URL=self.origin))
+
+    def test_a_check_writes_nothing_and_says_what_would_happen(self):
+        result = self._adopt("--check", "main")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("not a git clone yet", result.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.plain, ".git")))
+
+    def test_it_becomes_a_clone_on_the_branch(self):
+        result = self._adopt("main")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.isdir(os.path.join(self.plain, ".git")))
+        self.assertEqual(git(self.plain, "rev-parse", "--abbrev-ref", "HEAD"),
+                         "main")
+        self.assertEqual(git(self.plain, "remote", "get-url", "origin"),
+                         self.origin)
+
+    def test_it_overwrites_no_file(self):
+        """A zip of an older version differs from the branch in a lot.
+
+        A reset that took the branch version would be somebody's files gone
+        with no question asked. So the files stay and the difference is
+        reported.
+        """
+        mine = os.path.join(self.plain, "README.md")
+        with open(mine, "w") as handle:
+            handle.write("what this copy holds\n")
+        result = self._adopt("main")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(mine) as handle:
+            self.assertEqual(handle.read(), "what this copy holds\n")
+        self.assertIn("README.md", result.stdout)
+        self.assertIn("No file was overwritten", result.stdout)
+
+    def test_a_copy_that_matches_carries_on_into_the_update(self):
+        """Nothing differs, so the same run goes on to the ordinary path.
+
+        One press of the button, and the person never learns that their copy
+        had no history.
+        """
+        result = self._adopt("main")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Already up to date", result.stdout)
+        self.assertEqual(git(self.plain, "rev-parse", "HEAD"),
+                         self._head(self.work))
+
+    def test_it_asks_for_a_branch_when_nothing_names_one(self):
+        result = self._adopt()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("which branch", result.stderr)
+
+    def test_it_reads_the_branch_of_the_installed_stamp(self):
+        """The installer writes "<commit> <branch>" for exactly this.
+
+        A copy with no history carries no HEAD, so without the stamp there is
+        nothing that says which branch these files came from.
+        """
+        with open(os.path.join(self.plain, "scripts", "update.sh")) as handle:
+            text = handle.read()
+        self.assertIn("installed-from", text)
+        self.assertIn("NR == 1 { print $2 }", text)
+
+
+class RefusedCloneTest(UpdateScriptTest):
+    """A clone that is there and that git will not read.
+
+    The installed copy belonged to root while the panel runs as a person.
+    git answers "detected dubious ownership" and stops, and this script read
+    that as "there is no clone here". It then printed the message about a zip
+    download on a machine that had a clone and needed one line to mend. A
+    person who reads that message looks in the wrong place.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.broken = os.path.join(self.root, "broken")
+        shutil.copytree(self.clone, self.broken,
+                        ignore=shutil.ignore_patterns(".git"))
+        # A .git that is there and that git refuses, which is the shape of
+        # the fault whatever the reason for it is.
+        os.makedirs(os.path.join(self.broken, ".git"))
+
+    def _go(self, *args):
+        return subprocess.run(
+            ["bash", os.path.join(self.broken, "scripts", "update.sh")]
+            + list(args), cwd=self.root, capture_output=True, text=True)
+
+    def test_it_does_not_call_it_a_zip_download(self):
+        result = self._go("--check")
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("zip", result.stderr.lower())
+
+    def test_it_repeats_what_git_said(self):
+        result = self._go("--check")
+        self.assertIn("will not read", result.stderr)
+        self.assertIn("git", result.stderr)
+
+    def test_it_makes_nothing_a_clone(self):
+        """Adoption is for a directory with no history at all.
+
+        A .git that git refuses holds somebody's history, and git init over
+        the top of it is that history gone.
+        """
+        self._go()
+        self.assertEqual(os.listdir(os.path.join(self.broken, ".git")), [])
+
+    def test_the_installed_copy_is_told_to_run_the_installer(self):
+        with open(os.path.join(self.broken, "scripts", "update.sh")) as handle:
+            text = handle.read()
+        where = text.index("INSTALLED_COPY")
+        self.assertIn("/var/lib/steamos-utility-center/source",
+                      text[where:where + 200])
+        self.assertIn("sudo $SOURCE_DIR/install.sh", text)
+
+
+class ToolboxCloneTest(unittest.TestCase):
+    """copy_toolbox against a clone that git treats as somebody else's.
+
+    The installer runs as root on a clone that belongs to a person, and git
+    refuses a repository it believes belongs to another account. `git -c
+    safe.directory=...` does not reach the second git that a clone starts to
+    read the source, so the clone step failed on every ordinary install. The
+    installer then fell back to a plain copy of the files, the one warning it
+    printed said nothing about why, and the update page reported "this is not
+    a git clone" on a machine that never had a chance to get one.
+
+    GIT_TEST_ASSUME_DIFFERENT_OWNER is how git's own tests ask for that
+    refusal with one account, so this runs anywhere.
+    """
+
+    RUN = (
+        "set -e\n"
+        'export ROOT="%(root)s"\n'
+        'SOURCE_DIR="%(source)s"\n'
+        'source "%(repo)s/scripts/user-unit.sh"\n'
+        "eval \"$(sed -n '/^copy_toolbox() {/,/^}/p' \"%(repo)s/install.sh\")\"\n"
+        "eval \"$(sed -n '/^give_away_toolbox() {/,/^}/p' "
+        "\"%(repo)s/install.sh\")\"\n"
+        "watcher_user_dirs() { return 1; }\n"
+        "copy_toolbox\n")
+
+    def setUp(self):
+        if not shutil.which("git"):                     # pragma: no cover
+            self.skipTest("git is not installed")
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.source = os.path.join(self.root, "clone")
+        os.makedirs(os.path.join(self.source, "scripts"))
+        git(self.source, "init", "--initial-branch=main", ".")
+        git(self.source, "config", "user.email", "test@example.com")
+        git(self.source, "config", "user.name", "Test")
+        git(self.source, "remote", "add", "origin",
+            "https://example.invalid/project")
+        with open(os.path.join(self.source, "README.md"), "w") as handle:
+            handle.write("the toolbox\n")
+        git(self.source, "add", "README.md")
+        git(self.source, "commit", "-m", "first")
+
+    def _copy(self, foreign):
+        where = os.path.join(self.root, "machine")
+        env = dict(os.environ)
+        if foreign:
+            env["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1"
+        answer = subprocess.run(
+            ["bash", "-c", self.RUN % {"root": where, "source": self.source,
+                                       "repo": os.path.join(HERE, "..")}],
+            capture_output=True, text=True, env=env)
+        return answer, os.path.join(
+            where, "var/lib/steamos-utility-center/source")
+
+    def test_it_clones_a_repository_that_git_calls_somebody_elses(self):
+        answer, copy = self._copy(foreign=True)
+        self.assertEqual(answer.returncode, 0, answer.stderr)
+        self.assertTrue(os.path.isdir(os.path.join(copy, ".git")),
+                        "the copy has no history:\n" + answer.stderr)
+        self.assertEqual(git(copy, "rev-parse", "--abbrev-ref", "HEAD"), "main")
+
+    def test_the_copy_keeps_the_remote_of_the_source(self):
+        """Asked of an ordinary clone.
+
+        GIT_TEST_ASSUME_DIFFERENT_OWNER makes every repository foreign, the
+        fresh copy as well, so the remote cannot be set under it. On a
+        machine root makes the copy and root is the one that sets it.
+        """
+        answer, copy = self._copy(foreign=False)
+        self.assertEqual(git(copy, "remote", "get-url", "origin"),
+                         "https://example.invalid/project")
+
+    def test_a_remote_it_cannot_set_does_not_stop_the_install(self):
+        """install.sh runs with `set -e`.
+
+        An unguarded git call here takes the whole installation with it, and
+        the copy is already made by the time it runs.
+        """
+        answer, copy = self._copy(foreign=True)
+        self.assertEqual(answer.returncode, 0, answer.stderr)
+        self.assertIn("could not point", answer.stderr)
+
+    def test_it_clones_an_ordinary_one_as_well(self):
+        answer, copy = self._copy(foreign=False)
+        self.assertTrue(os.path.isdir(os.path.join(copy, ".git")),
+                        answer.stderr)
+
+    def test_a_clone_that_fails_says_what_git_said(self):
+        """The silent warning is what hid this for a week.
+
+        The copy still happens, so the installation works either way. What
+        was missing was the reason, which is the thing a person needs.
+        """
+        with open(os.path.join(HERE, "..", "install.sh")) as handle:
+            body = handle.read()
+        where = body.index("could not clone the toolbox")
+        self.assertIn("printf", body[where:where + 300])
+        self.assertIn('"$said"', body[where:where + 300])
+
+
 class UpdateCommandTest(unittest.TestCase):
     """The commands the panel builds, without running them."""
 

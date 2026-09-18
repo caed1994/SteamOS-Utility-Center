@@ -411,6 +411,20 @@ install -d -m 0755 "$UNIT_TEMPLATE_DIR"
 rm -f "$UNIT_TEMPLATE_DIR"/*.service
 install -m 0644 "$SOURCE_DIR"/server/*.service "$UNIT_TEMPLATE_DIR/"
 
+# The udev rule, for the same repair and for one more reason.
+#
+# A repair copies this file into /etc as root, at a boot, with nobody to ask.
+# The toolbox copy below belongs to the desktop user, because git refuses a
+# clone that somebody else owns and the update page has to fetch. So the copy
+# is not a place to take a file from that root installs unread: a udev rule
+# names a program and udev runs it as root.
+#
+# This directory belongs to root, as $UNIT_TEMPLATE_DIR does. See
+# server/steamos_utility_center/repair.py.
+say "Keeping the udev rule in $UDEV_TEMPLATE_DIR"
+install -d -m 0755 "$UDEV_TEMPLATE_DIR"
+install -m 0644 "$SOURCE_DIR/udev/99-$NAME.rules" "$UDEV_TEMPLATE_DIR/"
+
 # The toolbox itself, so that the clone becomes something a person can throw
 # away.
 #
@@ -434,10 +448,14 @@ install -m 0644 "$SOURCE_DIR"/server/*.service "$UNIT_TEMPLATE_DIR/"
 # the plugin ships the built dist beside it, and nothing here reads it.
 copy_toolbox() {
     local git_here=(git -C "$SOURCE_DIR" -c "safe.directory=$SOURCE_DIR")
-    local branch url
+    local branch url said gitconfig
 
     if [[ "$SOURCE_DIR" -ef "$SOURCE_COPY" ]]; then
         say "Running from $SOURCE_COPY already, so the copy stays as it is"
+        # The owner is still set. A copy that an older installer left with
+        # root is the one thing this run can mend from inside it, and the
+        # update page sends a person here to do exactly that.
+        give_away_toolbox
         return 0
     fi
     say "Copying the toolbox to $SOURCE_COPY"
@@ -446,17 +464,46 @@ copy_toolbox() {
     if "${git_here[@]}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         branch="$("${git_here[@]}" symbolic-ref --quiet --short HEAD                   2>/dev/null || true)"
         url="$("${git_here[@]}" remote get-url origin 2>/dev/null || true)"
-        if git -c "safe.directory=$SOURCE_DIR" clone --quiet --depth 1                ${branch:+--branch "$branch"}                "file://$SOURCE_DIR" "$SOURCE_COPY" 2>/dev/null; then
+        # git refuses a repository that belongs to somebody else, and this
+        # runs as root on a clone that belongs to a person. `git -c` does
+        # not reach the process that makes that check: the clone starts a
+        # second git for the source, and that one reads the config files and
+        # not the -c of its parent. So the exception goes into a config file
+        # and the environment carries it across.
+        #
+        # This is measured. Without it the clone failed on every ordinary
+        # install, the warning below was the only trace, and the copy ended
+        # up with no history. The update page then said "this is not a git
+        # clone" on a machine that never had a chance to get one.
+        #
+        # Two exact paths and no wildcard. The work tree answers the first
+        # check and the .git directory answers the one the transport makes.
+        gitconfig="$(mktemp)"
+        printf '[safe]\n\tdirectory = %s\n\tdirectory = %s\n' \
+            "$SOURCE_DIR" "$SOURCE_DIR/.git" > "$gitconfig"
+        if said="$(GIT_CONFIG_GLOBAL="$gitconfig" git clone --quiet --depth 1 \
+               ${branch:+--branch "$branch"} \
+               "file://$SOURCE_DIR" "$SOURCE_COPY" 2>&1)"; then
             if [[ -n "$url" ]]; then
-                git -C "$SOURCE_COPY" remote set-url origin "$url"
+                # Guarded, because this script runs with `set -e`. An
+                # unguarded git call here takes the whole installation with
+                # it, and the copy is already made at this point.
+                git -C "$SOURCE_COPY" remote set-url origin "$url" || {
+                    warn "could not point $SOURCE_COPY at $url, so updates"
+                    warn "from it will look for a clone that is going away"
+                }
             else
                 warn "the clone has no origin, so updates from $SOURCE_COPY"
                 warn "will not find a remote"
             fi
         else
-            warn "could not clone the toolbox, so copying the files instead"
-            warn "  updates will ask for a clone"
+            # What git said, and not only that it said something. The silent
+            # form of this warning hid the fault above for a week.
+            warn "could not clone the toolbox, so copying the files instead:"
+            printf '%s\n' "$said" | sed 's/^/    /' >&2
+            warn "  the update page will offer to make this a clone"
         fi
+        rm -f "$gitconfig"
     fi
 
     install -d -m 0755 "$SOURCE_COPY"
@@ -464,7 +511,37 @@ copy_toolbox() {
         --exclude=__pycache__ --exclude=.pytest_cache --exclude=.mypy_cache \
         --exclude=.venv --exclude=venv -cf - . \
         | tar -C "$SOURCE_COPY" -xf -
-    chown -R root:root "$SOURCE_COPY"
+    give_away_toolbox
+}
+
+# The copy belongs to the person who updates it.
+#
+# git refuses a repository that somebody else owns. It says "detected dubious
+# ownership" and stops, and that is right: a repository carries hooks and
+# configuration that run commands. A copy owned by root thus gave the update
+# page "this is not a git clone" on a clone that was there, and no fetch and
+# no fast-forward.
+#
+# This is where the clone in a home directory always was: it belonged to the
+# person, and the panel ran install.sh from it with pkexec, which asks for a
+# password. That stays the same.
+#
+# $INSTALL_DIR itself stays with root. The appliers are in it, and the sudoers
+# rule names them and asks for no password. The unit templates and the udev
+# rule are in it for the same reason: a repair installs those as root at a
+# boot with nobody to read them first.
+#
+# With no desktop user the copy stays with root. The update page then reports
+# what is wrong, which is better than a directory that everybody can write.
+give_away_toolbox() {
+    if ! watcher_user_dirs; then
+        warn "no desktop user found, so $SOURCE_COPY stays with root and the"
+        warn "update page cannot fetch into it"
+        chown -R root:root "$SOURCE_COPY"
+        return 0
+    fi
+    say "Giving $SOURCE_COPY to $WATCHER_USER, so updates can write into it"
+    chown -R "$WATCHER_USER:$(id -gn "$WATCHER_USER")" "$SOURCE_COPY"
 }
 
 copy_toolbox
@@ -481,7 +558,12 @@ copy_toolbox
 # reports "not recorded", which is true.
 if stamp="$(git -C "$SOURCE_DIR" -c "safe.directory=$SOURCE_DIR" \
         rev-parse HEAD 2>/dev/null)" && [[ -n "$stamp" ]]; then
-    printf '%s\n' "$stamp" > "$STAMP_PATH"
+    # The branch as a second word. A copy that is not a clone carries no HEAD
+    # and thus no branch, and scripts/update.sh needs one to adopt it. The
+    # panel reads the first word only, so the second one costs it nothing.
+    stamp_branch="$(git -C "$SOURCE_DIR" -c "safe.directory=$SOURCE_DIR" \
+        symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+    printf '%s %s\n' "$stamp" "$stamp_branch" > "$STAMP_PATH"
     chmod 0644 "$STAMP_PATH"
 else
     rm -f "$STAMP_PATH"
