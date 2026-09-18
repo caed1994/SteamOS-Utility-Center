@@ -46,6 +46,20 @@ import roundrect                                            # noqa: E402
 import ledpanel                                             # noqa: E402
 import appsettings                                          # noqa: E402
 import preview as preview_module                            # noqa: E402
+import panelbase                                            # noqa: E402
+# The measurements of this window, and where the toolbox is. They are in
+# panelbase because a page module reads them too, and a page module cannot
+# read them from here: this file imports the page and the page would import
+# this file back. See gui/panelbase.py.
+from panelbase import (BLOCK_GAP, CARD_INSET, CARD_WRAP,     # noqa: E402
+                       CEC_INDENT, CONTENT_MAX, FOLD_ROOM,
+                       GROUP_GAP, INDENT_STEP, PART_INDENT,
+                       ROW_GAP, ROW_PAD, SIDE_MARGIN)
+
+# One answer to "where is the toolbox". The two lines at the top of this file
+# work it out to put the imports on the path, and this takes the value that
+# the page modules read, so the two cannot become different.
+SOURCE_DIR = panelbase.SOURCE_DIR
 from steamos_utility_center import cec                                 # noqa: E402
 from steamos_utility_center import config as config_module             # noqa: E402
 from steamos_utility_center import ctl                                 # noqa: E402
@@ -679,34 +693,7 @@ SCROLL_THUMB = 6
 # Panel._rewrap, and the live test that measures the scrollbar against it.
 SCROLLBAR_ROOM = 16
 
-# The maximum width of the content of a page, for each monitor. These pages
-# are a column of labels and controls. Above this width the column is no
-# longer a column: the label is at one end of the movement of the eye, and its
-# control is at the other end. On a 2560 monitor the margin takes the extra
-# width.
-CONTENT_MAX = 1040
 
-# What a card takes from the width of the page it stands on: the border of the
-# notebook, the margin at each side of the card, and the padding inside it.
-#
-# This uses material.SPACE and not GROUP_GAP. GROUP_GAP is six of these, and
-# this file declares it below. A constant cannot use a later constant.
-#
-# One value, because two places subtract it. CARD_WRAP below is the width a
-# paragraph has before the window is measured, and Panel._rewrap is the width
-# it has after.
-#
-# Those two were not equal. _rewrap subtracted three side margins, which is
-# 48, and this line subtracted 96. A paragraph on a page thus had 48 pixels
-# more than its card. A sentence whose last word crossed that line was cut at
-# the edge of the card, and a sentence one word shorter was not. The HDMI CEC
-# page stood one pixel from it.
-CARD_INSET = 24 * material.SPACE
-
-# The maximum width of a paragraph in a card. The card has the width
-# CONTENT_MAX at its widest, and it has padding on both sides. A paragraph
-# that wraps at CONTENT_MAX puts its last words past the edge of the card.
-CARD_WRAP = CONTENT_MAX - CARD_INSET
 
 # The size of the window at the start, and its minimum size. A user cannot
 # drag it below the minimum.
@@ -814,37 +801,7 @@ DIALOG_WRAP = 460
 # wrong. Sized for fingers and a trackpad rather than a mouse on a desk: this
 # runs on a machine people also use handheld.
 
-# The 4dp grid Material spaces everything on, in the amounts this window needs.
-# The gap between groups is what replaces the boxes that used to be drawn round
-# them, so it is deliberately larger than any gap inside one.
-SIDE_MARGIN = 4 * material.SPACE
 
-# How wide the switch column on the CEC page is, so a feature's sentence lines
-# up under its own label rather than under the switch.
-CEC_INDENT = 9 * material.SPACE
-
-# The same for a status block: its sentence sits under the part's name rather
-# than under the light beside it.
-PART_INDENT = 6 * material.SPACE
-# The room a compact status row keeps for its Details button, so a long
-# sentence wraps before it and does not run under it.
-FOLD_ROOM = 32 * material.SPACE
-GROUP_GAP = 6 * material.SPACE
-ROW_GAP = 2 * material.SPACE
-INDENT_STEP = 5 * material.SPACE
-
-# The space that one settings row keeps above and below its control. The
-# second value is the extra space of a row that starts a block. That row is
-# the switch above an indented pair. Each control has the same height, so that
-# extra space is the one sign of the end of one block and the start of the
-# next block.
-#
-# The value is six on each side, so there are twelve pixels between two
-# controls. That is the spacing of Material for a list of controls. With four
-# pixels, two filled shapes of forty pixels looked like one shape. A switch
-# above a drop-down had that fault.
-ROW_PAD = 6
-BLOCK_GAP = 4 * material.SPACE
 
 # The type scale, as offsets from the font size of the desktop. Material gives
 # fifteen sizes. A window of this size needs four of them, and the weights are
