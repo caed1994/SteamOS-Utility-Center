@@ -25,14 +25,21 @@ SUFFIXES = (".py", ".sh", ".cpp", ".h")
 SCRIPTS = ("server/steamos-utility-center", "gui/steamos-utility-center-panel")
 
 # Code under the licence of another project. This project cannot change that
-# licence. The kernel shim carries its own SPDX line with GPL-2.0+. The
-# directory cec-toolkit/ is a fork of an MIT project. It stays MIT, with its
-# own LICENSE file beside its own ORIGIN. The tests below give the checks for
-# those two directories.
+# licence. The kernel shim carries its own SPDX line with GPL-2.0+.
+#
+# The directory cec-toolkit/ is a fork of an MIT project. It stays MIT, with
+# its own LICENSE file beside its own ORIGIN. dbus-next/ is an unchanged copy
+# of an MIT project, with the same two files. The tests below give the checks
+# for those three directories.
 #
 # A fork is still somebody else's copyright. Ours is a second line in that
 # LICENSE, not a licence change, and not a GPL-3 header on every file in it.
-OTHERS = ("leds-valve-shim", "cec-toolkit")
+#
+# dbus-next/ arrived without this line, and the two header sweeps below went
+# red on 22 files of somebody else's project. tools/ste-check.py had the same
+# list and got the name at the same time. A directory that this project
+# carries goes in both.
+OTHERS = ("leds-valve-shim", "cec-toolkit", "dbus-next")
 
 
 def tracked():
@@ -106,6 +113,40 @@ class SpdxHeaderTest(unittest.TestCase):
         for needed in ("LICENSE", "ORIGIN"):
             self.assertTrue(os.path.exists(os.path.join(where, needed)),
                             "cec-toolkit has no %s" % needed)
+
+    def test_the_carried_module_carries_its_own_licence_and_its_provenance(
+            self):
+        """The same two files, for the same reason.
+
+        This copy is unchanged, so there is not even a bug fix of ours in it.
+        A GPL-3 header on any of it would be a claim on work of somebody
+        else. See dbus-next/ORIGIN, which names the wheel and its sha256.
+        """
+        where = os.path.join(REPO, "dbus-next")
+        for needed in ("LICENSE", "ORIGIN", "VERSION"):
+            self.assertTrue(os.path.exists(os.path.join(where, needed)),
+                            "dbus-next has no %s" % needed)
+
+    def test_no_carried_directory_is_quietly_relabelled(self):
+        # The failure this is about is somebody running a formatter or a
+        # header-adder across the repository: our line appearing in a file
+        # that is not only ours is a licence claim on work we did not do.
+        # Fixing five bugs in a fork does not make its copyright ours.
+        #
+        # Every carried directory and not cec-toolkit alone: the first
+        # version named one, and the next directory this project carried was
+        # covered by nothing.
+        ours_in_others = {"cec-toolkit/README.md", "cec-toolkit/ORIGIN",
+                          "dbus-next/README.md", "dbus-next/ORIGIN"}
+        for name in tracked():
+            if name.split("/")[0] not in OTHERS:
+                continue
+            if name in ours_in_others:
+                continue
+            with open(os.path.join(REPO, name), "rb") as handle:
+                text = handle.read().decode("utf-8", "replace")
+            self.assertNotIn("SPDX-License-Identifier: " + LICENCE, text,
+                             "%s has been given this project's licence" % name)
 
     def test_the_cec_module_is_not_quietly_relabelled(self):
         # The failure this is about is somebody running a formatter or a
