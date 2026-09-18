@@ -35,12 +35,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, ".."))
 
 # The directories that hold other persons' work. See docs/STYLE.md.
-OTHERS = ("leds-valve-shim", "cec-toolkit")
+OTHERS = ("leds-valve-shim", "cec-toolkit", "dbus-next")
 
-# The files in cec-toolkit/ that this project wrote, and that the rules
+# The files in those directories that this project wrote, and that the rules
 # therefore do apply to.
 OURS_IN_OTHERS = ("cec-toolkit/README.md", "cec-toolkit/ORIGIN",
-                  "cec-toolkit/bin/steamos-cec-register")
+                  "cec-toolkit/bin/steamos-cec-register",
+                  "dbus-next/README.md", "dbus-next/ORIGIN")
 
 # A unit file is in this list because its comments carry the reason for each
 # line in it. See server/steamos-utility-center-sleep.service, which is where

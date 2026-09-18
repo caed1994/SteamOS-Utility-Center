@@ -131,6 +131,15 @@ UNIT_TEMPLATE_DIR="$INSTALL_DIR/units"
 # desktop user and a repair installs this file as root with nobody to ask. A
 # udev rule names a program, and udev runs that program as root.
 UDEV_TEMPLATE_DIR="$INSTALL_DIR/udev"
+# The python modules this project carries but did not write.
+#
+# One directory for the machine, with no version of Python in its name. The
+# user site directory is .local/lib/python3.14/site-packages, and a SteamOS
+# update that raises Python leaves a copy there behind. See dbus-next/ORIGIN.
+PYTHON_DIR="$INSTALL_DIR/python"
+# What version of each one is installed, so the Status page can say that the
+# toolbox carries a newer one.
+PYTHON_VERSIONS="$PYTHON_DIR/versions"
 # The toolbox itself, on the partition that a SteamOS update keeps.
 #
 # The menu entry points in here and not into the clone, so a person can throw

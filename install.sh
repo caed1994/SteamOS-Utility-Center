@@ -428,6 +428,29 @@ install -m 0644 "$SOURCE_DIR"/server/*.service "$UNIT_TEMPLATE_DIR/"
 #
 # This directory belongs to root, as $UNIT_TEMPLATE_DIR does. See
 # server/steamos_utility_center/repair.py.
+# The python modules that this project carries and did not write.
+#
+# Part of the core and not of the HDMI CEC module, because the place they go
+# is a property of the machine and not of one module. A module that arrives
+# later finds them already there.
+#
+# dbus_next is the one of them. Three services of the CEC toolkit import it
+# at their first line, SteamOS ships no pip, and a copy installed by hand
+# lands in a directory whose name holds the version of Python. An update that
+# raises Python thus takes it away and the three die for ever, with every
+# switch still saying "on". See dbus-next/ORIGIN.
+say "Keeping the carried python modules in $PYTHON_DIR"
+install -d -m 0755 "$PYTHON_DIR"
+rm -rf "${PYTHON_DIR:?}/dbus_next"
+cp -r "$SOURCE_DIR/dbus-next/dbus_next" "$PYTHON_DIR/"
+find "$PYTHON_DIR/dbus_next" -type f -exec chmod 0644 {} +
+find "$PYTHON_DIR/dbus_next" -type d -exec chmod 0755 {} +
+# What is installed, for the Status page. One line for each module, as
+# "<name> <version>". See ledpanel.carried_versions.
+printf 'dbus_next %s\n' "$(cat "$SOURCE_DIR/dbus-next/VERSION")" \
+    > "$PYTHON_VERSIONS"
+chmod 0644 "$PYTHON_VERSIONS"
+
 say "Keeping the udev rule in $UDEV_TEMPLATE_DIR"
 install -d -m 0755 "$UDEV_TEMPLATE_DIR"
 install -m 0644 "$SOURCE_DIR/udev/99-$NAME.rules" "$UDEV_TEMPLATE_DIR/"

@@ -1,0 +1,48 @@
+# Where this module came from.
+#
+# Read as a shell file: tests and scripts source it rather than parsing the
+# prose around it, so the four values below are the record.
+
+ORIGIN_URL=https://pypi.org/project/dbus-next/
+ORIGIN_PROJECT=https://github.com/altdesktop/python-dbus-next
+ORIGIN_VERSION=0.2.3
+ORIGIN_WHEEL=https://files.pythonhosted.org/packages/d2/fc/c0a3f4c4eaa5a22fbef91713474666e13d0ea2a69c84532579490a9f2cc8/dbus_next-0.2.3-py3-none-any.whl
+ORIGIN_SHA256=58948f9aff9db08316734c0be2a120f6dc502124d9642f55e90ac82ffb16a18b
+
+# A copy and not a fork. Nothing here is changed.
+#
+# A wheel has no commit, so the record above is the file and its checksum. It
+# was read from the JSON of PyPI at the moment of the copy and compared with
+# the bytes, and tests/test_dbus_next.py compares the tree against them again.
+#
+# Why it is carried at all:
+#
+# Three services of cec-toolkit import this module at their first line. It
+# belongs neither to this project nor to SteamOS, and SteamOS ships no pip,
+# so there is no one command that installs it. The toolkit's installer only
+# warns about it.
+#
+# The copy that a person installs by hand lands in the user site directory,
+# whose name holds the version of Python: .local/lib/python3.14/site-packages.
+# A SteamOS update that raises Python leaves it behind, and the three services
+# then die at their first line for ever. Each of their units carries
+# Restart=on-failure, so they stay in "activating" and never reach "failed",
+# and every switch on the page keeps saying "on".
+#
+# That was measured on a machine: SteamOS went from Python 3.13 to 3.14 and
+# all three stopped. See server/steamos_utility_center/cec.py, NEEDS_DBUS.
+#
+# So the installer puts this tree in /var/lib/steamos-utility-center/python.
+# /var is its own partition and survives an update, and that path holds no
+# version of Python. The module is pure Python with no compiled part, so one
+# copy serves every version of Python 3.
+#
+# Taking a newer version:
+#
+#   read the wheel URL and its sha256 from https://pypi.org/pypi/dbus-next/json
+#   unpack dbus_next/ and the LICENSE of the dist-info over this directory
+#   write the version into VERSION and the four values above
+#
+# Licence: MIT, upstream's, in LICENSE beside this file. No second copyright
+# line, because nothing here is changed. It stays MIT rather than being taken
+# into this project's GPL-3.0-or-later: the copyright is not ours to move.

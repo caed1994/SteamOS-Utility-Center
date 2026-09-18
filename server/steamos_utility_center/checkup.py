@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import os
 
+from . import cec
 from . import modules
 from . import mounts
 
@@ -50,6 +51,21 @@ SUDO_RULE = "/etc/sudoers.d/zz-steamos-utility-center"
 # a repair, the appliers and the firmware project. A machine that lost this
 # has an installation that runs and a panel that does not open.
 SOURCE_COPY = os.path.join(INSTALL_DIR, "source")
+
+# The python modules this project carries and did not write, and where the
+# installer puts them.
+#
+# One directory for the machine, with no version of Python in its name. The
+# user site directory is .local/lib/python3.14/site-packages, and a SteamOS
+# update that raises Python leaves a copy there behind. Three services of the
+# CEC toolkit then die at their first import, for ever, with every switch on
+# the page still saying "on". See dbus-next/ORIGIN.
+PYTHON_DIR = cec.PYTHON_DIR
+PYTHON_VERSIONS = os.path.join(PYTHON_DIR, "versions")
+
+# Each carried module: the name it is imported by, and the directory of the
+# toolbox that holds it with its VERSION.
+CARRIED = {"dbus_next": "dbus-next"}
 
 # What has to be in that copy for the window to open and its buttons to work.
 TOOLBOX = ("gui/steamos-utility-center-panel",
@@ -344,6 +360,98 @@ def toolbox(root=""):
         else "It is here, and the panel can run.")]
 
 
+def _number(said):
+    """A version as a tuple of numbers, for a comparison that 0.10 survives.
+
+    "0.10.0" is newer than "0.2.3" and reads as older to a comparison of two
+    strings. A value this cannot read comes back as an empty tuple, and the
+    caller then compares the text and says "different" rather than "older".
+    """
+    parts = said.strip().lstrip("v").split(".")
+    try:
+        return tuple(int(one) for one in parts)
+    except ValueError:
+        return ()
+
+
+def installed_versions(root=""):
+    """What the installer recorded about the carried modules.
+
+    The file is "<name> <version>", one module to a line. An empty answer
+    means no record, which is an installation from before this existed as
+    much as it is a directory that is gone.
+    """
+    out = {}
+    try:
+        with open(root + PYTHON_VERSIONS, encoding="utf-8") as handle:
+            for line in handle:
+                words = line.split()
+                if len(words) == 2:
+                    out[words[0]] = words[1]
+    except OSError:
+        return {}
+    return out
+
+
+def toolbox_versions(root=""):
+    """What the copy of the toolbox carries, from each module's VERSION."""
+    out = {}
+    for name, where in CARRIED.items():
+        try:
+            with open(os.path.join(root + SOURCE_COPY, where, "VERSION"),
+                      encoding="utf-8") as handle:
+                out[name] = handle.read().strip()
+        except OSError:
+            continue
+    return out
+
+
+def carried(root=""):
+    """The python modules this project carries, against what is installed.
+
+    Three services of the CEC toolkit import dbus_next at their first line.
+    A copy that is gone kills all three at once, and each of their units
+    carries Restart=on-failure, so they stay in "activating" and never reach
+    "failed". Nothing on the machine says a word. See cec.NEEDS_DBUS.
+    """
+    gone = [name for name in CARRIED
+            if not os.path.isdir(os.path.join(root + PYTHON_DIR, name))]
+    if gone:
+        return [_finding(
+            "The python modules this project carries", False,
+            "%s is not in %s. Reinstalling puts it back."
+            % (_say(gone), PYTHON_DIR))]
+
+    have, want = installed_versions(root), toolbox_versions(root)
+    if not want:
+        return [_finding("The python modules this project carries", None,
+                         "All %d are here. This copy of the toolbox does not "
+                         "say which version it carries." % len(CARRIED),
+                         repairable=False)]
+    # A copy that is newer than the toolbox is not a fault of this card. It
+    # says the toolbox is old, and the update page is where that is reported.
+    old = []
+    for name, wanted in want.items():
+        mine = have.get(name, "")
+        said = "%s %s is installed, and the toolbox carries %s" % (
+            name, mine, wanted)
+        if mine == wanted:
+            continue
+        if not mine:
+            old.append("%s is installed with no version recorded" % name)
+        elif _number(mine) and _number(wanted):
+            if _number(mine) < _number(wanted):
+                old.append(said)
+        else:
+            old.append(said)
+    return [_finding(
+        "The python modules this project carries", not old,
+        "; ".join(old) + ". Reinstalling writes the newer one." if old
+        else "All %d are here: %s." % (
+            len(want), ", ".join("%s %s" % pair
+                                 for pair in sorted(want.items()))))]
+
+
 def look(root="", here=None, home=None, present=None):
     """Every difference between this machine and what this project expects.
 
@@ -358,6 +466,7 @@ def look(root="", here=None, home=None, present=None):
     found.extend(keep_list(here, root))
     found.extend(programs(here, root))
     found.extend(toolbox(root))
+    found.extend(carried(root))
     found.extend(settings(here, root))
     found.extend(commands(root))
     found.extend(password_rule(root))

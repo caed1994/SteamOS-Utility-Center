@@ -7,8 +7,22 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
 import time
 from pathlib import Path
+
+# Where this project keeps the python modules it carries.
+#
+# dbus_next belongs neither to this toolkit nor to SteamOS, and SteamOS ships
+# no pip. A copy installed by hand lands in a directory whose name holds the
+# version of Python, so an update that raises Python leaves it behind and
+# this program dies at its first import for ever. The unit carries
+# Restart=on-failure, so it stays in "activating" and never reaches "failed",
+# and the switch on the page goes on saying "on".
+#
+# Appended and not inserted: a real installation of the module still wins.
+# See dbus-next/ORIGIN in the SteamOS Utility Center.
+sys.path.append("/var/lib/steamos-utility-center/python")
 
 from dbus_next import BusType
 from dbus_next.aio import MessageBus

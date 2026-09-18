@@ -477,6 +477,33 @@ It costs about 8 MB. `decky/node_modules` is left out: 130 MB of another
 project's build that nothing here reads, beside a `dist` that is already
 built.
 
+### One python module comes with it
+
+`dbus-next/` is an unchanged copy of
+[dbus-next](https://pypi.org/project/dbus-next/) 0.2.3, MIT licensed, 150 kB
+of pure Python. Three services of the CEC toolkit import it at their first
+line: the two that sleep with the television, and the one that repairs
+Gamescope after a wake.
+
+It is carried because SteamOS ships no pip, so there is no one command that
+installs it. A copy put there by hand lands under
+`.local/lib/python3.14/site-packages`, and the name of that directory holds
+the version of Python. An update that raises Python leaves it behind, all
+three services die at their first line, and each unit's `Restart=on-failure`
+keeps them in "activating" rather than letting them fail. Every switch on the
+page goes on saying "on" and nothing says a word.
+
+That is measured, not guessed: SteamOS went from Python 3.13 to 3.14 and all
+three stopped.
+
+The installer puts it in `/var/lib/steamos-utility-center/python` with the
+core, not with the CEC module. `/var` survives an update and that path holds
+no version of Python. The three scripts append it to `sys.path` rather than
+inserting it, so a real installation of the module still wins. The Status
+page reports a copy that is gone, and one older than the toolbox carries.
+
+`dbus-next/ORIGIN` holds the wheel it came from and that wheel's checksum.
+
 Nothing an install leaves in your clone belongs to root. Three steps of it
 import the package from there to read it, and Python writes `__pycache__`
 beside the source it imports. Each install thus left root-owned `.pyc` files

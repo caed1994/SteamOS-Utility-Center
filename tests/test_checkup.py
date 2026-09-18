@@ -78,6 +78,23 @@ class Room(unittest.TestCase):
             os.makedirs(os.path.dirname(whole), exist_ok=True)
             with open(whole, "w") as handle:
                 handle.write("")
+        # The python modules this project carries, and the record of what is
+        # installed. Both are part of an installation that is in order.
+        for name, where in checkup.CARRIED.items():
+            if leave(name):
+                continue
+            os.makedirs(os.path.join(self.root + checkup.PYTHON_DIR, name),
+                        exist_ok=True)
+            said = os.path.join(self.root + checkup.SOURCE_COPY, where)
+            os.makedirs(said, exist_ok=True)
+            with open(os.path.join(said, "VERSION"), "w") as handle:
+                handle.write("1.2.3\n")
+        versions = self.root + checkup.PYTHON_VERSIONS
+        os.makedirs(os.path.dirname(versions), exist_ok=True)
+        with open(versions, "w") as handle:
+            for name in checkup.CARRIED:
+                if not leave(name):
+                    handle.write("%s 1.2.3\n" % name)
         for name in checkup.TOOLBOX:
             if leave(name):
                 continue
@@ -162,6 +179,94 @@ class OwnerTest(unittest.TestCase):
         for name, where in modules.MARK.items():
             said = checkup.PROGRAMS.get(os.path.basename(where))
             self.assertEqual(said, name, os.path.basename(where))
+
+
+class CarriedTest(Room):
+    """The python modules this project carries, against what is installed.
+
+    Three services of the CEC toolkit import dbus_next at their first line.
+    A copy that is gone kills all three at once, and each unit carries
+    Restart=on-failure, so they sit in "activating" and never reach "failed".
+    Nothing on the machine said a word about it, which is why this card has
+    to.
+
+    SteamOS ships no pip, so the copy a person installs by hand lands under
+    .local/lib/python3.14/site-packages. The name of that directory holds the
+    version of Python, so an update that raises Python takes it away. That is
+    what happened on a machine, and it is why the installer keeps its own
+    copy at a path with no version in it.
+    """
+
+    def version(self, installed=None, toolbox=None):
+        """Rewrite the two records for one module."""
+        if installed is not None:
+            with open(self.root + checkup.PYTHON_VERSIONS, "w") as handle:
+                handle.write("dbus_next %s\n" % installed)
+        if toolbox is not None:
+            where = os.path.join(self.root + checkup.SOURCE_COPY, "dbus-next")
+            os.makedirs(where, exist_ok=True)
+            with open(os.path.join(where, "VERSION"), "w") as handle:
+                handle.write("%s\n" % toolbox)
+
+    def said(self):
+        return checkup.carried(self.root)[0]
+
+    def test_a_machine_with_it_is_in_order(self):
+        self.build()
+        self.assertIs(self.said()["ok"], True)
+
+    def test_a_copy_that_is_gone_is_a_fault_a_repair_mends(self):
+        self.build()
+        shutil.rmtree(os.path.join(self.root + checkup.PYTHON_DIR,
+                                   "dbus_next"))
+        found = self.said()
+        self.assertIs(found["ok"], False)
+        self.assertIn("dbus_next", found["detail"])
+        self.assertTrue(found["repairable"])
+
+    def test_an_older_copy_is_reported_with_both_versions(self):
+        self.build()
+        self.version(installed="0.2.3", toolbox="0.3.0")
+        found = self.said()
+        self.assertIs(found["ok"], False)
+        self.assertIn("0.2.3", found["detail"])
+        self.assertIn("0.3.0", found["detail"])
+
+    def test_ten_is_newer_than_two(self):
+        """A comparison of two strings reads 0.10.0 as older than 0.2.3."""
+        self.build()
+        self.version(installed="0.2.3", toolbox="0.10.0")
+        self.assertIs(self.said()["ok"], False)
+        self.version(installed="0.10.0", toolbox="0.2.3")
+        self.assertIs(self.said()["ok"], True)
+
+    def test_a_newer_copy_is_not_a_fault_of_this_card(self):
+        """It says the toolbox is old, and the update page reports that."""
+        self.build()
+        self.version(installed="0.9.0", toolbox="0.2.3")
+        self.assertIs(self.said()["ok"], True)
+
+    def test_a_copy_with_no_record_is_reported(self):
+        """An installation from before the record existed."""
+        self.build()
+        os.unlink(self.root + checkup.PYTHON_VERSIONS)
+        found = self.said()
+        self.assertIs(found["ok"], False)
+        self.assertIn("no version recorded", found["detail"])
+
+    def test_a_toolbox_that_says_nothing_is_not_a_fault(self):
+        """Nothing to compare against is not the same as out of date."""
+        self.build()
+        os.unlink(os.path.join(self.root + checkup.SOURCE_COPY,
+                               "dbus-next", "VERSION"))
+        found = self.said()
+        self.assertIsNone(found["ok"])
+        self.assertFalse(found["repairable"])
+
+    def test_the_whole_reading_carries_it(self):
+        self.build()
+        names = [one["name"] for one in checkup.look(self.root, here=ALL)]
+        self.assertIn("The python modules this project carries", names)
 
 
 class WholeTest(Room):

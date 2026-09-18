@@ -106,6 +106,13 @@ FEATURES = (
 # The same table, keyed by name, for a caller that has a name only.
 BY_NAME = {name: (kind, label, said) for name, kind, label, said in FEATURES}
 
+# Where this project keeps the python modules it carries.
+#
+# The three services below append this to sys.path before they import
+# dbus_next. It holds no version of Python, so an update that raises Python
+# keeps it. See dbus-next/ORIGIN.
+PYTHON_DIR = "/var/lib/steamos-utility-center/python"
+
 # The features whose program runs all the time.
 #
 # For these, "switched on" and "not running" is a fault: the feature is off
@@ -512,6 +519,21 @@ def missing(module_check=None, which=None):
 
 
 def _has_dbus_next():
+    """Whether the three services that need the module will find it.
+
+    Two places, because the services read both. This project carries its own
+    copy and the installer puts it in PYTHON_DIR, and each of the three
+    appends that directory to sys.path before the import. The panel runs
+    under its own Python and does not append it, so an import here alone
+    answers for the wrong program: it would report the module as missing on
+    a machine where all three find it.
+
+    The directory is looked at and not imported. Importing another project's
+    module into the panel to answer a question about a third program is a
+    cost with nothing behind it.
+    """
+    if os.path.isdir(os.path.join(PYTHON_DIR, "dbus_next")):
+        return True
     try:
         import dbus_next                                     # noqa: F401
     except ImportError:

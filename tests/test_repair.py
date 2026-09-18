@@ -69,6 +69,27 @@ class Room(unittest.TestCase):
         with open(whole, "w") as handle:
             handle.write(name + "\n")
 
+    def carried(self):
+        """The python modules the installer keeps, and the record of them.
+
+        Not something a repair writes: they are in /var, which an update does
+        not touch, and the installer is the answer to a copy that is gone.
+        The machine a test builds needs them so that checkup reads it as one
+        that is in order. See checkup.carried.
+        """
+        for name, where in checkup.CARRIED.items():
+            os.makedirs(os.path.join(self.root + checkup.PYTHON_DIR, name),
+                        exist_ok=True)
+            said = os.path.join(self.root + checkup.SOURCE_COPY, where)
+            os.makedirs(said, exist_ok=True)
+            with open(os.path.join(said, "VERSION"), "w") as handle:
+                handle.write("1.2.3\n")
+        whole = self.root + checkup.PYTHON_VERSIONS
+        os.makedirs(os.path.dirname(whole), exist_ok=True)
+        with open(whole, "w") as handle:
+            for name in checkup.CARRIED:
+                handle.write("%s 1.2.3\n" % name)
+
     def toolbox(self):
         """The copy of this project, and the udev rule beside the templates.
 
@@ -91,6 +112,7 @@ class Room(unittest.TestCase):
         self.templates()
         self.user()
         self.toolbox()
+        self.carried()
         for path in checkup.wanted(here):
             if os.path.basename(path) in skip:
                 continue

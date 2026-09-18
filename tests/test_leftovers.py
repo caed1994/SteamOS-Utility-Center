@@ -234,6 +234,8 @@ class UninstallTest(Reader):
         out += [mounts.KEEP_LIST, checkup.SOURCE_COPY,
                 self.value["UNIT_TEMPLATE_DIR"],
                 self.value["UDEV_TEMPLATE_DIR"],
+                self.value["PYTHON_DIR"],
+                self.value["PYTHON_VERSIONS"],
                 self.value["WATCHER_RECORD_PATH"]]
         return sorted(set(out))
 
