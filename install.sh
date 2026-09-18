@@ -411,6 +411,64 @@ install -d -m 0755 "$UNIT_TEMPLATE_DIR"
 rm -f "$UNIT_TEMPLATE_DIR"/*.service
 install -m 0644 "$SOURCE_DIR"/server/*.service "$UNIT_TEMPLATE_DIR/"
 
+# The toolbox itself, so that the clone becomes something a person can throw
+# away.
+#
+# The menu entry points in here. Everything the panel reaches for at run time
+# is then on the partition that a SteamOS update keeps: the panel, install.sh
+# for the repair button and the module buttons, the appliers, and the
+# firmware project.
+#
+# A shallow clone where the source is one, because then `git pull` works from
+# here and the update page needs no change at all. It is measured: a fetch, a
+# count of what is behind and a fast-forward all work on a depth of one. The
+# remote is set to the one the source points at, or the copy would fetch from
+# a directory that is about to be deleted.
+#
+# The working tree goes over the top of it afterwards, so a change that is
+# not yet in a commit reaches the installation. That is what the
+# installer did before this, and a copy that quietly ignored local edits
+# would be a surprise for the person writing them.
+#
+# node_modules is left out. It is 130 megabytes of another project's build,
+# the plugin ships the built dist beside it, and nothing here reads it.
+copy_toolbox() {
+    local git_here=(git -C "$SOURCE_DIR" -c "safe.directory=$SOURCE_DIR")
+    local branch url
+
+    if [[ "$SOURCE_DIR" -ef "$SOURCE_COPY" ]]; then
+        say "Running from $SOURCE_COPY already, so the copy stays as it is"
+        return 0
+    fi
+    say "Copying the toolbox to $SOURCE_COPY"
+    rm -rf "${SOURCE_COPY:?}"
+
+    if "${git_here[@]}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        branch="$("${git_here[@]}" symbolic-ref --quiet --short HEAD                   2>/dev/null || true)"
+        url="$("${git_here[@]}" remote get-url origin 2>/dev/null || true)"
+        if git -c "safe.directory=$SOURCE_DIR" clone --quiet --depth 1                ${branch:+--branch "$branch"}                "file://$SOURCE_DIR" "$SOURCE_COPY" 2>/dev/null; then
+            if [[ -n "$url" ]]; then
+                git -C "$SOURCE_COPY" remote set-url origin "$url"
+            else
+                warn "the clone has no origin, so updates from $SOURCE_COPY"
+                warn "will not find a remote"
+            fi
+        else
+            warn "could not clone the toolbox, so copying the files instead"
+            warn "  updates will ask for a clone"
+        fi
+    fi
+
+    install -d -m 0755 "$SOURCE_COPY"
+    tar -C "$SOURCE_DIR" --exclude=.git --exclude=node_modules \
+        --exclude=__pycache__ --exclude=.pytest_cache --exclude=.mypy_cache \
+        --exclude=.venv --exclude=venv -cf - . \
+        | tar -C "$SOURCE_COPY" -xf -
+    chown -R root:root "$SOURCE_COPY"
+}
+
+copy_toolbox
+
 # The commit of those files, so the panel can report a clone that moved ahead
 # of them. The last write of the core, so a stamp that exists is a stamp for
 # files that all exist.
@@ -1404,14 +1462,20 @@ install_control_panel() {
         return 1
     fi
 
-    # The menu entry points into the clone rather than into INSTALL_DIR: the
-    # panel's repair button re-runs install.sh, which only exists here.
+    # The menu entry points into SOURCE_COPY and not into the clone.
+    #
+    # It pointed into the clone, because the repair button re-runs install.sh
+    # and that only existed there. The whole toolbox is in SOURCE_COPY now,
+    # so the clone is something a person can delete: the panel, the
+    # installer, the appliers and the firmware project are all on the
+    # partition an update keeps. See copy_toolbox.
+    #
     # PANEL_ENTRY_DIR and PANEL_ENTRY are in scripts/user-unit.sh, so the
     # uninstaller takes back the same file this writes.
     local dir="$WATCHER_HOME/$PANEL_ENTRY_DIR"
     runuser -u "$WATCHER_USER" -- mkdir -p "$dir" || {
         PANEL_STATUS="could not write to $dir"; return 1; }
-    sed -e "s|@SOURCE_DIR@|$SOURCE_DIR|g" \
+    sed -e "s|@SOURCE_DIR@|$SOURCE_COPY|g" \
         -e "s|@ICON@|$(install_panel_icon)|g" "$source" \
         > "$dir/$PANEL_ENTRY"
     chown "$WATCHER_USER:$WATCHER_USER" "$dir/$PANEL_ENTRY"

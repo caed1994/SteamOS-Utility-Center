@@ -43,6 +43,21 @@ INSTALL_DIR = "/var/lib/steamos-utility-center"
 # The file that lets the control command apply a change with no password.
 SUDO_RULE = "/etc/sudoers.d/zz-steamos-utility-center"
 
+# The copy of the toolbox, which the menu entry points into.
+#
+# The clone is something a person can throw away, so everything the panel
+# reaches for at run time lives here: the panel, the installer it re-runs for
+# a repair, the appliers and the firmware project. A machine that lost this
+# has an installation that runs and a panel that does not open.
+SOURCE_COPY = os.path.join(INSTALL_DIR, "source")
+
+# What has to be in that copy for the window to open and its buttons to work.
+TOOLBOX = ("gui/steamos-utility-center-panel",
+           "gui/ledpanel.py",
+           "install.sh",
+           "scripts/update.sh",
+           "server/steamos_utility_center/__init__.py")
+
 # A name that belongs on every machine, whatever modules it carries.
 CORE = ""
 
@@ -300,6 +315,31 @@ def password_rule(root=""):
         else "It is here.")]
 
 
+def toolbox(root=""):
+    """The copy of this project that the menu entry points into.
+
+    Without it the machine keeps every service and loses the window: the
+    entry names a program that is not there, and a press does nothing at all.
+    """
+    where = root + SOURCE_COPY
+    if not os.path.isdir(where):
+        return [_finding(
+            "The toolbox the menu entry opens", False,
+            "%s is gone, so the panel does not open. The services keep "
+            "running." % SOURCE_COPY)]
+    gone = [name for name in TOOLBOX
+            if not os.path.exists(os.path.join(where, name))]
+    panel = os.path.join(where, TOOLBOX[0])
+    if not gone and not os.access(panel, os.X_OK):
+        return [_finding("The toolbox the menu entry opens", False,
+                         "%s cannot run." % TOOLBOX[0])]
+    return [_finding(
+        "The toolbox the menu entry opens",
+        not gone,
+        "%d parts are gone: %s" % (len(gone), _say(gone)) if gone
+        else "It is here, and the panel can run.")]
+
+
 def look(root="", here=None, home=None, present=None):
     """Every difference between this machine and what this project expects.
 
@@ -313,6 +353,7 @@ def look(root="", here=None, home=None, present=None):
     found.extend(units(here, root))
     found.extend(keep_list(here, root))
     found.extend(programs(here, root))
+    found.extend(toolbox(root))
     found.extend(settings(here, root))
     found.extend(commands(root))
     found.extend(password_rule(root))

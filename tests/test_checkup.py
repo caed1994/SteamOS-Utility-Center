@@ -78,6 +78,14 @@ class Room(unittest.TestCase):
             os.makedirs(os.path.dirname(whole), exist_ok=True)
             with open(whole, "w") as handle:
                 handle.write("")
+        for name in checkup.TOOLBOX:
+            if leave(name):
+                continue
+            whole = os.path.join(self.root + checkup.SOURCE_COPY, name)
+            os.makedirs(os.path.dirname(whole), exist_ok=True)
+            with open(whole, "w") as handle:
+                handle.write("# built for a test\n")
+            os.chmod(whole, 0o755)
 
     def named(self, found, start):
         """The one finding whose name begins with this."""
@@ -169,8 +177,8 @@ class WholeTest(Room):
         self.build()
         found = checkup.look(self.root, here=ALL)
         for start in ("The units", "What starts them", "The keep-list",
-                      "The programs", "The settings", "The short command",
-                      "The rule for"):
+                      "The programs", "The toolbox", "The settings",
+                      "The short command", "The rule for"):
             self.named(found, start)
 
 
@@ -338,6 +346,43 @@ class QuietTest(Room):
         said = self.named(checkup.look(self.root, here=ALL), "The rule for")
         self.assertIs(said["ok"], False)
         self.assertIn("password", said["detail"])
+
+
+class ToolboxTest(Room):
+    """The copy that the menu entry opens.
+
+    The clone is something a person can throw away now, so this copy is what
+    the panel is. A machine that lost it keeps every service and has no
+    window, and nothing else on the Status page would say why.
+    """
+
+    def test_a_copy_that_is_gone_is_a_fault(self):
+        self.build()
+        shutil.rmtree(self.root + checkup.SOURCE_COPY)
+        said = self.named(checkup.look(self.root, here=ALL), "The toolbox")
+        self.assertIs(said["ok"], False)
+        self.assertIn("does not open", said["detail"])
+
+    def test_a_part_of_it_that_is_gone_is_named(self):
+        self.build(skip=["install.sh"])
+        said = self.named(checkup.look(self.root, here=ALL), "The toolbox")
+        self.assertIs(said["ok"], False)
+        self.assertIn("install.sh", said["detail"])
+
+    def test_a_panel_that_cannot_run_is_a_fault(self):
+        """The file is there and the entry does nothing when it is pressed."""
+        self.build()
+        os.chmod(os.path.join(self.root + checkup.SOURCE_COPY,
+                              checkup.TOOLBOX[0]), 0o644)
+        said = self.named(checkup.look(self.root, here=ALL), "The toolbox")
+        self.assertIs(said["ok"], False)
+        self.assertIn("cannot run", said["detail"])
+
+    def test_the_named_parts_are_the_ones_the_panel_reaches_for(self):
+        """Each one is a file the window or one of its buttons needs."""
+        for name in ("gui/steamos-utility-center-panel", "install.sh",
+                     "scripts/update.sh"):
+            self.assertIn(name, checkup.TOOLBOX)
 
 
 class NoWriteTest(unittest.TestCase):

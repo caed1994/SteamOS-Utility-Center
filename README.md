@@ -459,6 +459,28 @@ device that does not answer keeps its switch with the reason in its name.
 There is no brightness there, for the same reason no other slider is: a
 slider sends a write at every step it passes.
 
+### The clone is something you can throw away
+
+The installer copies this whole project to
+`/var/lib/steamos-utility-center/source`, and the menu entry opens the panel
+from there. So a clone that you delete after installing takes nothing with
+it: the panel, the installer behind its repair and module buttons, the
+appliers and the firmware project are all on the partition that a SteamOS
+update keeps.
+
+It is a shallow clone of your clone where git can make one, with `origin`
+pointed at the same remote yours has. `git pull` from the copy thus works and
+the update page needs nothing else. Measured on a depth of one: a fetch, a
+count of the commits behind, and a fast-forward. A download with no git in it
+gets a plain copy of the files, and the update page says what to do.
+
+It costs about 8 MB. `decky/node_modules` is left out: 130 MB of another
+project's build that nothing here reads, beside a `dist` that is already
+built.
+
+The menu entry pointed into the clone before, because the repair button
+re-runs `install.sh` and that only existed there.
+
 ### Taking a module off
 
 The Remove button on a module's page asks whether its settings go with it.

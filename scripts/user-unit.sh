@@ -125,6 +125,16 @@ RESUME_UNIT_PATH="$UNIT_DIR/$NAME-resume.service"
 # clone to read, and a person can move or delete one. /var is its own
 # partition, so a copy here is a copy an update cannot take.
 UNIT_TEMPLATE_DIR="$INSTALL_DIR/units"
+# The toolbox itself, on the partition that a SteamOS update keeps.
+#
+# The menu entry points in here and not into the clone, so a person can throw
+# the clone away and keep a working installation: the panel, the installer it
+# re-runs for a repair, the appliers it calls, and the firmware project.
+#
+# It is a shallow clone of the clone where that is possible, so `git pull`
+# still works from here and the update page needs nothing else. A download
+# with no git in it gets a plain copy, and the update page then says so.
+SOURCE_COPY="$INSTALL_DIR/source"
 NANOLEAF_HELPER_PATH="$INSTALL_DIR/$NAME-nanoleaf"
 NANOLEAF_WATCH_PATH="$INSTALL_DIR/$NAME-nanoleaf-watch"
 NANOLEAF_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf.service"

@@ -233,5 +233,58 @@ class PurgeTest(unittest.TestCase):
                                               purge=True))
 
 
+class ToolboxCopyTest(unittest.TestCase):
+    """The copy of this project that makes the clone something to throw away.
+
+    The menu entry pointed into the clone, because the repair button re-runs
+    install.sh and that only existed there. Everything the panel reaches for
+    at run time is in the copy now.
+    """
+
+    def setUp(self):
+        self.install = io.open(os.path.join(REPO, "install.sh")).read()
+        self.shell = io.open(os.path.join(REPO, "scripts",
+                                          "user-unit.sh")).read()
+
+    def test_the_core_makes_the_copy(self):
+        core = self.install.split("# --- the modules ---")[0]
+        self.assertIn("copy_toolbox", core)
+        self.assertIn('SOURCE_COPY="$INSTALL_DIR/source"', self.shell)
+
+    def test_the_menu_entry_points_into_the_copy(self):
+        """Into the copy and not into the clone, or deleting the clone takes
+        the window with it."""
+        said = self.install.split("install_control_panel()")[1]
+        said = said.split("\n}")[0]
+        self.assertIn("s|@SOURCE_DIR@|$SOURCE_COPY|g", said)
+        self.assertNotIn("s|@SOURCE_DIR@|$SOURCE_DIR|g", said)
+
+    def test_it_leaves_out_what_nothing_reads(self):
+        """node_modules is 130 megabytes of another project's build, and the
+        plugin ships the built dist beside it."""
+        said = self.install.split("copy_toolbox()")[1].split("\n}")[0]
+        for word in ("node_modules", ".git", "__pycache__"):
+            self.assertIn("--exclude=%s" % word, said)
+
+    def test_it_does_not_copy_the_copy_onto_itself(self):
+        """install.sh runs from the copy after the clone is gone, and a
+        remove of the copy from inside it would take the running script."""
+        said = self.install.split("copy_toolbox()")[1].split("\n}")[0]
+        self.assertIn('"$SOURCE_DIR" -ef "$SOURCE_COPY"', said)
+        guard = said.split('-ef "$SOURCE_COPY"')[1].split("fi")[0]
+        self.assertIn("return 0", guard)
+
+    def test_the_copy_keeps_its_own_remote(self):
+        """A clone of the clone points at the clone, which is the directory a
+        person is about to delete. Updates would then find nothing."""
+        said = self.install.split("copy_toolbox()")[1].split("\n}")[0]
+        self.assertIn("remote set-url origin", said)
+        self.assertIn("remote get-url origin", said)
+
+    def test_the_uninstaller_takes_it(self):
+        gone = io.open(os.path.join(REPO, "uninstall.sh")).read()
+        self.assertIn('rm -rf "${INSTALL_DIR:?}"', gone)
+
+
 if __name__ == "__main__":
     unittest.main()
