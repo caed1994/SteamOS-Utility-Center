@@ -5997,6 +5997,10 @@ class Panel:
             ledpanel.layout_part(self.system.get(syssettings.LAYOUT, ""),
                                  dict((value, label) for label, value
                                       in syssettings.layouts())),
+            # The installation itself, against what this project wrote. It
+            # is last because it is the widest: a fault here usually
+            # explains one of the cards above it. See checkup.py.
+            ledpanel.install_part(here=modules.here()),
             ledpanel.panel_part(VERSION, getattr(self, "_update_state", None),
                                 self.update_state.cget("text")
                                 if hasattr(self, "update_state") else "",

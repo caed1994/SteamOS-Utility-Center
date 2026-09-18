@@ -17,6 +17,7 @@ import shutil
 import subprocess
 
 from steamos_utility_center import cec as cec_module
+from steamos_utility_center import checkup as checkup_module
 from steamos_utility_center import ctl as ctl_module
 from steamos_utility_center import config as config_module
 from steamos_utility_center import lact as lact_module
@@ -505,6 +506,40 @@ def layout_part(layout, labels=None):
     # is a little longer.
     return Part("keyboard", "Keyboard layout", True,
                 "%s. Applies to Game Mode at the next login." % named)
+
+
+def install_part(found=None, here=None):
+    """Returns whether this machine still carries what this project wrote.
+
+    Every fault of the last months had this shape: a file went and nothing
+    said so. A SteamOS update takes what is not on the keep-list. A link in a
+    .wants directory can name a unit that is gone, and systemd reports that
+    into a boot log nobody reads. Each one was found because a person noticed
+    a symptom days later.
+
+    A finding with ok None is not a fault. It is a module that is not
+    installed, a link on the read-only filesystem that an update always
+    takes, or a directory that only root can look into. See checkup.py.
+    """
+    found = checkup_module.look(here=here) if found is None else found
+    problems = checkup_module.trouble(found)
+    checks = [Check(one["name"], one["ok"] is not False, one["detail"],
+                    repairable=one["repairable"]) for one in found]
+    if not problems:
+        verdict = "This machine carries everything this project wrote."
+    elif any("keep-list" in one["name"] for one in problems):
+        # The one that explains the others. A keep-list that is gone means
+        # the next update takes the rest, so it is worth saying by name.
+        verdict = ("The keep-list is not in order, so a SteamOS update takes "
+                   "this installation. Reinstalling writes it again.")
+    else:
+        verdict = ("%d of %d parts of the installation are not in order."
+                   % (len(problems), len(checks)))
+    # Only where a repair would help. A settings file holds what a person
+    # chose, and the installer writes defaults over nothing.
+    mend = any(one["repairable"] for one in problems)
+    return Part("install", "Installation", not problems, verdict, checks,
+                repair="reinstall" if mend else "")
 
 
 def panel_part(version, update_state=None, update_said="", behind="",

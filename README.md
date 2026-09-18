@@ -459,6 +459,31 @@ device that does not answer keeps its switch with the reason in its name.
 There is no brightness there, for the same reason no other slider is: a
 slider sends a write at every step it passes.
 
+### Does this machine still carry it
+
+The Status page has a card for the installation. It reads the machine
+against what this project writes and names every difference:
+
+| | |
+| --- | --- |
+| the units | and the links in the `.wants` directories that make systemd start them |
+| the keep-list | it is there, and it names every file |
+| the programs | under `/var/lib/steamos-utility-center`, and each one can run |
+| the settings files | reported and never repaired: they hold what a person chose |
+| the short command names | a SteamOS update takes these, and the full path works either way |
+| the password rule | or "only root can look", which is not the same as "gone" |
+
+It writes nothing and runs nothing. The repair is the installer, and pressing
+it stays a decision.
+
+Three states and not two. A module that is not installed has none of its
+files, and a red line about it is a red line for ever. See
+server/steamos_utility_center/checkup.py.
+
+Every fault of the last months had one shape: a file went and nothing said
+so. A link in a `.wants` directory can name a unit that is gone, and systemd
+reports that into a boot log nobody reads.
+
 ### They follow the machine
 
 The paired devices go on when the machine boots or wakes, and off when it
