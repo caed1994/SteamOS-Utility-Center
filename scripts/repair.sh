@@ -49,7 +49,12 @@ fi
 #
 # The check exits 1 for a file that it cannot write, and that file is still
 # worth the report. So the output decides here and the exit status does not.
-missing="$("$PROGRAM" --repair-check 2>&1)" || true
+#
+# Its own output, and not its errors. A program that stops with a stack trace
+# writes that trace to the error stream, and a trace read as a list of
+# missing files unlocks the filesystem for work that nothing can do. The
+# errors reach the journal on their own.
+missing="$("$PROGRAM" --repair-check)" || true
 if [[ -z "$missing" ]]; then
     say "Nothing to write back."
     exit 0
@@ -72,7 +77,10 @@ if command -v steamos-readonly >/dev/null 2>&1; then
     fi
 fi
 
-said="$("$PROGRAM" --repair 2>&1)" || true
+# Its own output again, for the same reason: the lines below are read as
+# "wrote <path>", and an error stream in that list is a unit name this tries
+# to start.
+said="$("$PROGRAM" --repair)" || true
 printf '%s\n' "$said"
 
 systemctl daemon-reload || warn "could not reload systemd"

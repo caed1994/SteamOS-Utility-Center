@@ -119,6 +119,29 @@ def _needs(path, root=""):
     return not os.path.lexists(root + path)
 
 
+def _drive_trouble(root=""):
+    """Why the record of the drives cannot be written, or "".
+
+    The keep-list is written from that record, by the same call that
+    scripts/apply-mounts.sh makes. A record that the rules refuse raises, and
+    a plan that asked for the keep-list anyway would ask for it again at the
+    next boot. See `needed`.
+
+    The two checks are the ones mounts.write_units makes before it writes
+    anything. A record it refuses leaves every file as it was.
+    """
+    entries = mounts.read(root + mounts.STATE_PATH)
+    try:
+        for entry in entries:
+            mounts.validate(entry)
+    except mounts.MountError as exc:
+        return str(exc)
+    twice = mounts.duplicates(entries)
+    if twice:
+        return "two drives ask for %s" % ", ".join(twice)
+    return ""
+
+
 def plan(here=None, root="", home=None, present=None):
     """What is gone from this machine, in the order a repair writes it.
 
@@ -133,6 +156,7 @@ def plan(here=None, root="", home=None, present=None):
     named = [path for path in want if path.startswith(mounts.UNIT_DIR + "/")]
 
     units, orphans, skipped = [], [], []
+    why = {}
     user = watcher(root)
     for path in [one for one in named if ".wants/" not in one]:
         if not _needs(path, root):
@@ -140,6 +164,7 @@ def plan(here=None, root="", home=None, present=None):
         source = template(path, root)
         if not source:
             orphans.append(path)
+            why[path] = "no template in %s" % TEMPLATE_DIR
         elif not user and _wants_user(source):
             # A unit that runs as the desktop user, on a machine that has no
             # record of one. `User=root` there reads the pairing record of
@@ -158,17 +183,42 @@ def plan(here=None, root="", home=None, present=None):
              if ".wants/" in path and _needs(path, root)
              and os.path.basename(path) not in lost]
 
+    # A command name is linked where the program behind it is there. The
+    # Power module brings one of the three, and a link to a program that is
+    # not installed is the dangling link this file is against.
     commands = [path for path in checkup.COMMANDS
                 if _needs(path, root)
                 and os.path.exists(os.path.join(root + INSTALL_DIR,
                                                 os.path.basename(path)))]
-    udev = [UDEV_RULE] if (UDEV_RULE in want and _needs(UDEV_RULE, root)) else []
-    keep = [mounts.KEEP_LIST] if _needs(mounts.KEEP_LIST, root) else []
-    rule = [checkup.SUDO_RULE] if (checkup.SUDO_RULE in want
-                                   and _needs(checkup.SUDO_RULE, root)) else []
+
+    # Each of the three below goes into the plan only where this can write
+    # it. Every one of them broke that rule once, and each break was the same
+    # machine: it unlocked its filesystem at every boot and wrote nothing.
+    udev = []
+    if UDEV_RULE in want and _needs(UDEV_RULE, root):
+        if os.path.isfile(os.path.join(root + SOURCE_COPY, UDEV_SOURCE)):
+            udev.append(UDEV_RULE)
+        else:
+            orphans.append(UDEV_RULE)
+            why[UDEV_RULE] = "%s has no %s" % (SOURCE_COPY, UDEV_SOURCE)
+
+    keep = []
+    if _needs(mounts.KEEP_LIST, root):
+        trouble = _drive_trouble(root)
+        if trouble:
+            orphans.append(mounts.KEEP_LIST)
+            why[mounts.KEEP_LIST] = "the record of the drives is refused: %s" \
+                % trouble
+        else:
+            keep.append(mounts.KEEP_LIST)
+
+    rule = []
+    if checkup.SUDO_RULE in want and _needs(checkup.SUDO_RULE, root):
+        (rule if user else skipped).append(checkup.SUDO_RULE)
+
     return {"units": units, "links": links, "commands": commands,
             "udev": udev, "keep": keep, "rule": rule,
-            "orphans": orphans, "skipped": skipped, "user": user}
+            "orphans": orphans, "skipped": skipped, "why": why, "user": user}
 
 
 def _wants_user(source):
@@ -183,8 +233,16 @@ def _wants_user(source):
 def needed(found):
     """Whether a plan asks for any work at all.
 
-    The names that nothing can write are left out. A machine that reports one
-    of those at every boot repairs nothing and unlocks the filesystem for it.
+    One rule holds this whole file together: after a repair, this reads
+    False. scripts/repair.sh unlocks the read-only filesystem when it reads
+    True, so a plan that asks for something it cannot write is a machine that
+    unlocks its filesystem at every boot and writes nothing.
+
+    So the names that nothing can write are in `orphans` and in `skipped`,
+    and neither is counted here. Three of them were counted here once: the
+    udev rule with no copy of the toolbox to take it from, the sudoers rule
+    with no account recorded, and the keep-list on a record of the drives
+    that the rules refuse. NeedTest holds the rule for every one of them.
     """
     return any(found[key] for key in ("units", "links", "commands",
                                       "udev", "keep", "rule"))
@@ -280,18 +338,27 @@ def write_rule(found, root="", run=None):
     each installed module, and there is no wildcard in it. So the rule is the
     one file here that a repair has to build.
 
+    `run` is how ctl runs visudo and install. It is a parameter because
+    neither of those takes a root that a test builds: a caller that gives one
+    answers for the root itself, and a root with no runner gets no rule. That
+    seam is what lets NeedTest run this part rather than step over it.
+
     ctl is imported here and not at the top of the file. ctl reaches every
     area of the project, and the check at a boot must not pay for that on a
     machine where nothing is gone.
     """
     if not found["rule"] or not found["user"]:
         return []
-    from . import ctl
-    if root:
-        # ctl writes /etc/sudoers.d and runs visudo. Neither takes a root
-        # that a test builds, so a test root gets no rule.
+    if root and run is None:
         return []
-    ctl.permit(found["user"], run=run)
+    from . import ctl
+    # The rule names one program for each installed module, and ctl reads the
+    # machine for that list. With a root it has to read the machine the test
+    # built, or it writes the rule of a machine with no module at all, which
+    # is no rule. On a machine the root is empty and this is what ctl does by
+    # itself.
+    ctl.permit(found["user"], run=run,
+               present=lambda path: os.path.exists(root + path))
     return list(found["rule"])
 
 
@@ -323,7 +390,9 @@ def lines(found, did=False):
     out = []
     for key in ("units", "links", "commands", "udev", "keep", "rule"):
         out.extend("%s %s" % (verb, path) for path in found[key])
-    out.extend("no template for %s" % path for path in found["orphans"])
+    why = found.get("why", {})
+    out.extend("cannot write %s: %s" % (path, why.get(path, "no source"))
+               for path in found["orphans"])
     out.extend("%s needs a desktop user, and none is recorded in %s"
                % (path, WATCHER_PATH) for path in found["skipped"])
     return out

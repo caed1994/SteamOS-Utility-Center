@@ -557,6 +557,15 @@ filesystem read-only. Only a boot that finds something missing unlocks it.
 A service that came back is started in the same run, because systemd worked
 out the boot before the file was there.
 
+It asks for nothing it cannot write. A unit with no template, the udev rule
+with no copy of the toolbox behind it, the password rule with no account
+recorded, the keep-list on a record of drives that the rules refuse: each of
+those is named in the journal with the reason, and none of them unlocks the
+filesystem. Without that rule such a machine unlocks itself at every boot
+and writes nothing. Four faults of exactly that shape were in the first
+version of this, and tests/test_repair.py runs a repair twice on ten
+different broken machines to keep them out.
+
 One hole stays, and it is better written down than hidden. The unit is
 itself in `/etc`, so an image that ignores the keep-list takes the repair
 with everything else. The panel is the answer there: the toolbox is in

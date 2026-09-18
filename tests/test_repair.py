@@ -20,6 +20,9 @@ that one of the two answers and the other does not leaves its own text in a
 unit file, and systemd reads that as a path.
 """
 
+import contextlib
+import io
+import json
 import os
 import re
 import shutil
@@ -32,7 +35,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "server"))
 
-from steamos_utility_center import checkup, modules, mounts, repair  # noqa: E402
+from steamos_utility_center import checkup, modules, mounts  # noqa: E402
+from steamos_utility_center import repair, service  # noqa: E402
 
 ALL = list(modules.ORDER)
 
@@ -107,8 +111,33 @@ class Room(unittest.TestCase):
     def plan(self, here=ALL):
         return repair.plan(here=here, root=self.root)
 
-    def run_it(self, here=ALL):
-        return repair.run(root=self.root, here=here)
+    def run_it(self, here=ALL, runner=None):
+        return repair.run(root=self.root, here=here, runner=runner)
+
+    def runner(self, command):
+        """visudo and install, against the machine this test built.
+
+        ctl.permit runs those two as root and writes /etc/sudoers.d. Without
+        this the rule is the one part of a repair that no test runs, and it
+        is the part that takes sudo away from a machine when it is wrong.
+        """
+        verb = command[0]
+        if verb == "visudo":
+            return 0, ""
+        if verb == "rm":
+            for path in command[2:]:
+                if os.path.lexists(self.root + path):
+                    os.unlink(self.root + path)
+            return 0, ""
+        if verb == "install" and "-d" in command:
+            os.makedirs(self.root + command[-1], exist_ok=True)
+            return 0, ""
+        if verb == "install":
+            whole = self.root + command[-1]
+            os.makedirs(os.path.dirname(whole), exist_ok=True)
+            shutil.copyfile(command[-2], whole)
+            return 0, ""
+        raise AssertionError("the rule ran %r" % (command,))
 
 
 class PlanTest(Room):
@@ -352,6 +381,131 @@ class OrphanTest(Room):
         self.assertFalse(repair.needed(found))
 
 
+class NeedTest(Room):
+    """The one rule that holds this module together.
+
+    scripts/repair.sh unlocks the read-only filesystem when `needed` reads
+    True. So after a repair it has to read False, whatever was wrong with the
+    machine. A plan that asks for something nothing can write is a machine
+    that unlocks its filesystem at every boot and writes nothing at all.
+
+    Three faults of exactly that shape were in the first version: the udev
+    rule with no copy of the toolbox to take it from, the sudoers rule with
+    no account recorded, and the keep-list on a record of the drives that the
+    rules refuse. Each one was found by running a repair twice, which is what
+    this does for every machine below.
+    """
+
+    def broken(self):
+        """One damaged machine for each name, built fresh each time."""
+        def gone(*paths):
+            def make():
+                self.build()
+                for path in paths:
+                    if os.path.lexists(self.root + path):
+                        self.take(path)
+            return make
+
+        def no_user():
+            self.build()
+            os.unlink(self.root + repair.WATCHER_PATH)
+            self.take(checkup.SUDO_RULE)
+
+        def no_udev_source():
+            self.build()
+            os.unlink(os.path.join(self.root + repair.SOURCE_COPY,
+                                   repair.UDEV_SOURCE))
+            self.take(repair.UDEV_RULE)
+
+        def bad_record():
+            self.build()
+            self.take(mounts.KEEP_LIST)
+            # A mount point this project refuses, as a hand edit leaves it.
+            self.write(mounts.STATE_PATH,
+                       json.dumps([{"uuid": "1234-ABCD", "where": "/etc",
+                                    "type": "ext4", "options": "defaults"}]))
+
+        def no_templates():
+            self.build()
+            shutil.rmtree(self.root + repair.TEMPLATE_DIR)
+            for path in checkup.wanted(ALL):
+                if path.endswith(".service"):
+                    self.take(path)
+
+        def everything():
+            self.build()
+            for path in checkup.wanted(ALL) + [mounts.KEEP_LIST]:
+                if os.path.lexists(self.root + path):
+                    self.take(path)
+
+        return {"an untouched machine": self.build,
+                "no record of the user": no_user,
+                "no udev rule in the toolbox": no_udev_source,
+                "a record of the drives that is refused": bad_record,
+                "no unit templates at all": no_templates,
+                "every file of /etc gone": everything,
+                "the units gone": gone(
+                    "/etc/systemd/system/steamos-utility-center.service",
+                    "/etc/systemd/system/steamos-utility-center-power.service"),
+                "the links gone": gone(
+                    "/etc/systemd/system/multi-user.target.wants/"
+                    "steamos-utility-center.service"),
+                "the command names gone": gone(*checkup.COMMANDS),
+                "the keep-list gone": gone(mounts.KEEP_LIST)}
+
+    def test_one_repair_is_enough_on_every_machine(self):
+        left = []
+        for name, build in self.broken().items():
+            with self.subTest(name):
+                self.setUp()        # a fresh directory for each machine
+                build()
+                self.run_it(runner=self.runner)
+                if repair.needed(repair.plan(here=ALL, root=self.root)):
+                    left.append(name)
+        self.assertEqual(left, [], "these unlock the filesystem for ever")
+
+    def test_a_repair_raises_nothing_on_any_of_them(self):
+        """The unit runs at a boot and nobody reads a stack trace there."""
+        for name, build in self.broken().items():
+            with self.subTest(name):
+                self.setUp()
+                build()
+                self.run_it(runner=self.runner)
+
+    def test_the_rule_it_writes_names_the_account_and_no_wildcard(self):
+        """The one file a repair builds rather than copies.
+
+        A rule with a `*` in it permits every argument of the programs it
+        names, which is every file on the machine.
+        """
+        self.setUp()
+        self.build()
+        self.take(checkup.SUDO_RULE)
+        self.run_it(runner=self.runner)
+        with open(self.root + checkup.SUDO_RULE) as handle:
+            rules = [line for line in handle.read().splitlines()
+                     if line and not line.startswith("#")]
+        self.assertTrue(rules, "the rule is empty")
+        for line in rules:
+            self.assertTrue(line.startswith("deck ALL=(root) NOPASSWD: "), line)
+            # The comment above the rules says the word, so only the rules
+            # themselves are read here.
+            self.assertNotIn("*", line)
+            self.assertIn(repair.INSTALL_DIR, line)
+
+    def test_what_it_cannot_write_is_named_with_a_reason(self):
+        """A line that says a file is missing and not why is a line that
+        sends a person to read the source of this."""
+        self.setUp()
+        self.build()
+        os.unlink(os.path.join(self.root + repair.SOURCE_COPY,
+                               repair.UDEV_SOURCE))
+        self.take(repair.UDEV_RULE)
+        said = " ".join(repair.lines(self.plan()))
+        self.assertIn(repair.UDEV_RULE, said)
+        self.assertIn(repair.UDEV_SOURCE, said)
+
+
 class TemplateTest(unittest.TestCase):
     """The marks of a template, and the two programs that answer them."""
 
@@ -424,6 +578,78 @@ class OwnerTest(unittest.TestCase):
         self.assertEqual(
             checkup.owner("steamos-utility-center-repair.service"),
             checkup.CORE)
+
+
+class EntryPointTest(unittest.TestCase):
+    """--repair-check and --repair, which are what the script calls.
+
+    Six lines of glue, and the shell reads their output to decide whether to
+    unlock the read-only filesystem. So what they print and what they return
+    is the contract between the two halves.
+    """
+
+    def setUp(self):
+        self.asked = []
+        self.found = {"units": [], "links": [], "commands": [], "udev": [],
+                      "keep": [], "rule": [], "orphans": [], "skipped": [],
+                      "why": {}, "user": "deck"}
+        self.addCleanup(setattr, repair, "plan", repair.plan)
+        self.addCleanup(setattr, repair, "run", repair.run)
+        repair.plan = lambda *a, **k: self.found
+        repair.run = lambda found, *a, **k: self.asked.append(found) or found
+
+    def go(self, *argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = service.main(list(argv))
+        return code, out.getvalue()
+
+    def test_a_machine_in_order_prints_nothing_at_all(self):
+        """The shell reads empty output as "leave the filesystem alone"."""
+        code, said = self.go("--repair-check")
+        self.assertEqual((code, said), (0, ""))
+
+    def test_the_check_writes_nothing(self):
+        self.found["units"] = ["/etc/systemd/system/x.service"]
+        code, said = self.go("--repair-check")
+        self.assertEqual(self.asked, [])
+        self.assertIn("missing /etc/systemd/system/x.service", said)
+
+    def test_the_repair_writes_and_says_so(self):
+        self.found["units"] = ["/etc/systemd/system/x.service"]
+        code, said = self.go("--repair")
+        self.assertEqual(len(self.asked), 1)
+        self.assertIn("wrote /etc/systemd/system/x.service", said)
+        self.assertEqual(code, 0)
+
+    def test_it_writes_nothing_when_nothing_is_gone(self):
+        code, said = self.go("--repair")
+        self.assertEqual(self.asked, [])
+        self.assertIn("nothing to write back", said)
+
+    def test_what_it_cannot_write_is_an_exit_of_one(self):
+        """A person who runs this by hand is told the machine needs them.
+
+        The unit does not fail on it: scripts/repair.sh ends with exit 0, or
+        a machine with no desktop user would be degraded at every boot.
+        """
+        self.found["orphans"] = ["/etc/systemd/system/x.service"]
+        self.found["why"] = {"/etc/systemd/system/x.service": "no template"}
+        code, said = self.go("--repair-check")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot write /etc/systemd/system/x.service: "
+                      "no template", said)
+
+    def test_a_refusal_is_a_sentence_and_not_a_stack_trace(self):
+        def refuse(*a, **k):
+            raise mounts.MountError("/etc belongs to SteamOS")
+        repair.run = refuse
+        self.found["units"] = ["/etc/systemd/system/x.service"]
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = service.main(["--repair"])
+        self.assertEqual(code, 1)
+        self.assertIn("/etc belongs to SteamOS", err.getvalue())
 
 
 class ScriptTest(unittest.TestCase):
@@ -582,6 +808,26 @@ class ScriptTest(unittest.TestCase):
         answer, ran = self.go()
         self.assertIn("  no template for /etc/systemd/system/x.service",
                       answer.stdout)
+
+    def test_a_stack_trace_does_not_unlock_the_filesystem(self):
+        """The check reports missing files on its own output.
+
+        A program that stops with a trace writes that trace to the error
+        stream. Read as a list of missing files it unlocks the read-only
+        filesystem for work that nothing can do, at every boot.
+        """
+        whole = os.path.join(self.root + repair.INSTALL_DIR,
+                             "steamos-utility-center")
+        os.makedirs(os.path.dirname(whole), exist_ok=True)
+        with open(whole, "w") as handle:
+            handle.write('#!/bin/sh\necho "Traceback (most recent call last)"'
+                         ' >&2\nexit 1\n')
+        os.chmod(whole, 0o755)
+        self.check, self.said = "", ""
+        answer, ran = self.go()
+        self.assertEqual(answer.returncode, 0)
+        self.assertNotIn("steamos-readonly", ran)
+        self.assertIn("Nothing to write back", answer.stdout)
 
     def test_it_does_nothing_without_the_program(self):
         self.check, self.said = "", ""
