@@ -5429,7 +5429,11 @@ class Panel(page_cec.CecPage):
         second. Everything that opens a window is behind one of these, so a
         test can answer for a person.
         """
-        asked = RemoveDialog(self, ledpanel.module_says(name))
+        # self.root and not self. Panel is a plain object that holds the Tk
+        # root; it is not a widget, so tkinter finds no interpreter on it and
+        # a press raised AttributeError into the terminal. Every other dialog
+        # here is built on self.root. See DialogParentTest.
+        asked = RemoveDialog(self.root, ledpanel.module_says(name))
         return bool(asked.answer), bool(asked.purge.get())
 
     def _remove_module(self, name):

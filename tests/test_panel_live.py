@@ -5352,6 +5352,61 @@ class ModulePageTest(unittest.TestCase):
         panel._remove_module(modules.POWER)
         self.assertIn("--purge", ran[-1])
 
+    def test_the_question_it_asks_really_opens(self):
+        """Reported: a press on "Remove module" printed a stack trace.
+
+        The three tests around this one replace _ask_remove, which is right
+        for them: they are about what reaches the installer. It left the one
+        line that builds the window with no test on it, and that line passed
+        `self`. Panel is a plain object that holds the Tk root and is not a
+        widget itself, so tkinter found no interpreter on it.
+
+        This test runs the real seam. The dialog is modal, so the answer
+        comes from a press that a timer makes.
+        """
+        panel = self._panel([modules.SYSTEM])
+        seen = []
+
+        def press():
+            window = next(child for child in panel.root.winfo_children()
+                          if isinstance(child, tk.Toplevel))
+            seen.append(str(window.title()))
+            button = next(widget for widget in self._all(window)
+                          if isinstance(widget, ttk.Button)
+                          and str(widget.cget("text")) == "Remove")
+            button.invoke()
+
+        panel.root.after(150, press)
+        go, purge = panel._ask_remove(modules.SYSTEM)
+        self.assertEqual(len(seen), 1, "the dialog never came up")
+        self.assertIs(go, True)
+        self.assertIs(purge, False)
+
+    def test_the_box_on_that_window_is_what_the_answer_reads(self):
+        """The second half of the answer, from the real window."""
+        panel = self._panel([modules.SYSTEM])
+
+        def press():
+            window = next(child for child in panel.root.winfo_children()
+                          if isinstance(child, tk.Toplevel))
+            box = next(widget for widget in self._all(window)
+                       if isinstance(widget, ttk.Checkbutton))
+            box.invoke()
+            next(widget for widget in self._all(window)
+                 if isinstance(widget, ttk.Button)
+                 and str(widget.cget("text")) == "Remove").invoke()
+
+        panel.root.after(150, press)
+        go, purge = panel._ask_remove(modules.SYSTEM)
+        self.assertIs(go, True)
+        self.assertIs(purge, True)
+
+    def _all(self, widget):
+        for child in widget.winfo_children():
+            yield child
+            for deeper in self._all(child):
+                yield deeper
+
     def test_saying_no_installs_and_removes_nothing(self):
         panel = self._panel([])
         ran = []

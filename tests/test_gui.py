@@ -984,6 +984,49 @@ class DialogTest(unittest.TestCase):
         self.assertNotIn("filedialog", self.source)
         self.assertIn("class ProfileDialog", self.source)
 
+    def test_every_one_of_them_is_opened_on_a_widget(self):
+        """Reported: a press on "Remove module" printed a stack trace.
+
+        A dialog builds a tk.Toplevel on its first argument, and tkinter
+        reads the interpreter off that object. Panel is a plain object that
+        holds the Tk root and is not a widget, so `RemoveDialog(self, ...)`
+        raised AttributeError and the button did nothing.
+
+        Nine places build one, and eight passed self.root. The ninth had no
+        test on it, because the three tests around it replace the seam that
+        holds it. This reads the source, so it needs no display and it
+        answers for every dialog and not for the one that broke.
+
+        The pages that the panel is cut into are read as well. A method that
+        moves into one of them keeps `self`, which is still the Panel and
+        still not a widget.
+        """
+        where = os.path.join(HERE, "..", "gui")
+        files = [os.path.join(where, "steamos-utility-center-panel")]
+        files.extend(os.path.join(where, name)
+                     for name in sorted(os.listdir(where))
+                     if name.startswith("page_") and name.endswith(".py"))
+        bad = []
+        for name in files:
+            with open(name) as handle:
+                for node in ast.walk(ast.parse(handle.read())):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    if not (isinstance(node.func, ast.Name)
+                            and node.func.id.endswith("Dialog")):
+                        continue
+                    said = "%s in %s at line %d" % (node.func.id,
+                                                    os.path.basename(name),
+                                                    node.lineno)
+                    if not node.args:
+                        bad.append("%s takes no parent" % said)
+                    elif (isinstance(node.args[0], ast.Name)
+                            and node.args[0].id == "self"):
+                        bad.append("%s is opened on self, which is not a "
+                                   "widget" % said)
+        self.assertEqual(bad, [])
+        self.assertGreater(len(files), 1, "no page was read")
+
 
 class ShapeTestButtonTest(unittest.TestCase):
     """The Test tab asks the service for one flash in a given shape."""
