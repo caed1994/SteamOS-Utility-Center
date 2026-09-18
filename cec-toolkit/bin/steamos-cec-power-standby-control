@@ -18,6 +18,21 @@ HOOK="/etc/systemd/system-sleep/steamos-cec-before-sleep"
 # hook covers a suspend only. "on" also removes a hook from an earlier install,
 # or the second run continues after an update.
 
+# "on" enables and does not start. "off" stops as well.
+#
+# The two are not symmetric, and the asymmetry is the point. Every other
+# switch of this toolkit is a long-running watcher, and toolkitctl switches
+# those with `--now` so a click takes effect at once. This one is a oneshot
+# that systemd pulls in at sleep.target and shutdown.target.
+#
+# `enable --now` would start it, and starting it sends the standby ladder.
+# The television would thus go off at the moment somebody switches the
+# feature *on*. Whoever reads the two lines below and makes them match will
+# do exactly that.
+#
+# `disable --now` costs nothing: the unit is a oneshot and is not running
+# between two suspends. It is there so that "off" is off whatever state the
+# unit is in.
 case "${1:-}" in
   on)
     if [[ ! -x "$HELPER" || ! -f "$UNIT_FILE" ]]; then
@@ -30,7 +45,7 @@ case "${1:-}" in
     ;;
   off)
     rm -f "$HOOK"
-    systemctl disable "$UNIT" >/dev/null 2>&1 || true
+    systemctl disable --now "$UNIT" >/dev/null 2>&1 || true
     systemctl daemon-reload
     ;;
   status)

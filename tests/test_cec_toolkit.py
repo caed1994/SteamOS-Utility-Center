@@ -370,6 +370,68 @@ exit 0
             len(self._messages("silent", TV_STANDBY_ROUNDS="zwei")), 6)
 
 
+class StandbySwitchTest(unittest.TestCase):
+    """Switching "Turn the television off with the machine" on and off.
+
+    steamos-cec-power-standby-control is the one switch of this toolkit that
+    does not use `--now` on both sides, and the asymmetry is deliberate.
+
+    Every other switch is a long-running watcher, and toolkitctl gives those
+    `enable --now` and `disable --now` so a click takes effect at once. This
+    one is a oneshot that systemd pulls in at sleep.target and
+    shutdown.target, and starting it sends the standby ladder. `enable --now`
+    would thus switch the television off at the moment somebody switches the
+    feature on.
+
+    This test is here because the two lines look like an oversight. Somebody
+    who makes them match, to be tidy, turns a click into a dark television.
+    """
+
+    CONTROL = os.path.join(REPO, "cec-toolkit", "bin",
+                           "steamos-cec-power-standby-control")
+
+    def setUp(self):
+        with open(self.CONTROL, encoding="utf-8") as handle:
+            self.text = handle.read()
+        self.on = self.text.split("  on)")[1].split("    ;;")[0]
+        self.off = self.text.split("  off)")[1].split("    ;;")[0]
+
+    def test_switching_it_on_does_not_start_the_unit(self):
+        """Starting it is the standby ladder, and it goes out at once."""
+        self.assertIn("systemctl enable", self.on)
+        self.assertNotIn("--now", self.on)
+
+    def test_switching_it_off_stops_it_as_well(self):
+        """It costs nothing on a oneshot, and it makes off mean off."""
+        self.assertIn("systemctl disable --now", self.off)
+
+    def test_the_helper_sends_standby_with_no_question_asked(self):
+        """The reason the test above exists.
+
+        The helper takes no decision about the state of the machine. It is
+        run, so it sends. `post` is the only argument it reads, and that one
+        is the resume half.
+        """
+        with open(os.path.join(REPO, "cec-toolkit", "bin",
+                               "steamos-cec-before-sleep"),
+                  encoding="utf-8") as handle:
+            body = handle.read()
+        self.assertIn('if [[ "${1:-}" == "post" ]]; then', body)
+        before = body.split('if [[ "${1:-}" == "post" ]]; then')[0]
+        self.assertNotIn("sleep.target", before)
+        self.assertNotIn("is-system-running", before)
+
+    def test_every_other_switch_takes_effect_at_once(self):
+        """toolkitctl uses --now for the watchers, which is what makes the
+        asymmetry above worth a comment rather than a correction."""
+        with open(os.path.join(REPO, "cec-toolkit", "bin",
+                               "steamos-cec-toolkitctl"),
+                  encoding="utf-8") as handle:
+            body = handle.read()
+        where = body.index("def set_service(")
+        self.assertIn('"--now"', body[where:where + 800])
+
+
 class FixedHereTest(unittest.TestCase):
     """The six fixes, each of which was a workaround somewhere else first.
 
