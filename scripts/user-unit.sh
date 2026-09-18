@@ -118,6 +118,13 @@ RESUME_UNIT_PATH="$UNIT_DIR/$NAME-resume.service"
 # Part of the core and not a module, because the devices themselves are: an
 # effect on one of them is an HTTP call to an address on the LAN. A machine
 # where nothing is paired reads an empty record and all three do nothing.
+# The unit templates, on the partition that a SteamOS update keeps.
+#
+# write_unit reads a template from the clone, which is right for an install:
+# a person runs the installer from there. A repair that runs at a boot has no
+# clone to read, and a person can move or delete one. /var is its own
+# partition, so a copy here is a copy an update cannot take.
+UNIT_TEMPLATE_DIR="$INSTALL_DIR/units"
 NANOLEAF_HELPER_PATH="$INSTALL_DIR/$NAME-nanoleaf"
 NANOLEAF_WATCH_PATH="$INSTALL_DIR/$NAME-nanoleaf-watch"
 NANOLEAF_UNIT_PATH="$UNIT_DIR/$NAME-nanoleaf.service"

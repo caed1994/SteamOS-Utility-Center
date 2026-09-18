@@ -459,6 +459,23 @@ device that does not answer keeps its switch with the reason in its name.
 There is no brightness there, for the same reason no other slider is: a
 slider sends a write at every step it passes.
 
+### Taking a module off
+
+The Remove button on a module's page asks whether its settings go with it.
+They stay by default: somebody who takes a module off to try something gets
+their LED count, their serial port and their effect back at the next install,
+and a press by accident costs nothing. On the command line that is
+`--without led --purge`.
+
+Two things stay whatever the answer. The kernel module is another project's
+code that other programs load, and `uninstall.sh` holds it. The firmware is
+on a board that no button here can reach.
+
+tests/test_leftovers.py reads each removal in `install.sh` and asks whether
+it reaches every file that module owns. It found one on the day it was
+written: the controller wake unit was deleted and never disabled, so its link
+in `multi-user.target.wants` stayed behind and named a unit that was gone.
+
 ### Does this machine still carry it
 
 The Status page has a card for the installation. It reads the machine

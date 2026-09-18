@@ -80,9 +80,18 @@ DASHES = re.compile(r"&mdash;|—|\s--\s|\s-\s")
 
 
 def tracked():
-    listing = subprocess.run(["git", "-C", REPO, "ls-files", "-z"],
+    """Every file of this repository, committed or not.
+
+    --others adds the ones that git does not track yet, and
+    --exclude-standard leaves out what .gitignore names. Without them a file
+    that somebody writes today is checked for the first time after it is
+    committed, which is one commit too late: four findings reached a branch
+    that way.
+    """
+    listing = subprocess.run(["git", "-C", REPO, "ls-files", "-z",
+                              "--cached", "--others", "--exclude-standard"],
                              capture_output=True, text=True, check=True)
-    return [name for name in listing.stdout.split("\0") if name]
+    return sorted(set(name for name in listing.stdout.split("\0") if name))
 
 
 def ours():

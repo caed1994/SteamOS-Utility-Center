@@ -1739,7 +1739,7 @@ def _where(path):
 # two would answer differently on the day one of them changed.
 
 
-def module_command(source_dir, name, remove=False):
+def module_command(source_dir, name, remove=False, purge=False):
     """Returns the command that installs or removes one module.
 
     It asks for a password one time, through pkexec, because it writes into
@@ -1749,8 +1749,14 @@ def module_command(source_dir, name, remove=False):
     module, and a button on a page must never write to the board. The firmware
     has a button of its own.
     """
-    return ["pkexec", os.path.join(source_dir, "install.sh"), "--yes",
-            "--flash", "0", "--without" if remove else "--with", name]
+    command = ["pkexec", os.path.join(source_dir, "install.sh"), "--yes",
+               "--flash", "0", "--without" if remove else "--with", name]
+    if remove and purge:
+        # Only with a removal. On an install it means nothing, and an option
+        # that means nothing on half the calls is an option that ends up on
+        # the wrong one.
+        command.append("--purge")
+    return command
 
 
 def module_installed(name, home=None):

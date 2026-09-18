@@ -43,7 +43,7 @@ INSTALL_DIR = "/var/lib/steamos-utility-center"
 # The file that lets the control command apply a change with no password.
 SUDO_RULE = "/etc/sudoers.d/zz-steamos-utility-center"
 
-# A name that belongs on every machine, whatever it has installed.
+# A name that belongs on every machine, whatever modules it carries.
 CORE = ""
 
 # Which module each file of the keep-list belongs to.
@@ -118,7 +118,8 @@ def wanted(here):
     """The files of the keep-list that this machine is meant to carry.
 
     A file that the table above does not claim is kept rather than dropped.
-    OwnerTest catches such a file while it is being written, and on a machine
+    OwnerTest catches such a file at the moment somebody writes it, and on
+    a machine
     it is better checked against the wrong module than checked by nobody: a
     file nobody looks at is the fault this whole file exists for.
     """

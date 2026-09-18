@@ -49,6 +49,19 @@ FLASH_ENV=""
 # See the module section below.
 WITH=""
 WITHOUT=""
+# Whether a removal takes that module's settings with it.
+#
+# The default is no, and every removal says so on the screen. A person who
+# takes a module off to try something gets their LED count, their serial port
+# and their effect back at the next install, and an accidental press costs
+# nothing.
+#
+# What --purge does not take, whatever a person asks: the kernel module,
+# which is another project's code that other programs load; the firmware on
+# the ESP, which this script cannot reach; and the Nanoleaf tokens in a home
+# directory, which belong to the devices and not to a module. uninstall.sh
+# holds the first of those.
+PURGE=0
 LIST_MODULES=0
 
 # The firmware builds, in the order of the menu.
@@ -77,6 +90,7 @@ usage() {
 Modules:
   --with LIST     install these as well, e.g. --with led,power or --with all
   --without LIST  take these back off the machine
+  --purge         with --without, remove that module's settings too
   --modules       say what each module is, and what this machine has
 
 Options:
@@ -108,6 +122,7 @@ while [[ $# -gt 0 ]]; do
         # --with led --with power is the same as --with led,power.
         --with) WITH="$WITH,${2:-}"; shift 2 ;;
         --without) WITHOUT="$WITHOUT,${2:-}"; shift 2 ;;
+        --purge) PURGE=1; shift ;;
         --modules) LIST_MODULES=1; shift ;;
         --skip-module) SKIP_MODULE=1; shift ;;
         --rebuild-module) REBUILD_MODULE=1; shift ;;
@@ -380,6 +395,22 @@ install -m 0755 "$SOURCE_DIR/server/steamos-utility-center" "$INSTALL_DIR/steamo
 install -m 0755 "$SOURCE_DIR/server/steamos-utility-centerctl" "$INSTALL_DIR/steamos-utility-centerctl"
 find "$INSTALL_DIR/steamos_utility_center" -type f -exec chmod 0644 {} +
 
+# The unit templates, beside the code that they name.
+#
+# They are copied and not used from here: write_unit reads the clone, which
+# is what an install is. This copy is for a repair at a boot, which has no
+# clone. Every template goes, and not the ones this run writes: a module that
+# somebody installs later needs its own, and a directory that holds a part of
+# the answer is worse than one that holds none.
+#
+# The sudoers rule is not here. The installer builds it from the list of
+# modules rather than copying a file, so a repair has to build it too. See
+# the rule below.
+say "Keeping the unit templates in $UNIT_TEMPLATE_DIR"
+install -d -m 0755 "$UNIT_TEMPLATE_DIR"
+rm -f "$UNIT_TEMPLATE_DIR"/*.service
+install -m 0644 "$SOURCE_DIR"/server/*.service "$UNIT_TEMPLATE_DIR/"
+
 # The commit of those files, so the panel can report a clone that moved ahead
 # of them. The last write of the core, so a stamp that exists is a stamp for
 # files that all exist.
@@ -559,7 +590,12 @@ remove_led() {
     # The kernel module and the ESP firmware stay. The module is another
     # project's code and other programs can load it, and the firmware is on a
     # board that this script cannot reach. uninstall.sh takes the module.
-    say "  the settings in $CONFIG_PATH stay, for a second install"
+    if [[ $PURGE -eq 1 ]]; then
+        rm -f "$CONFIG_PATH"
+        say "  and the settings in $CONFIG_PATH"
+    else
+        say "  the settings in $CONFIG_PATH stay, for a second install"
+    fi
 }
 
 # -- power: the CPU and the graphics card ------------------------------------
@@ -619,7 +655,12 @@ remove_power() {
         rm -f "$POWER_COMMAND_LINK"
     fi
     systemctl daemon-reload
-    say "  the settings in $POWER_CONFIG_PATH stay, for a second install"
+    if [[ $PURGE -eq 1 ]]; then
+        rm -f "$POWER_CONFIG_PATH"
+        say "  and the settings in $POWER_CONFIG_PATH"
+    else
+        say "  the settings in $POWER_CONFIG_PATH stay, for a second install"
+    fi
 }
 
 # -- cec: the television -----------------------------------------------------
@@ -727,7 +768,12 @@ remove_pegboard() {
         "$INSTALL_DIR/steamos-utility-center-pegboard"
     remove_legacy_sleep_hooks
     systemctl daemon-reload
-    say "  the settings in $PEGBOARD_CONFIG_PATH stay, for a second install"
+    if [[ $PURGE -eq 1 ]]; then
+        rm -f "$PEGBOARD_CONFIG_PATH"
+        say "  and the settings in $PEGBOARD_CONFIG_PATH"
+    else
+        say "  the settings in $PEGBOARD_CONFIG_PATH stay, for a second install"
+    fi
 }
 
 # -- system: the drives and Game Mode ----------------------------------------
@@ -799,13 +845,23 @@ remove_system() {
     if [[ -x "$WAKE_APPLIER_PATH" ]]; then
         "$WAKE_APPLIER_PATH" off >/dev/null 2>&1 || true
     fi
+    # Disabled before the file goes, or the link in multi-user.target.wants
+    # stays behind and names a unit that is not there. systemd reports that
+    # at every boot, into a log that nobody reads, and the machine looks
+    # clean. The removal above took the file and left the link.
+    systemctl disable "$NAME-wake.service" >/dev/null 2>&1 || true
     rm -f "$WAKE_UNIT_PATH" "$WAKE_APPLIER_PATH" "$WAKE_STATE_PATH"
     # The drives themselves. Without this they stay mounted until the machine
     # restarts, and nothing on the machine can unmount them any more.
     remove_mount_units
     systemctl daemon-reload
     remove_decky_plugin
-    say "  the drives in $MOUNTS_RECORD_PATH stay, for a second install"
+    if [[ $PURGE -eq 1 ]]; then
+        rm -f "$MOUNTS_RECORD_PATH"
+        say "  and the drives in $MOUNTS_RECORD_PATH"
+    else
+        say "  the drives in $MOUNTS_RECORD_PATH stay, for a second install"
+    fi
 }
 
 # --- the units that run in the desktop session ------------------------------

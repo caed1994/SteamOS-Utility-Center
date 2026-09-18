@@ -5329,6 +5329,9 @@ class ModulePageTest(unittest.TestCase):
         ran = []
         panel.runner.start = lambda command, done=None: ran.append(command)
         panel._ask = lambda *a, **k: True
+        # A removal asks two things and _ask answers one, so it has a seam of
+        # its own. See _ask_remove.
+        panel._ask_remove = lambda name: (True, False)
         panel._install_module(modules.LED)
         self.assertEqual(ran[-1][0], "pkexec")
         self.assertTrue(ran[-1][1].endswith("install.sh"))
@@ -5337,12 +5340,24 @@ class ModulePageTest(unittest.TestCase):
         panel._remove_module(modules.POWER)
         self.assertIn("--without", ran[-1])
         self.assertEqual(ran[-1][-1], modules.POWER)
+        self.assertNotIn("--purge", ran[-1])
+
+    def test_the_box_on_the_removal_reaches_the_installer(self):
+        """The settings stay unless somebody says otherwise, and the word for
+        otherwise has to arrive at the script that acts on it."""
+        panel = self._panel([])
+        ran = []
+        panel.runner.start = lambda command, done=None: ran.append(command)
+        panel._ask_remove = lambda name: (True, True)
+        panel._remove_module(modules.POWER)
+        self.assertIn("--purge", ran[-1])
 
     def test_saying_no_installs_and_removes_nothing(self):
         panel = self._panel([])
         ran = []
         panel.runner.start = lambda command, done=None: ran.append(command)
         panel._ask = lambda *a, **k: False
+        panel._ask_remove = lambda name: (False, False)
         panel._install_module(modules.LED)
         panel._remove_module(modules.LED)
         self.assertEqual(ran, [])

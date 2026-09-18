@@ -2029,6 +2029,41 @@ class ColourDialog(Dialog):
         super()._confirm()
 
 
+class RemoveDialog(Dialog):
+    """Take a module off, and whether its settings go with it.
+
+    The settings stay by default. Somebody who takes a module off to try
+    something gets their LED count, their serial port and their effect back
+    at the next install, and a press by accident then costs nothing.
+
+    The box is here because the other half is just as reasonable, and because
+    files that stay after a removal are a surprise when nobody said so. The
+    line under it names what stays whatever the box says.
+    """
+
+    def __init__(self, parent, said):
+        self.purge = tk.BooleanVar(value=False)
+        super().__init__(
+            parent, said["title"],
+            "This takes the %s module off the machine and asks for your "
+            "password once." % said["title"],
+            confirm="Remove")
+
+    def build(self, body):
+        ttk.Checkbutton(body, variable=self.purge,
+                        text="Remove its settings as well").pack(
+                            anchor="w", pady=(GROUP_GAP, 0))
+        # What no answer here reaches. The kernel module is another project's
+        # code that other programs load, and the board is out of reach of any
+        # button. uninstall.sh holds the first one.
+        note = ttk.Label(
+            body, style="Muted.TLabel", justify="left",
+            wraplength=DIALOG_WRAP,
+            text="The kernel module and the firmware on the board stay "
+                 "either way.")
+        note.pack(anchor="w", pady=(ROW_GAP, 0))
+
+
 class ProfileDialog(Dialog):
     """Save or load one of your own profiles, without a file browser.
 
@@ -5422,17 +5457,29 @@ class Panel:
         self.runner.start(ledpanel.module_command(SOURCE_DIR, name),
                           lambda _code: self._module_changed(name))
 
+    def _ask_remove(self, name):
+        """Asks about a removal, and returns (go ahead, take the settings).
+
+        A seam beside _ask, which answers one question and cannot carry the
+        second. Everything that opens a window is behind one of these, so a
+        test can answer for a person.
+        """
+        asked = RemoveDialog(self, ledpanel.module_says(name))
+        return bool(asked.answer), bool(asked.purge.get())
+
     def _remove_module(self, name):
-        said = ledpanel.module_says(name)
-        if not self._ask(said["title"],
-                         "This takes the %s module off the machine and asks "
-                         "for your password once.\n\nYour settings stay "
-                         "where they are, so a second install reads them "
-                         "back." % said["title"],
-                         confirm="Remove"):
+        """The settings are a question here and not a sentence.
+
+        They stayed either way before, and the dialog said so. Files that
+        stay after a removal are a surprise when the only choice is somebody
+        else's.
+        """
+        go, purge = self._ask_remove(name)
+        if not go:
             return
         self.runner.start(
-            ledpanel.module_command(SOURCE_DIR, name, remove=True),
+            ledpanel.module_command(SOURCE_DIR, name, remove=True,
+                                    purge=purge),
             lambda _code: self._module_changed(name))
 
     def _module_changed(self, name):

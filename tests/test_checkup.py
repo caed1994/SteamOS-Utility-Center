@@ -94,7 +94,7 @@ class OwnerTest(unittest.TestCase):
     A file that nobody claims is a file that this cannot judge. It is still
     looked at, because wanted() keeps an unclaimed name rather than dropping
     it, but the module it belongs to is a guess. This test is the place that
-    catches it, while the file is being added and not a year later.
+    catches it at the moment somebody adds the file, and not a year later.
     """
 
     def test_every_file_of_the_keep_list_has_an_owner(self):
@@ -286,7 +286,7 @@ class ProgramTest(Room):
 
     def test_a_program_that_cannot_run_is_named(self):
         """An applier with no execute bit is a unit that fails at a moment
-        nobody is watching."""
+        nobody looks at."""
         self.build()
         os.chmod(os.path.join(self.root + checkup.INSTALL_DIR,
                               "steamos-utility-center-nanoleaf-watch"), 0o644)
