@@ -35,6 +35,18 @@ UNIT="steamos-utility-center-wake.service"
 # Where this program is, so "on" can name it to the unit. Both come from the
 # installer, which puts them in the same directory.
 INSTALL_DIR="${WAKE_INSTALL_DIR:-/var/lib/steamos-utility-center}"
+# What this changed, so "off" can put the values back. It has a second reader.
+#
+# The file is on the machine for exactly as long as the switch is on: "on"
+# writes it through walk, and "off" removes it through restore. It is thus the
+# one answer in /var about a switch whose state is otherwise in /etc alone,
+# and the boot repair reads it there. /var is its own partition, so a SteamOS
+# update keeps it and the repair can tell "a person switched this off" from
+# "an update took the link". See wake.on in
+# server/steamos_utility_center/wake.py.
+#
+# So a change that keeps this file after "off", or that writes it before "on",
+# switches controller wake on again at the next boot.
 STATE_FILE="${WAKE_STATE_FILE:-$INSTALL_DIR/wake-state}"
 # Where the USB bus is, so a test can point this at a made-up one.
 WAKE_SYSFS="${WAKE_SYSFS:-/sys/bus/usb/devices}"

@@ -25,6 +25,7 @@ The program printed "matched":0 and gave no reason.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -218,6 +219,72 @@ class WritingTest(BusTest):
         with tempfile.TemporaryDirectory() as where:
             done = self._run("sideways", self._machine(where, {}), where)
             self.assertEqual(done.returncode, 2)
+
+
+class RecordTest(BusTest):
+    """The record in /var, and the second reader it got.
+
+    wake.on reads it, and the boot repair reads wake.on. That is how a repair
+    tells "a person switched this off" from "an update took the link": the
+    link is in /etc, which an update rebuilds, and this is in /var, which is
+    its own partition.
+
+    So the record has to be on the machine for exactly as long as the switch
+    is on. These tests hold that against the program, because a change to
+    restore() or to walk() that broke it would switch controller wake on
+    again at the next boot with nothing to say so.
+    """
+
+    RADIO = {"0e8d:0616": ("Wireless_Device", [BusTest.BLUETOOTH])}
+
+    def test_the_name_is_the_one_the_repair_reads(self):
+        """Two spellings of one path would make wake.on answer for nothing."""
+        self.assertEqual(os.path.basename(wake.STATE_PATH), "wake-state")
+        self.assertTrue(wake.STATE_PATH.startswith(wake.INSTALL_DIR))
+        with open(PROGRAM) as handle:
+            self.assertIn("$INSTALL_DIR/wake-state", handle.read())
+
+    def test_applying_writes_it(self):
+        """The unit runs `apply` at each boot, so the switch stays recorded."""
+        with tempfile.TemporaryDirectory() as where:
+            usb = self._machine(where, self.RADIO)
+            self.assertEqual(self._run("apply", usb, where).returncode, 0)
+            self.assertTrue(os.path.exists(os.path.join(where, "state")))
+
+    def test_switching_it_off_takes_it_away(self):
+        with tempfile.TemporaryDirectory() as where:
+            usb = self._machine(where, self.RADIO)
+            self.assertEqual(self._run("apply", usb, where).returncode, 0)
+            self.assertEqual(self._run("off", usb, where).returncode, 0)
+            self.assertFalse(os.path.exists(os.path.join(where, "state")))
+
+    def test_asking_writes_nothing_so_a_question_never_says_on(self):
+        """The page asks `status` on every visit, and it asks it while off."""
+        with tempfile.TemporaryDirectory() as where:
+            usb = self._machine(where, self.RADIO)
+            self.assertEqual(self._run("status", usb, where).returncode, 0)
+            self.assertFalse(os.path.exists(os.path.join(where, "state")))
+
+    def test_the_answer_follows_the_file_and_nothing_else(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIs(wake.on(root), False)
+            os.makedirs(root + wake.INSTALL_DIR, exist_ok=True)
+            with open(root + wake.STATE_PATH, "w") as handle:
+                handle.write("")
+            self.assertIs(wake.on(root), True)
+
+    def test_switching_it_off_with_no_radio_still_takes_it_away(self):
+        """restore() removes it even where it read nothing back.
+
+        A machine whose radio left the bus between "on" and "off" would keep
+        the record, and the next boot would switch the feature on again.
+        """
+        with tempfile.TemporaryDirectory() as where:
+            usb = self._machine(where, self.RADIO)
+            self.assertEqual(self._run("apply", usb, where).returncode, 0)
+            shutil.rmtree(os.path.join(usb, "1-1"))
+            self.assertEqual(self._run("off", usb, where).returncode, 0)
+            self.assertFalse(os.path.exists(os.path.join(where, "state")))
 
 
 class UnitTest(unittest.TestCase):

@@ -24,7 +24,8 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "server"))
 
-from steamos_utility_center import checkup, modules, mounts  # noqa: E402
+from steamos_utility_center import (checkup, ctl, modules, mounts,  # noqa: E402
+                                    wake)
 
 ALL = list(modules.ORDER)
 
@@ -267,6 +268,178 @@ class CarriedTest(Room):
         self.build()
         names = [one["name"] for one in checkup.look(self.root, here=ALL)]
         self.assertIn("The python modules this project carries", names)
+
+
+class SwitchedTest(Room):
+    """The two files that a switch writes, and no installation.
+
+    A fresh installation leaves both out, because nobody added a drive and
+    nobody switched controller wake on. The page called that "2 never start"
+    and showed a red light that no reinstallation could clear.
+
+    Room.build writes every file of the keep-list, so every other test here
+    describes a machine that a fresh installation never is. These tests take
+    the two away again.
+    """
+
+    def switches_off(self):
+        """The machine that a fresh installation really leaves behind."""
+        self.build()
+        for path in checkup.SWITCHED:
+            os.unlink(self.root + path)
+
+    def switch_on(self, path):
+        """Write the record in /var that says one switch is on."""
+        where = (mounts.STATE_PATH if "mounts" in path else wake.STATE_PATH)
+        os.makedirs(os.path.dirname(self.root + where), exist_ok=True)
+        with open(self.root + where, "w") as handle:
+            handle.write("")
+
+    def test_every_one_of_them_is_on_the_keep_list(self):
+        """A key that names no file of the keep-list excuses nothing.
+
+        The table is read against the paths that units() looks at. A rename
+        on one side alone makes each entry dead and quietly brings the red
+        light back.
+        """
+        for path in checkup.SWITCHED:
+            self.assertIn(path, mounts.PROJECT_FILES)
+
+    def test_every_one_of_them_is_a_link_and_not_a_unit(self):
+        for path in checkup.SWITCHED:
+            self.assertIn(".wants/", path)
+
+    def test_a_fresh_installation_with_no_switch_on_is_in_order(self):
+        self.switches_off()
+        found = self.named(checkup.units(ALL, self.root), "What starts them")
+        self.assertIs(found["ok"], True)
+
+    def test_it_says_which_switch_each_one_waits_for(self):
+        """Silence would hide two links that systemd never starts."""
+        self.switches_off()
+        found = self.named(checkup.units(ALL, self.root), "What starts them")
+        self.assertIn("wait for a switch", found["detail"])
+        self.assertIn("controller wake", found["detail"])
+        self.assertIn("a drive on the System page", found["detail"])
+
+    def test_the_count_of_the_links_leaves_them_out(self):
+        """"All 15 links are here" with 13 of them there is a lie."""
+        self.switches_off()
+        found = self.named(checkup.units(ALL, self.root), "What starts them")
+        links = [path for path in checkup.wanted(ALL) if ".wants/" in path]
+        self.assertIn("All %d links are here." % (len(links) - 2),
+                      found["detail"])
+
+    def test_one_that_is_gone_with_its_switch_on_is_a_fault(self):
+        """The other half, and the reason the switch is asked at all.
+
+        An update that ignores the keep-list takes the link. The feature then
+        says it is on and systemd starts nothing. A check that reads "absent"
+        as "off" for every machine reports nothing on the machine that this
+        whole file is for.
+        """
+        for path in checkup.SWITCHED:
+            with self.subTest(path=path):
+                self.switches_off()
+                self.switch_on(path)
+                found = self.named(checkup.units(ALL, self.root),
+                                   "What starts them")
+                self.assertIs(found["ok"], False)
+                self.assertIn(os.path.basename(path), found["detail"])
+                self.assertIn("never start", found["detail"])
+
+    def test_a_link_that_no_switch_writes_is_still_a_fault(self):
+        """The check this change had to leave alone."""
+        self.switches_off()
+        other = (mounts.UNIT_DIR + "/multi-user.target.wants/"
+                 "steamos-utility-center-nanoleaf.service")
+        self.assertNotIn(other, checkup.SWITCHED)
+        os.unlink(self.root + other)
+        found = self.named(checkup.units(ALL, self.root), "What starts them")
+        self.assertIs(found["ok"], False)
+        self.assertIn("steamos-utility-center-nanoleaf.service",
+                      found["detail"])
+
+    def test_a_link_that_names_a_unit_which_is_gone_is_still_a_fault(self):
+        """A dangling link is a fault whatever the switch says."""
+        self.switches_off()
+        path = list(checkup.SWITCHED)[0]
+        self.switch_on(path)
+        os.symlink(self.root + "/nowhere", self.root + path)
+        found = self.named(checkup.units(ALL, self.root), "What starts them")
+        self.assertIs(found["ok"], False)
+
+    def test_a_path_that_no_switch_writes_is_always_on(self):
+        self.assertIs(checkup.switched_on("/etc/systemd/system/anything",
+                                          self.root), True)
+
+    def test_the_question_reads_var_and_not_the_link(self):
+        """/etc is what an update rebuilds, so the link cannot answer this.
+
+        The link is there and the record is not. A question that read the
+        link would answer "on" and a repair would then leave a machine with
+        its feature off.
+        """
+        self.build()
+        for path in checkup.SWITCHED:
+            with self.subTest(path=path):
+                self.assertTrue(os.path.exists(self.root + path))
+                self.assertIs(checkup.switched_on(path, self.root), False)
+
+
+class PasswordRuleTest(Room):
+    """The rule that only root can read, on a machine with no module.
+
+    ctl.permit removes the rule where there is nothing to permit, because
+    each line of it names one applier and the rule holds no wildcard. The
+    check asked only whether the file was there, so a core installation on
+    its own reported a fault that no reinstallation repaired.
+    """
+
+    def look(self):
+        """The one finding, answered for this machine and not for this one."""
+        return checkup.password_rule(
+            self.root,
+            present=lambda path: os.path.exists(self.root + path))[0]
+
+    def core_only(self):
+        """Take every applier away, which is what a core installation is."""
+        self.build()
+        for name, who in checkup.PROGRAMS.items():
+            if who == checkup.CORE:
+                continue
+            whole = os.path.join(self.root + checkup.INSTALL_DIR, name)
+            if os.path.exists(whole):
+                os.unlink(whole)
+
+    def test_a_machine_with_no_module_needs_no_rule(self):
+        self.core_only()
+        os.unlink(self.root + checkup.SUDO_RULE)
+        found = self.look()
+        self.assertIs(found["ok"], True)
+        self.assertIn("No module", found["detail"])
+
+    def test_a_machine_with_a_module_and_no_rule_is_a_fault(self):
+        self.build()
+        os.unlink(self.root + checkup.SUDO_RULE)
+        self.assertTrue(ctl.permits(
+            lambda path: os.path.exists(self.root + path)))
+        found = self.look()
+        self.assertIs(found["ok"], False)
+        self.assertIn("Game Mode", found["detail"])
+
+    def test_a_machine_with_a_module_and_the_rule_is_in_order(self):
+        self.build()
+        found = self.look()
+        self.assertIs(found["ok"], True)
+
+    def test_a_directory_that_only_root_can_read_answers_neither(self):
+        """The check that this change had to leave alone."""
+        self.build()
+        shutil.rmtree(self.root + os.path.dirname(checkup.SUDO_RULE))
+        found = self.look()
+        self.assertIsNone(found["ok"])
+        self.assertIs(found["repairable"], False)
 
 
 class WholeTest(Room):

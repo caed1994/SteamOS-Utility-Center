@@ -36,7 +36,7 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "server"))
 
 from steamos_utility_center import checkup, modules, mounts  # noqa: E402
-from steamos_utility_center import repair, service  # noqa: E402
+from steamos_utility_center import repair, service, wake  # noqa: E402
 
 ALL = list(modules.ORDER)
 
@@ -483,6 +483,11 @@ class NeedTest(Room):
                 if path.endswith(".service"):
                     self.take(path)
 
+        def no_switch_on():
+            self.build()
+            for path in checkup.SWITCHED:
+                self.take(path)
+
         def everything():
             self.build()
             for path in checkup.wanted(ALL) + [mounts.KEEP_LIST]:
@@ -502,7 +507,17 @@ class NeedTest(Room):
                     "/etc/systemd/system/multi-user.target.wants/"
                     "steamos-utility-center.service"),
                 "the command names gone": gone(*checkup.COMMANDS),
-                "the keep-list gone": gone(mounts.KEEP_LIST)}
+                "the keep-list gone": gone(mounts.KEEP_LIST),
+                # Not damage at all: the machine a fresh installation
+                # leaves behind, with no drive added and controller wake off.
+                # It is here for the second test of this class, which runs a
+                # repair on every machine and lets nothing raise.
+                #
+                # It holds no rule of its own. A repair that wrote the two
+                # links wrote them once and then asked for nothing, so this
+                # test passed both before the fix and after it. SwitchTest is
+                # where that fault is held.
+                "a fresh installation with no switch on": no_switch_on}
 
     def test_one_repair_is_enough_on_every_machine(self):
         left = []
@@ -554,6 +569,76 @@ class NeedTest(Room):
         said = " ".join(repair.lines(self.plan()))
         self.assertIn(repair.UDEV_RULE, said)
         self.assertIn(repair.UDEV_TEMPLATE, said)
+
+
+class SwitchTest(Room):
+    """The two links that a switch writes, and no installation.
+
+    A repair reads a file that is gone and writes it back. That is right for
+    every file of an installation and wrong for these two: absent is what
+    "the switch is off" looks like on the disk.
+
+    Measured on a machine that a repair ran on three times: the first boot
+    wrote both links and switched both features on. The person then switched
+    controller wake off, and the next boot wrote the link again and switched
+    it back on.
+
+    The switch is read from /var, which is its own partition and which an
+    update keeps. See checkup.switched_on.
+    """
+
+    def switch_on(self, path):
+        where = mounts.STATE_PATH if "mounts" in path else wake.STATE_PATH
+        self.write(where, "")
+
+    def test_it_writes_neither_where_the_switch_is_off(self):
+        self.build()
+        for path in checkup.SWITCHED:
+            self.take(path)
+        self.assertEqual(self.plan()["links"], [])
+
+    def test_it_writes_one_where_that_switch_is_on(self):
+        for path in checkup.SWITCHED:
+            with self.subTest(path=path):
+                self.setUp()
+                self.build()
+                for one in checkup.SWITCHED:
+                    self.take(one)
+                self.switch_on(path)
+                self.assertEqual(self.plan()["links"], [path])
+
+    def test_a_link_that_no_switch_writes_is_written_back(self):
+        """The behaviour this change had to leave alone."""
+        self.build()
+        other = ("/etc/systemd/system/multi-user.target.wants/"
+                 "steamos-utility-center-nanoleaf.service")
+        self.assertNotIn(other, checkup.SWITCHED)
+        self.take(other)
+        self.assertIn(other, self.plan()["links"])
+
+    def test_a_repair_leaves_a_switch_that_is_off_off(self):
+        """The whole point, read from the machine after a run."""
+        self.build()
+        for path in checkup.SWITCHED:
+            self.take(path)
+        self.run_it(runner=self.runner)
+        for path in checkup.SWITCHED:
+            self.assertFalse(os.path.lexists(self.root + path),
+                             "%s was switched on by a repair" % path)
+
+    def test_a_repair_puts_back_a_switch_that_is_on(self):
+        """An update that ignores the keep-list takes the link away.
+
+        The record in /var says the person wants the feature, so this is the
+        case a repair is for.
+        """
+        self.build()
+        for path in checkup.SWITCHED:
+            self.take(path)
+            self.switch_on(path)
+        self.run_it(runner=self.runner)
+        for path in checkup.SWITCHED:
+            self.assertTrue(os.path.lexists(self.root + path), path)
 
 
 class TemplateTest(unittest.TestCase):

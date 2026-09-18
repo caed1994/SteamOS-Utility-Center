@@ -30,6 +30,34 @@ INSTALL_DIR = "/var/lib/steamos-utility-center"
 APPLIER = os.path.join(INSTALL_DIR, "steamos-utility-center-wake-apply")
 UNIT = "steamos-utility-center-wake.service"
 
+# Where the applier records the values it changed, and what that record also
+# says.
+#
+# scripts/wake-apply.sh writes one line for each USB device it changed, so
+# that "off" can put the value back. The file is thus on the machine for
+# exactly as long as the switch is on: "on" writes it and "off" removes it.
+#
+# That makes it the one answer in /var about a switch whose state is in /etc
+# alone. /var is its own partition and a SteamOS update keeps it. See on().
+STATE_PATH = os.path.join(INSTALL_DIR, "wake-state")
+
+
+def on(root=""):
+    """Whether the switch is on, from the record in /var.
+
+    `systemctl is-enabled` answers the same question on a running machine and
+    cannot answer it at a boot repair. It reads the link in /etc, and that
+    link is the thing an update takes away.
+
+    So a repair that read the link wrote it back: it could not tell "a person
+    switched this off" from "an update took it", and it chose "on" both
+    times. A switch that turns itself on again is worse than a switch that
+    stays off. See checkup.SWITCHED.
+
+    `root` is a directory in the tests and empty on a machine.
+    """
+    return os.path.exists(root + STATE_PATH)
+
 
 def installed(present=None):
     """Whether the program is on this machine."""

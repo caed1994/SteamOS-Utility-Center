@@ -616,6 +616,30 @@ class SudoersTest(unittest.TestCase):
         self.assertEqual(answer["rule"], "")
         self.assertEqual(runner.commands, [["rm", "-f", ctl.SUDO_RULE]])
 
+    def test_the_same_question_answers_the_status_page(self):
+        """permits() is what tells the page that no rule is wanted.
+
+        The page asked only whether the file was there. On a core
+        installation the file is correctly absent, so the page reported a
+        fault that no reinstallation repaired. Two lists of the appliers
+        would drift, so there is one. See checkup.password_rule.
+        """
+        self.assertEqual(ctl.permits(self.NONE), [])
+        self.assertTrue(ctl.permits(self.EVERY))
+
+    def test_it_names_one_pair_for_each_line_of_the_rule(self):
+        self.assertEqual(len(ctl.permits(self.EVERY)), len(self._rules()))
+
+    def test_each_pair_is_a_program_and_one_argument(self):
+        """Not a command line. A pair with a space in it is two arguments."""
+        for program, argument in ctl.permits(self.EVERY):
+            self.assertTrue(program.startswith("/"), program)
+            self.assertNotIn(" ", argument, argument)
+
+    def test_a_machine_with_one_module_permits_less_than_all_of_them(self):
+        one = ctl.permits(lambda path: path == ctl.APPLY_POWER)
+        self.assertEqual([program for program, _ in one], [ctl.APPLY_POWER])
+
 
 class StagedFileTest(unittest.TestCase):
     """What each applier does with the file it is given.

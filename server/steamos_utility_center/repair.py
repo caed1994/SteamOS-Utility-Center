@@ -105,7 +105,6 @@ MARKS = (INSTALL_MARK, WATCHER_MARK)
 # anything but this is read as no answer at all.
 USER_NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\$?$")
 
-
 def watcher(root=""):
     """The account the units run as, or "" when there is no usable record."""
     try:
@@ -191,10 +190,24 @@ def plan(here=None, root="", home=None, present=None):
     # A link is worth making only where the unit behind it is there, or where
     # this run writes it. systemd reports a link with no unit at every boot,
     # and a repair that leaves one behind reports a fault it made itself.
+    #
+    # And only where the switch behind it is on. Two of these links are
+    # written by a switch and not by an installation.
+    #
+    # Measured on a machine that a repair ran on three times, with the links
+    # taken away as a fresh installation leaves them: the first boot wrote
+    # both and switched both features on. The person then switched controller
+    # wake off, and the next boot wrote the link again and switched it back
+    # on. The unit of that switch says the same in its own words: "a unit
+    # that enables itself at each boot is a unit that fights the switch which
+    # turned it off".
+    #
+    # See checkup.switched_on, which the check on the page asks as well.
     lost = set(os.path.basename(one) for one in orphans + skipped)
     links = [path for path in named
              if ".wants/" in path and _needs(path, root)
-             and os.path.basename(path) not in lost]
+             and os.path.basename(path) not in lost
+             and checkup.switched_on(path, root)]
 
     # A command name is linked where the program behind it is there. The
     # Power module brings one of the three, and a link to a program that is

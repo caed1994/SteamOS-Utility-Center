@@ -812,23 +812,24 @@ def action(name, may_prompt=False, run=None, home=None):
 NAME = re.compile(r"^[a-z_][a-z0-9_.-]*\$?$")
 
 
-def sudoers_text(user, present=None):
-    """The rule that lets one user apply a change with no password.
+def permits(present=None):
+    """The (program, argument) pairs that this machine has anything to permit.
 
-    One line for each applier, and each line names the one file that applier
-    is permitted to read. There is no `*` in it: the argument of these
-    programs is a file that they read as root.
+    One pair becomes one line of the rule, and each line names the one
+    argument that program is permitted to take. There is no `*` in any of
+    them.
 
-    An applier that is not on the machine gets no line. The appliers are the
-    modules, so this rule is the list of installed modules. See modules.py.
+    An applier that is not on the machine gets no pair. The appliers are the
+    modules, so this list is the list of installed modules. See modules.py.
 
-    Returns "" for a machine with no module. permit() then removes the rule.
+    Empty for a machine with no module, and permit() then removes the rule.
+    checkup.password_rule asks this same question, so that a core
+    installation with no module reports no fault for a rule that this project
+    deliberately does not write.
 
     `present` is a parameter so a test can answer for a machine it did not
-    build.
+    build, and so that a caller with a root can answer for that root.
     """
-    if not NAME.match(user or ""):
-        raise CtlError("%r is not a user name" % user)
     present = os.path.exists if present is None else present
     permitted = [(applier, STAGED[area])
                  for applier, area in ((APPLY_CONFIG, "strip"),
@@ -849,6 +850,20 @@ def sudoers_text(user, present=None):
     # can read, and asks systemd a question that needs no rights.
     if present(APPLY_WAKE):
         permitted.extend((APPLY_WAKE, state) for state in ("on", "off"))
+    return permitted
+
+
+def sudoers_text(user, present=None):
+    """The rule that lets one user apply a change with no password.
+
+    One line for each pair of permits(). There is no `*` in it: the argument
+    of these programs is a file that they read as root.
+
+    Returns "" for a machine with no module. permit() then removes the rule.
+    """
+    if not NAME.match(user or ""):
+        raise CtlError("%r is not a user name" % user)
+    permitted = permits(present)
     if not permitted:
         return ""
     lines = [

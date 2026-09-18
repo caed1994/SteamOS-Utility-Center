@@ -34,8 +34,10 @@ from __future__ import annotations
 import os
 
 from . import cec
+from . import ctl
 from . import modules
 from . import mounts
+from . import wake
 
 # Where the programs that need root are installed. Spelled here rather than
 # imported from ctl, which imports modules, which this file imports.
@@ -134,6 +136,51 @@ COMMANDS = ("/usr/local/bin/steamos-utility-center",
             "/usr/local/bin/steamos-utility-centerctl",
             "/usr/local/bin/steamos-utility-center-power")
 
+# The files of the keep-list that a switch writes, and no installation.
+#
+# Each of them belongs on the keep-list: where the switch is on, a SteamOS
+# update must not take the file. Neither is a fault when the switch is off.
+# Absent is the shape of "off" on the disk for these two.
+#
+# The key is the file. The value is the name of the switch, for a sentence,
+# and the question that answers whether it is on.
+#
+# Every answer comes from /var, which is its own partition and which an
+# update keeps. The link in /etc cannot answer it: the link is the thing an
+# update that ignores the keep-list takes away. The mounts answer is the file
+# that the unit itself names in ConditionPathExists, so the check and the
+# unit ask one question.
+#
+# Measured on a fresh installation: the page said "2 never start" on a
+# machine with no second drive and with controller wake off. Both names were
+# right and both lights were wrong. install.sh says the same in its own
+# words: "a unit that nobody asked for is a unit that a person must examine".
+#
+# SwitchedTest holds every key against the keep-list.
+SWITCHED = {
+    mounts.UNIT_DIR + "/multi-user.target.wants/"
+    "steamos-utility-center-mounts.service":
+        ("a drive on the System page",
+         lambda root: os.path.exists(root + mounts.STATE_PATH)),
+    mounts.UNIT_DIR + "/multi-user.target.wants/"
+    "steamos-utility-center-wake.service": ("controller wake", wake.on),
+}
+
+
+def switched_on(path, root=""):
+    """Whether the switch behind one file of SWITCHED is on.
+
+    True for each path that no switch writes: those come with an installation
+    and belong on the machine from the moment of it.
+
+    Two readers, and one question for both. units() calls a file that is gone
+    a fault only where the switch is on, and repair.plan writes it back only
+    there. The two apart would be a check that reports what no repair writes,
+    or a repair that writes what no check asked for.
+    """
+    said = SWITCHED.get(path)
+    return True if said is None else bool(said[1](root))
+
 
 def owner(path):
     """Which module a file of the keep-list belongs to, or CORE.
@@ -212,7 +259,13 @@ def units(here, root=""):
         "%d of %d are gone: %s" % (len(gone), len(files), _say(gone))
         if gone else "All %d are here." % len(files))]
 
-    lost = _missing(links, root)
+    # A link that a switch writes, with that switch off, is not a link that
+    # is lost. With the switch on it is: the feature says it is on and
+    # nothing starts it. See SWITCHED.
+    absent = _missing(links, root)
+    off = [one for one in absent
+           if one in SWITCHED and not switched_on(one, root)]
+    lost = [one for one in absent if one not in off]
     loose = _dangling(links, root)
     if lost or loose:
         trouble = []
@@ -223,8 +276,12 @@ def units(here, root=""):
                            % (len(loose), _say(loose)))
         out.append(_finding("What starts them", False, "; ".join(trouble)))
     else:
-        out.append(_finding("What starts them", True,
-                            "All %d links are here." % len(links)))
+        said = "All %d links are here." % (len(links) - len(off))
+        if off:
+            said += (" %d wait for a switch: %s."
+                     % (len(off),
+                        ", ".join(sorted(SWITCHED[one][0] for one in off))))
+        out.append(_finding("What starts them", True, said))
     return out
 
 
@@ -312,13 +369,19 @@ def commands(root=""):
         repairable=False)]
 
 
-def password_rule(root=""):
+def password_rule(root="", present=None):
     """The sudoers rule, which only root can read.
 
     The directory is closed to everybody else, so "not there" and "not mine
     to look at" are the same answer from here. They are not the same thing,
     and a red light on the second one is a red light on every machine where
     the panel runs as a person.
+
+    A machine with no module needs no rule. The rule names one applier for
+    each module and holds no wildcard, so a machine with no applier has
+    nothing to permit and ctl.permit removes the file. The first version of
+    this asked only whether the file was there, and a core installation on
+    its own thus reported a fault that no reinstallation repaired.
     """
     whole = root + SUDO_RULE
     try:
@@ -328,6 +391,15 @@ def password_rule(root=""):
         return [_finding("The rule for a change with no password", None,
                          "Only root can look at %s."
                          % os.path.dirname(SUDO_RULE), repairable=False)]
+    if present is None:
+        def present(path):
+            return os.path.exists(root + path)
+    if not ctl.permits(present):
+        return [_finding(
+            "The rule for a change with no password", True,
+            "It is here, and no module asks for it." if there
+            else "No module is installed, so nothing asks for it. Each "
+                 "module brings its own line.")]
     return [_finding(
         "The rule for a change with no password", there,
         "%s is gone, so a change from Game Mode asks for a password that "
