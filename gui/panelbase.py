@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import os
 
+import re
+
 import material
 
 # Where this project is, from the file this module is in.
@@ -101,3 +103,10 @@ BLOCK_GAP = 4 * material.SPACE
 # Here and not in the panel, because the System page reads it as well. See
 # the note at the top of this file.
 SENSOR_WIDTH = 30
+
+# What a colour setting looks like when it is written down.
+#
+# Here and not in the window, because the colour dialog reads it as well. It
+# was _COLOUR in the window, and a name with an underscore in front of it is
+# a name for one module. Two modules read this one.
+COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")

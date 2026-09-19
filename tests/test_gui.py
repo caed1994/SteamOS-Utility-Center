@@ -957,6 +957,25 @@ class ProfileListingTest(unittest.TestCase):
         self.assertEqual(os.path.dirname(path), self.directory)
 
 
+def window_sources():
+    """The window's code, in every file it is cut into.
+
+    The window was one file. It is cut one part at a time: the pages into
+    gui/page_*.py and the modal windows into gui/dialogs.py. A test that
+    reads one file therefore stops reading the thing it asks about, and a
+    cut that changes nothing breaks it. So each of these reads all of them.
+    """
+    gui = os.path.join(HERE, "..", "gui")
+    names = ["steamos-utility-center-panel", "dialogs.py"]
+    names += sorted(one for one in os.listdir(gui)
+                    if one.startswith("page_") and one.endswith(".py"))
+    out = {}
+    for name in names:
+        with open(os.path.join(gui, name)) as handle:
+            out[name] = handle.read()
+    return out
+
+
 class DialogTest(unittest.TestCase):
     """Nothing in the window is drawn by the platform any more.
 
@@ -966,23 +985,38 @@ class DialogTest(unittest.TestCase):
     """
 
     def setUp(self):
-        path = os.path.join(HERE, "..", "gui", "steamos-utility-center-panel")
-        with open(path) as handle:
-            self.source = handle.read()
+        self.sources = window_sources()
+        self.source = self.sources["steamos-utility-center-panel"]
+        self.everything = "\n".join(self.sources.values())
+
+    def test_it_reads_the_files_the_window_is_cut_into(self):
+        """A reader of one file would pass these by saying nothing."""
+        self.assertIn("dialogs.py", self.sources)
+        self.assertGreater(len(self.sources), 3)
+
+    def _nowhere(self, word):
+        """Which files hold that word, by name.
+
+        By name and not by content: `assertNotIn` on the whole of the
+        window's code puts six thousand lines into the failure, and the one
+        line that matters is not in the part a terminal shows.
+        """
+        return sorted(name for name, text in self.sources.items()
+                      if word in text)
 
     def test_no_message_box_is_left(self):
-        self.assertNotIn("messagebox", self.source)
+        self.assertEqual(self._nowhere("messagebox"), [])
 
     def test_the_colour_chooser_is_our_own(self):
-        self.assertNotIn("colorchooser", self.source)
-        self.assertIn("class ColourDialog", self.source)
+        self.assertEqual(self._nowhere("colorchooser"), [])
+        self.assertIn("class ColourDialog", self.everything)
 
     def test_no_file_browser_is_left_either(self):
         # Tk's file chooser is Tk's own and not the desktop's, which is what
         # it looked like. A browser is the wrong shape for the job as well:
         # profiles live in one directory and are named rather than filed.
-        self.assertNotIn("filedialog", self.source)
-        self.assertIn("class ProfileDialog", self.source)
+        self.assertEqual(self._nowhere("filedialog"), [])
+        self.assertIn("class ProfileDialog", self.everything)
 
     def test_every_one_of_them_is_opened_on_a_widget(self):
         """Reported: a press on "Remove module" printed a stack trace.
@@ -1001,29 +1035,23 @@ class DialogTest(unittest.TestCase):
         moves into one of them keeps `self`, which is still the Panel and
         still not a widget.
         """
-        where = os.path.join(HERE, "..", "gui")
-        files = [os.path.join(where, "steamos-utility-center-panel")]
-        files.extend(os.path.join(where, name)
-                     for name in sorted(os.listdir(where))
-                     if name.startswith("page_") and name.endswith(".py"))
+        files = window_sources()
         bad = []
-        for name in files:
-            with open(name) as handle:
-                for node in ast.walk(ast.parse(handle.read())):
-                    if not isinstance(node, ast.Call):
-                        continue
-                    if not (isinstance(node.func, ast.Name)
-                            and node.func.id.endswith("Dialog")):
-                        continue
-                    said = "%s in %s at line %d" % (node.func.id,
-                                                    os.path.basename(name),
-                                                    node.lineno)
-                    if not node.args:
-                        bad.append("%s takes no parent" % said)
-                    elif (isinstance(node.args[0], ast.Name)
-                            and node.args[0].id == "self"):
-                        bad.append("%s is opened on self, which is not a "
-                                   "widget" % said)
+        for name, source in files.items():
+            for node in ast.walk(ast.parse(source)):
+                if not isinstance(node, ast.Call):
+                    continue
+                if not (isinstance(node.func, ast.Name)
+                        and node.func.id.endswith("Dialog")):
+                    continue
+                said = "%s in %s at line %d" % (node.func.id, name,
+                                                node.lineno)
+                if not node.args:
+                    bad.append("%s takes no parent" % said)
+                elif (isinstance(node.args[0], ast.Name)
+                        and node.args[0].id == "self"):
+                    bad.append("%s is opened on self, which is not a widget"
+                               % said)
         self.assertEqual(bad, [])
         self.assertGreater(len(files), 1, "no page was read")
 
@@ -2283,12 +2311,36 @@ class NetworkCardTest(unittest.TestCase):
     """
 
     def setUp(self):
-        with open(os.path.join(HERE, "..", "gui",
-                               "steamos-utility-center-panel")) as handle:
-            self.text = handle.read()
+        gui = os.path.join(HERE, "..", "gui")
+        pages = sorted(one for one in os.listdir(gui)
+                       if one.startswith("page_") and one.endswith(".py"))
+        self.sources = []
+        for name in ["steamos-utility-center-panel"] + pages:
+            with open(os.path.join(gui, name)) as handle:
+                self.sources.append(handle.read())
+        # The window itself, for the parts of it that are not a method.
+        self.text = self.sources[0]
 
     def _body(self, name):
-        return self.text.split("def %s(" % name)[1].split("\n    def ")[0]
+        """One method's body, from the window or from one of its pages.
+
+        The window is cut into gui/page_*.py one page at a time, and a
+        method that moved is still a method of the window: Panel takes each
+        page as a base. So this looks in every file and not in the one that
+        holds the method today. Without that, a cut breaks a test that the
+        cut changes nothing about.
+        """
+        for text in self.sources:
+            if "def %s(" % name in text:
+                return text.split("def %s(" % name)[1].split("\n    def ")[0]
+        raise AssertionError("no method %s in the window or in a page" % name)
+
+    def test_the_reader_finds_a_method_wherever_it_lives(self):
+        """A reader that raised would make each test below it an error, and
+        a reader that returned "" would make each one pass."""
+        self.assertIn("threading.Thread", self._body("_in_background"))
+        with self.assertRaises(AssertionError):
+            self._body("_no_such_method_anywhere")
 
     def test_it_is_on_the_page_of_that_maker(self):
         """Beside the Pegboard and not on a page of its own.
@@ -2336,7 +2388,8 @@ class NetworkCardTest(unittest.TestCase):
         self.assertNotIn("ttk.", run)
 
     def test_the_pairing_dialog_touches_no_widget_from_its_thread(self):
-        body = self.text.split("class PairDialog(")[1].split("\nclass ")[0]
+        whole = "\n".join(window_sources().values())
+        body = whole.split("class PairDialog(")[1].split("\nclass ")[0]
         ask = body.split("def _ask(")[1].split("\n    def ")[0]
         self.assertNotIn("self.window", ask)
         self.assertNotIn("ttk.", ask)

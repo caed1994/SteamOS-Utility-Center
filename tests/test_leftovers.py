@@ -449,10 +449,16 @@ class PurgeTest(unittest.TestCase):
         self.assertIn("--purge         with --without", text)
 
     def test_the_panel_asks_before_it_purges(self):
-        """It is off by default, and the dialog names it."""
+        """It is off by default, and the dialog names it.
+
+        The dialog is in gui/dialogs.py, where the window's modal windows
+        live: a page of the window needs them, and a page cannot import the
+        window back. The seam that opens it is in the window.
+        """
         panel = io.open(os.path.join(REPO, "gui",
                                      "steamos-utility-center-panel")).read()
-        body = panel.split("class RemoveDialog")[1].split("\nclass ")[0]
+        dialogs = io.open(os.path.join(REPO, "gui", "dialogs.py")).read()
+        body = dialogs.split("class RemoveDialog")[1].split("\nclass ")[0]
         self.assertIn("BooleanVar(value=False)", body)
         self.assertIn("Remove its settings as well", body)
         # The dialog is behind a seam, so that a test can answer for a
