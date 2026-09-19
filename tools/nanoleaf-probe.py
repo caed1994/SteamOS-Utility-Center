@@ -52,7 +52,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "server"))
 
 from steamos_utility_center import nanoleaf                    # noqa: E402
-from steamos_utility_center.nanoleaf import (                  # noqa: E402
+# The names this file uses, and the ones its test reaches through it.
+#
+# Several of these are the second kind: the test imports this file and reads
+# them off it. pyflakes calls them unused, which is true of this file and
+# false of the pair. Taking them out on that word stopped the test from
+# being collected at all.
+from steamos_utility_center.nanoleaf import (                  # noqa: E402,F401
     API_PORT, NanoleafError, PTR, SERVICE, SRV, TXT, A,
     _name_bytes, _read_name, _records, _texts, call, document, find, forget,
     pair)

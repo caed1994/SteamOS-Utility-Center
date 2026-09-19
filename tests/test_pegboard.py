@@ -18,7 +18,6 @@ each number below was read from the device or from its descriptors.
     right, 63 bottom right      of the board.
 """
 
-import json
 import os
 import subprocess
 import sys

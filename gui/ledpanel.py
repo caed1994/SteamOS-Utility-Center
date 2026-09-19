@@ -1611,11 +1611,6 @@ def nanoleaf_switch(device, on):
     nanoleaf_module.switch(device, on)
 
 
-def nanoleaf_dim(device, level):
-    """Sets the brightness of the device, from 0 to 100."""
-    nanoleaf_module.dim(device, level)
-
-
 def nanoleaf_refresh(home=None):
     """Reads the addresses off mDNS again and writes the record.
 
@@ -1789,11 +1784,6 @@ def module_command(source_dir, name, remove=False, purge=False):
         # the wrong one.
         command.append("--purge")
     return command
-
-
-def module_installed(name, home=None):
-    """Whether one module is on this machine. See modules.py."""
-    return modules_module.installed(name, home=home)
 
 
 def module_says(name):

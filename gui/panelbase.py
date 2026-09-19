@@ -3,10 +3,10 @@
 
 """Where the toolbox is, and the measurements every page of the window uses.
 
-The window is one class of five thousand lines, and the work to cut it into
-one module per page starts here. This is what those modules stand on: a page
-needs the gaps it spaces its rows with, and where the toolbox it calls lives.
-Neither of those belongs to any one page.
+The window was one class of seven thousand lines. It is cut into one module
+per page now, and this is what those modules stand on: a page needs the gaps
+it spaces its rows with, and where the toolbox it calls lives. Neither of
+those belongs to any one page.
 
 A page module cannot read these from the window itself. The window imports
 the page and the page would import the window back, and Python refuses that.

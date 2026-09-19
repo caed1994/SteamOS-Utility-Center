@@ -384,6 +384,57 @@ class StatusPageTest(unittest.TestCase):
             self.assertNotIn(name, mine, name)
 
 
+class SectionMarkerTest(unittest.TestCase):
+    """The comment lines that divide the window own class into sections.
+
+    Every cut of this window found the marker above the moved block wrong.
+    "the drives" stood over the Nanoleaf board page. "status and repair"
+    collected the ESP firmware card and three methods that fit the window.
+    Two markers were left with nothing under them at all.
+
+    A marker over nothing is worse than no marker. It tells a reader that
+    what follows is something it is not.
+    """
+
+    def markers(self):
+        """Each `# --` line of Panel, with the methods under it."""
+        with open(PANEL, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        panel = next(n for n in tree_of(PANEL).body
+                     if isinstance(n, ast.ClassDef) and n.name == "Panel")
+        meth = [n for n in panel.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        found = [(number + 1, line.strip()[5:].rstrip("- "))
+                 for number, line in enumerate(lines)
+                 if line.startswith("    # -- ")
+                 and panel.lineno < number + 1 < panel.end_lineno]
+        found.append((panel.end_lineno + 1, "END"))
+        out = []
+        for index, (start, name) in enumerate(found[:-1]):
+            stop = found[index + 1][0]
+            out.append((name, [m.name for m in meth if start < m.lineno < stop]))
+        return out
+
+    def test_the_reader_finds_them(self):
+        """A reader that found none would pass the test below by saying
+        nothing."""
+        self.assertGreater(len(self.markers()), 5)
+
+    def test_every_one_has_something_under_it(self):
+        empty = [name for name, mine in self.markers() if not mine]
+        self.assertEqual(empty, [], "these name what is no longer there")
+
+    def test_a_note_that_is_not_a_marker_does_not_look_like_one(self):
+        """Four dashes and a space start a section.
+
+        A paragraph written with them reads as one marker for each of its
+        lines, and each line after the first is then a section with nothing
+        under it.
+        """
+        for name, _mine in self.markers():
+            self.assertLess(len(name), 60, "%r reads as a paragraph" % name)
+
+
 class GpuPageTest(unittest.TestCase):
     """The fifth page that moved: the graphics card, through LACT.
 

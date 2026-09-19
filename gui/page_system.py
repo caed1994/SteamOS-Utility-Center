@@ -9,7 +9,7 @@ television; this page has the computer itself.
 
 It is a mixin and not a widget. Panel takes it as a base, so every method
 here is a method of Panel and reaches self.root, self.runner and the rest of
-the window as it did when it was in one file. The cut is for reading, not for
+the window as it did before the cut. The cut is for reading, not for
 a new boundary: a boundary would mean passing the window into each of these
 and there is nothing to gain from that.
 

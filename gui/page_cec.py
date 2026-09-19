@@ -3,7 +3,7 @@
 
 """The HDMI CEC page of the control panel.
 
-The window was one class of five thousand lines, and this is the first page
+The window was one class of seven thousand lines, and this is the first page
 to move out of it. Nothing here is rewritten: the methods are the methods
 that were in Panel, with the comments they carried.
 

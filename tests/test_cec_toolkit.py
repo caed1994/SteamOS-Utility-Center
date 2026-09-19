@@ -23,7 +23,6 @@ the half with the faults.
 """
 
 import getpass
-import json
 import os
 import re
 import subprocess

@@ -1788,8 +1788,7 @@ class PanelSettingsTest(unittest.TestCase):
         # restart. So this test compares the limits of each numeric range with
         # the validator.
         for entry in self._rows():
-            key, _label, kind = (entry.elts[0].value, entry.elts[1].value,
-                                 entry.elts[2].value)
+            key, kind = entry.elts[0].value, entry.elts[2].value
             if kind not in ("int", "float"):
                 continue
             low, high = entry.elts[3].value, entry.elts[4].value

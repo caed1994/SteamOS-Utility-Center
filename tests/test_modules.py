@@ -9,7 +9,6 @@ uninstaller and the control panel. This file examines the answer they share.
 """
 
 import os
-import re
 import subprocess
 import sys
 import tempfile

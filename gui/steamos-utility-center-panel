@@ -3770,8 +3770,6 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
                         "were left alone.\n" % skipped)
         self._write("Nothing is written yet - press Apply to keep it.\n\n")
 
-    # -- tests ------------------------------------------------------------
-
     # -- the preview tab ---------------------------------------------------
     #
     # Only the effects this project added. Steam's own can be seen by picking
@@ -4128,28 +4126,14 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
         if chosen:
             self.runner.start(ledpanel.notify_command(chosen))
 
-    # -- the graphics card, through LACT -----------------------------------
 
 
+    # The pages of this window are in gui/page_*.py: about, cec, gpu,
+    # modules, network, status and system. Each is a base of this class,
+    # so every method of them is a method here. See the note above
+    # class Panel, and gui/panelbase.py for what they share.
 
-
-
-
-
-
-
-
-
-
-
-
-
-    # -- The pages that moved out: HDMI CEC into gui/page_cec.py, the System
-    # -- page into gui/page_system.py and the Nanoleaf devices into
-    # -- gui/page_network.py. Each is a base of this class, so every method
-    # -- of them is a method here. See the note above class Panel.
-
-    # -- the modules -------------------------------------------------------
+    # -- the settings of a module that arrived or left ---------------------
     #
     # The core of this project is this window, the control command and the
     # keyboard layout. The LED bar, the CPU and GPU power, HDMI CEC and the
@@ -4220,7 +4204,7 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
 
 
 
-    # -- status and repair ------------------------------------------------
+    # -- fitting the window, and the ESP firmware --------------------------
 
 
 
@@ -4474,7 +4458,7 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
 
         return self.runner.start(command, afterwards)
 
-    # -- about, and the update from git ------------------------------------
+    # -- restarting, and the labels a rebuild left behind ------------------
 
 
 
