@@ -5407,6 +5407,50 @@ class ModulePageTest(unittest.TestCase):
             for deeper in self._all(child):
                 yield deeper
 
+    def test_a_module_change_reads_that_module_settings_again(self):
+        """Reported: "Remove its settings as well", then a reinstall of the
+        module, and the same settings were on the page again.
+
+        The window read the four settings files when it opened, and nothing
+        read them again. A removal that took a file, and an install that
+        wrote a fresh one, both left the old values on the screen.
+        """
+        panel = self._panel([modules.POWER])
+        panel.power = {"CPU_GOVERNOR": "performance", "CPU_EPP": "default"}
+        was = ledpanel.read_power_config
+        ledpanel.read_power_config = lambda path=None: {"CPU_GOVERNOR": "",
+                                                        "CPU_EPP": "default"}
+        self.addCleanup(setattr, ledpanel, "read_power_config", was)
+        panel._module_changed(modules.POWER)
+        self.assertEqual(panel.power["CPU_GOVERNOR"], "",
+                         "the window kept the settings of a file that a "
+                         "purge took away")
+
+    def test_that_reread_leaves_another_page_alone(self):
+        """An install of one module is not a reason to lose an edit.
+
+        Reload from file throws away every unsaved edit, and a person
+        presses that. Nobody presses this.
+        """
+        panel = self._panel([modules.POWER, modules.LED])
+        key = next(one for one in panel.vars if one in panel.MODULE_KEYS[
+            modules.LED])
+        variable, _kind = panel.vars[key]
+        was = variable.get()
+        variable.set(was + 1 if isinstance(was, (int, float)) else "%s " % was)
+        edited = variable.get()
+        panel._module_changed(modules.POWER)
+        self.assertEqual(variable.get(), edited,
+                         "%s lost an unsaved edit to a change of another "
+                         "module" % key)
+
+    def test_a_module_with_no_row_in_this_window_changes_nothing(self):
+        """HDMI CEC keeps its settings in the toolkit's own file."""
+        panel = self._panel([modules.POWER])
+        panel.power = {"CPU_GOVERNOR": "performance", "CPU_EPP": "default"}
+        panel._reread_module_settings("cec")
+        self.assertEqual(panel.power["CPU_GOVERNOR"], "performance")
+
     def test_saying_no_installs_and_removes_nothing(self):
         panel = self._panel([])
         ran = []

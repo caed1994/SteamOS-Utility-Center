@@ -36,7 +36,7 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "server"))
 
 from steamos_utility_center import checkup, modules, mounts  # noqa: E402
-from steamos_utility_center import repair, service, wake  # noqa: E402
+from steamos_utility_center import power, repair, service, wake  # noqa: E402
 
 ALL = list(modules.ORDER)
 
@@ -588,8 +588,14 @@ class SwitchTest(Room):
     """
 
     def switch_on(self, path):
-        where = mounts.STATE_PATH if "mounts" in path else wake.STATE_PATH
-        self.write(where, "")
+        """Put that switch on, the way the machine records it. One record for
+        each of the three, because each switch is a different feature."""
+        if "mounts" in path:
+            self.write(mounts.STATE_PATH, "")
+        elif "wake" in path:
+            self.write(wake.STATE_PATH, "")
+        else:
+            self.write(power.CONFIG_PATH, "CPU_GOVERNOR=performance\n")
 
     def test_it_writes_neither_where_the_switch_is_off(self):
         self.build()

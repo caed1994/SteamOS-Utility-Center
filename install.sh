@@ -788,7 +788,7 @@ remove_led() {
     # project's code and other programs can load it, and the firmware is on a
     # board that this script cannot reach. uninstall.sh takes the module.
     if [[ $PURGE -eq 1 ]]; then
-        rm -f "$CONFIG_PATH"
+        purge_config "$CONFIG_PATH"
         say "  and the settings in $CONFIG_PATH"
     else
         say "  the settings in $CONFIG_PATH stay, for a second install"
@@ -853,7 +853,7 @@ remove_power() {
     fi
     systemctl daemon-reload
     if [[ $PURGE -eq 1 ]]; then
-        rm -f "$POWER_CONFIG_PATH"
+        purge_config "$POWER_CONFIG_PATH"
         say "  and the settings in $POWER_CONFIG_PATH"
     else
         say "  the settings in $POWER_CONFIG_PATH stay, for a second install"
@@ -966,7 +966,7 @@ remove_pegboard() {
     remove_legacy_sleep_hooks
     systemctl daemon-reload
     if [[ $PURGE -eq 1 ]]; then
-        rm -f "$PEGBOARD_CONFIG_PATH"
+        purge_config "$PEGBOARD_CONFIG_PATH"
         say "  and the settings in $PEGBOARD_CONFIG_PATH"
     else
         say "  the settings in $PEGBOARD_CONFIG_PATH stay, for a second install"
@@ -1054,7 +1054,7 @@ remove_system() {
     systemctl daemon-reload
     remove_decky_plugin
     if [[ $PURGE -eq 1 ]]; then
-        rm -f "$MOUNTS_RECORD_PATH"
+        purge_config "$MOUNTS_RECORD_PATH"
         say "  and the drives in $MOUNTS_RECORD_PATH"
     else
         say "  the drives in $MOUNTS_RECORD_PATH stay, for a second install"

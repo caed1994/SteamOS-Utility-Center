@@ -37,6 +37,7 @@ from . import cec
 from . import ctl
 from . import modules
 from . import mounts
+from . import power
 from . import wake
 
 # Where the programs that need root are installed. Spelled here rather than
@@ -164,6 +165,18 @@ SWITCHED = {
          lambda root: os.path.exists(root + mounts.STATE_PATH)),
     mounts.UNIT_DIR + "/multi-user.target.wants/"
     "steamos-utility-center-wake.service": ("controller wake", wake.on),
+    # The third, found after the first two. install.sh says it in its own
+    # words: "This installs the unit and deliberately does not enable it ...
+    # The panel enables it at the first setting."
+    #
+    # Its answer is in /etc and not in /var, because this one *is* a settings
+    # file. A repair never writes those, and the keep-list carries both, so
+    # the link and the answer about it go together whatever an update does.
+    mounts.UNIT_DIR + "/multi-user.target.wants/"
+    "steamos-utility-center-power.service":
+        ("a CPU governor on the Power page",
+         lambda root: bool(power.read(root + power.CONFIG_PATH)
+                           .get("CPU_GOVERNOR"))),
 }
 
 

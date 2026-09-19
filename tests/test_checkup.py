@@ -25,7 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "server"))
 
 from steamos_utility_center import (checkup, ctl, modules, mounts,  # noqa: E402
-                                    wake)
+                                    power, wake)
 
 ALL = list(modules.ORDER)
 
@@ -289,11 +289,21 @@ class SwitchedTest(Room):
             os.unlink(self.root + path)
 
     def switch_on(self, path):
-        """Write the record in /var that says one switch is on."""
-        where = (mounts.STATE_PATH if "mounts" in path else wake.STATE_PATH)
+        """Put that switch on, the way the machine records it.
+
+        Each of the three is a different record, because each switch is a
+        different feature. A helper that wrote one file for all of them would
+        answer for a machine that cannot exist.
+        """
+        if "mounts" in path:
+            where, text = mounts.STATE_PATH, ""
+        elif "wake" in path:
+            where, text = wake.STATE_PATH, ""
+        else:
+            where, text = power.CONFIG_PATH, "CPU_GOVERNOR=performance\n"
         os.makedirs(os.path.dirname(self.root + where), exist_ok=True)
         with open(self.root + where, "w") as handle:
-            handle.write("")
+            handle.write(text)
 
     def test_every_one_of_them_is_on_the_keep_list(self):
         """A key that names no file of the keep-list excuses nothing.
@@ -323,12 +333,13 @@ class SwitchedTest(Room):
         self.assertIn("a drive on the System page", found["detail"])
 
     def test_the_count_of_the_links_leaves_them_out(self):
-        """"All 15 links are here" with 13 of them there is a lie."""
+        """"All 20 links are here" with 17 of them there is a lie."""
         self.switches_off()
         found = self.named(checkup.units(ALL, self.root), "What starts them")
         links = [path for path in checkup.wanted(ALL) if ".wants/" in path]
-        self.assertIn("All %d links are here." % (len(links) - 2),
-                      found["detail"])
+        self.assertIn(
+            "All %d links are here." % (len(links) - len(checkup.SWITCHED)),
+            found["detail"])
 
     def test_one_that_is_gone_with_its_switch_on_is_a_fault(self):
         """The other half, and the reason the switch is asked at all.

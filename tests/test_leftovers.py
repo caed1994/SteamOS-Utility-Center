@@ -137,11 +137,17 @@ class Reader(unittest.TestCase):
 
         The continued lines are joined first: every `rm -f` here runs over
         two lines with a backslash between them.
+
+        purge_config is a removal as well. It takes one settings file under
+        every name it ever had, because a purge that left the name from
+        before the rename was undone by the next install. See
+        scripts/user-unit.sh.
         """
         whole = body.replace("\\\n", " ")
         return [line for line in whole.splitlines()
                 if re.search(r"\brm\s+-[rf]", line)
-                or "systemctl disable" in line]
+                or "systemctl disable" in line
+                or "purge_config" in line]
 
     def reached(self, path, body):
         """Whether this removal takes this file off the machine.
@@ -468,6 +474,196 @@ class PurgeTest(unittest.TestCase):
         self.assertIn("--purge",
                       ledpanel.module_command("/x", "led", remove=True,
                                               purge=True))
+
+
+class RunPurgeTest(unittest.TestCase):
+    """Each removal run against a machine, and not read.
+
+    Every test above this one reads install.sh. That is right for a step
+    which needs root, and it left one question open: "--purge removes the
+    settings" was a grep for the word PURGE.
+
+    It passed while a purge left the settings on the machine. Each of these
+    files had a name before this project was renamed, and migrate_old_install
+    leaves the old file where both names are present. A purge took the new
+    name, the next install moved the old one back, and "Remove its settings
+    as well" gave the same settings again. See purge_config.
+    """
+
+    # The function, the settings file it owns, and the name that file had
+    # before the rename. See OLD_CONFIGS in scripts/user-unit.sh.
+    CASES = {
+        "remove_led": ("/etc/steamos-utility-center.conf",
+                       "/etc/steamos-led-serial.conf"),
+        "remove_power": ("/etc/steamos-utility-center-power.conf",
+                         "/etc/steamos-led-power.conf"),
+        "remove_pegboard": ("/etc/steamos-utility-center-pegboard.conf", None),
+        "remove_system": ("/var/lib/steamos-utility-center/mounts.conf", None),
+    }
+
+    HARNESS = os.path.join(REPO, "tests", "shell", "run-remove.sh")
+
+    def machine(self, paths):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        for path in paths:
+            os.makedirs(os.path.dirname(root + path), exist_ok=True)
+            with open(root + path, "w") as handle:
+                handle.write("SETTING=mine\n")
+        return root
+
+    def remove(self, func, purge, root):
+        done = subprocess.run(["bash", self.HARNESS, func, str(purge), root],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0,
+                         "%s exited %d: %s" % (func, done.returncode,
+                                               done.stderr))
+        return done
+
+    def test_the_harness_runs_the_real_function(self):
+        """A harness that ran nothing would pass every test below it."""
+        with open(os.path.join(REPO, "install.sh")) as handle:
+            source = handle.read()
+        for func in self.CASES:
+            self.assertIn("\n%s()" % func, source)
+        root = self.machine(["/etc/steamos-utility-center.conf"])
+        self.remove("remove_led", 1, root)
+        self.assertFalse(
+            os.path.exists(root + "/etc/steamos-utility-center.conf"))
+
+    def test_without_the_option_the_settings_stay(self):
+        """The default, and the sentence the dialog puts under the box."""
+        for func, (new, old) in self.CASES.items():
+            with self.subTest(func):
+                paths = [one for one in (new, old) if one]
+                root = self.machine(paths)
+                self.remove(func, 0, root)
+                for path in paths:
+                    self.assertTrue(os.path.exists(root + path),
+                                    "%s took %s with no --purge"
+                                    % (func, path))
+
+    def test_with_the_option_they_go(self):
+        for func, (new, _old) in self.CASES.items():
+            with self.subTest(func):
+                root = self.machine([new])
+                self.remove(func, 1, root)
+                self.assertFalse(os.path.exists(root + new),
+                                 "%s left %s" % (func, new))
+
+    def test_the_name_from_before_the_rename_goes_as_well(self):
+        """Or the next install moves it back and the purge did nothing."""
+        for func, (new, old) in self.CASES.items():
+            if not old:
+                continue
+            with self.subTest(func):
+                root = self.machine([new, old])
+                self.remove(func, 1, root)
+                self.assertFalse(os.path.exists(root + old),
+                                 "%s left %s, which the next install moves "
+                                 "to %s" % (func, old, new))
+
+    def test_only_that_module_loses_its_settings(self):
+        """A purge on one module is not a purge on the machine."""
+        every = [new for new, _old in self.CASES.values()]
+        for func, (new, _old) in self.CASES.items():
+            with self.subTest(func):
+                root = self.machine(every)
+                self.remove(func, 1, root)
+                for path in every:
+                    self.assertEqual(
+                        os.path.exists(root + path), path != new,
+                        "%s changed %s" % (func, path))
+
+
+class SwitchedLinkTest(unittest.TestCase):
+    """Which .wants links the installer writes, and which a switch writes.
+
+    checkup.SWITCHED holds the second kind. Absent is what "off" looks like
+    on the disk for those, so the Status page must not call them a fault and
+    the boot repair must not write them back.
+
+    Nothing held the *list*. Two were in it, the third was not, and a fresh
+    install of the power module reported "1 never start" until somebody set
+    a governor. So this reads the installer and refuses a link that neither
+    side claims.
+    """
+
+    def enables(self):
+        """Each `systemctl enable` of install.sh: (line number, unit names).
+
+        Line continuations are joined first: one `systemctl enable` carries
+        two unit names across a backslash, and a reader that took one line at
+        a time called the second one unclaimed.
+
+        `systemctl enable "$(basename "$X_UNIT_PATH")"` is resolved through
+        the shared script, which is where that path is spelled. Two of the
+        five enables are written that way.
+        """
+        values = shell_values()
+        lines = io.open(os.path.join(REPO, "install.sh")).read().splitlines()
+        out = []
+        for index, first in enumerate(lines):
+            if "systemctl enable" not in first:
+                continue
+            # The whole statement, and the number of the line it starts on.
+            # Joining the file first would give the numbers of the joined
+            # text, and the context read below would come from elsewhere.
+            whole, step = first, index
+            while whole.rstrip().endswith("\\") and step + 1 < len(lines):
+                step += 1
+                whole = whole.rstrip()[:-1] + " " + lines[step]
+            plain = whole.replace("$NAME", "steamos-utility-center")
+            names = set(re.findall(r"[\w.-]*\.service", plain))
+            for var in re.findall(r'basename "\$(\w+)"', whole):
+                if var in values:
+                    names.add(os.path.basename(values[var]))
+            out.append((index + 1, names))
+        return out
+
+    def enabled(self):
+        """Every unit that install.sh enables, by name."""
+        return set().union(*(names for _number, names in self.enables()))
+
+    def test_the_reader_finds_the_units_it_is_meant_to(self):
+        """A reader that found nothing would call every link switched."""
+        found = self.enabled()
+        self.assertIn("steamos-utility-center.service", found)
+        # The one behind a $(basename "$VAR"), and the one on a continuation
+        # line. Both were missed by the first version of this reader.
+        self.assertIn("steamos-utility-center-pegboard.service", found)
+        self.assertIn("steamos-utility-center-pegboard-resume.service", found)
+
+    def test_each_link_is_claimed_by_the_installer_or_by_a_switch(self):
+        found = self.enabled()
+        loose = [path for path in mounts.PROJECT_FILES
+                 if ".wants/" in path
+                 and path not in checkup.SWITCHED
+                 and os.path.basename(path) not in found]
+        self.assertEqual(loose, [], "no installer enables these and no "
+                                    "switch writes them, so the page calls "
+                                    "them a fault for ever")
+
+    def test_an_installer_enable_of_a_switched_one_asks_first(self):
+        """Otherwise the installer is the switch, and the switch is not.
+
+        One of the three is enabled by install.sh: the drives unit, where a
+        record of the drives is already on the machine. That record is the
+        switch itself, so the line is inside a condition on it. A line with
+        no condition would turn the feature on at each install.
+        """
+        switched = set(os.path.basename(one) for one in checkup.SWITCHED)
+        lines = io.open(os.path.join(REPO, "install.sh")).read().splitlines()
+        checked = []
+        for number, names in self.enables():
+            for name in sorted(names & switched):
+                before = "\n".join(lines[max(0, number - 6):number - 1])
+                self.assertIn("if [[", before,
+                              "%s is enabled with no condition, at line %d"
+                              % (name, number))
+                checked.append(name)
+        self.assertEqual(checked, ["steamos-utility-center-mounts.service"],
+                         "the drives unit is the one case")
 
 
 class ToolboxCopyTest(unittest.TestCase):

@@ -5451,8 +5451,53 @@ class Panel(page_cec.CecPage):
                                     purge=purge),
             lambda _code: self._module_changed(name))
 
+    # Which settings the file of each module holds, for a reread after that
+    # module arrived or left. See _reread_module_settings.
+    #
+    # HDMI CEC is not here. Its settings are the toolkit's own file and no row
+    # of this window, so there is nothing here to put back on the screen.
+    MODULE_KEYS = {modules.LED: frozenset(config_module.DEFAULTS),
+                   modules.POWER: POWER_KEYS,
+                   modules.PEGBOARD: PEGBOARD_KEYS,
+                   modules.SYSTEM: SYSTEM_KEYS}
+
+    def _reread_module_settings(self, name):
+        """Read the settings files again, and show that module's rows.
+
+        A module that arrived wrote a settings file where there was none, and
+        a module that left with "Remove its settings as well" took one away.
+        The window read the four files when it opened and nothing read them
+        again. So a removal with that box ticked, and an install after it,
+        left the old values on the screen and the page looked as though the
+        box had done nothing.
+
+        Every file is read, because the count of unsaved settings compares a
+        control against the disk and the disk moved. Only the rows of the one
+        module are written back into their controls: "Reload from file"
+        throws away every unsaved edit because a person pressed it, and an
+        install of one module is not a reason to lose an edit on another
+        page.
+        """
+        if name not in self.MODULE_KEYS:
+            return
+        self.config = self._load_config()
+        self.system = syssettings.read()
+        self.power = self._load_power()
+        self.pegboard = self._load_pegboard()
+        self._drives = mounts.read()
+        merged = dict(config_module.DEFAULTS)
+        merged.update(self.config)
+        merged.update(self.system)
+        merged.update({PEGBOARD_PREFIX + key: value
+                       for key, value in self.pegboard.items()})
+        merged.update(self.power)
+        keys = self.MODULE_KEYS[name]
+        self._show_values({key: value for key, value in merged.items()
+                           if key in keys})
+
     def _module_changed(self, name):
         """After a module arrived or left. The page and the status both move."""
+        self._reread_module_settings(name)
         self._reread_modules()
         if name == "cec":
             self._reread_cec()

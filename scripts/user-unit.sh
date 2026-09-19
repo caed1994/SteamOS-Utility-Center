@@ -487,6 +487,25 @@ RETIRED_USER_DROPINS=("steamos-cec-boot-wake.service.d/10-$NAME.conf")
 OLD_CONFIGS=("$ROOT/etc/steamos-led-serial.conf:$CONFIG_PATH"
              "$ROOT/etc/steamos-led-power.conf:$POWER_CONFIG_PATH")
 
+# One settings file taken off the machine, under every name it ever had.
+#
+# migrate_old_install moves a file from the old name to the new one. Where
+# both are present it leaves the old file, because that file is still the
+# settings of a person. So a purge that removed the new name alone left the
+# settings on the machine, and the next install moved them back: "Remove its
+# settings as well", and then the same settings again after a reinstall.
+#
+# The same table as OLD_CONFIGS, read the other way. A module with no old name
+# finds nothing here and loses its one file, which is the whole job.
+purge_config() {  # purge_config <new-path>
+    local entry
+    rm -f "$1"
+    for entry in "${OLD_CONFIGS[@]}"; do
+        [[ "${entry#*:}" == "$1" ]] || continue
+        rm -f "${entry%%:*}"
+    done
+}
+
 # And the other files, which hold no state. These scripts remove them, and the
 # new installation writes its own copies.
 OLD_FILES=("$ROOT/etc/udev/rules.d/99-steamos-led-serial.rules"
