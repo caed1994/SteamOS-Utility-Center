@@ -840,8 +840,12 @@ remove_led() {
     # project's code and other programs can load it, and the firmware is on a
     # board that this script cannot reach. uninstall.sh takes the module.
     if [[ $PURGE -eq 1 ]]; then
-        purge_config "$CONFIG_PATH"
-        say "  and the settings in $CONFIG_PATH"
+        # The message follows the result. purge_config names a file
+        # that stayed, and this line over the top of that warning is
+        # what hid it: a purge that removed nothing read as a purge.
+        if purge_config "$CONFIG_PATH"; then
+            say "  and the settings in $CONFIG_PATH"
+        fi
     else
         say "  the settings in $CONFIG_PATH stay, for a second install"
     fi
@@ -905,8 +909,10 @@ remove_power() {
     fi
     systemctl daemon-reload
     if [[ $PURGE -eq 1 ]]; then
-        purge_config "$POWER_CONFIG_PATH"
-        say "  and the settings in $POWER_CONFIG_PATH"
+        # The message follows the result. See remove_led.
+        if purge_config "$POWER_CONFIG_PATH"; then
+            say "  and the settings in $POWER_CONFIG_PATH"
+        fi
     else
         say "  the settings in $POWER_CONFIG_PATH stay, for a second install"
     fi
@@ -1018,8 +1024,10 @@ remove_pegboard() {
     remove_legacy_sleep_hooks
     systemctl daemon-reload
     if [[ $PURGE -eq 1 ]]; then
-        purge_config "$PEGBOARD_CONFIG_PATH"
-        say "  and the settings in $PEGBOARD_CONFIG_PATH"
+        # The message follows the result. See remove_led.
+        if purge_config "$PEGBOARD_CONFIG_PATH"; then
+            say "  and the settings in $PEGBOARD_CONFIG_PATH"
+        fi
     else
         say "  the settings in $PEGBOARD_CONFIG_PATH stay, for a second install"
     fi
@@ -1106,8 +1114,10 @@ remove_system() {
     systemctl daemon-reload
     remove_decky_plugin
     if [[ $PURGE -eq 1 ]]; then
-        purge_config "$MOUNTS_RECORD_PATH"
-        say "  and the drives in $MOUNTS_RECORD_PATH"
+        # The message follows the result. See remove_led.
+        if purge_config "$MOUNTS_RECORD_PATH"; then
+            say "  and the drives in $MOUNTS_RECORD_PATH"
+        fi
     else
         say "  the drives in $MOUNTS_RECORD_PATH stay, for a second install"
     fi

@@ -25,7 +25,10 @@ export ROOT
 # shellcheck source=/dev/null
 source "$REPO/scripts/user-unit.sh"
 
-say()  { :; }
+# On stdout, because a test reads it. The installer prints "and the
+# settings in <path>" after a purge, and that line has to follow what
+# the purge did rather than what it was asked to do.
+say()  { echo "$*"; }
 warn() { echo "warn: $*" >&2; }
 systemctl() { :; }
 udevadm()   { :; }

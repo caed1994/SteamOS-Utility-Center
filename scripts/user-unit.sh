@@ -497,13 +497,32 @@ OLD_CONFIGS=("$ROOT/etc/steamos-led-serial.conf:$CONFIG_PATH"
 #
 # The same table as OLD_CONFIGS, read the other way. A module with no old name
 # finds nothing here and loses its one file, which is the whole job.
+#
+# It reports what happened and not what it asked for. rm -f says nothing
+# about a file it could not remove, and the caller printed "and the settings
+# in <path>" either way. A locked root filesystem, a mount over the top or a
+# file that root does not own each leave the settings in place, and each one
+# read as a success. unlock_rootfs is the first of those: this script goes on
+# past a failed unlock, because most of a run works without it.
 purge_config() {  # purge_config <new-path>
-    local entry
-    rm -f "$1"
+    local entry path left=""
+    local -a names=("$1")
     for entry in "${OLD_CONFIGS[@]}"; do
         [[ "${entry#*:}" == "$1" ]] || continue
-        rm -f "${entry%%:*}"
+        names+=("${entry%%:*}")
     done
+    for path in "${names[@]}"; do
+        rm -f "$path" 2>/dev/null || true
+    done
+    for path in "${names[@]}"; do
+        [[ -e "$path" ]] || continue
+        left="$left $path"
+    done
+    [[ -n "$left" ]] || return 0
+    warn "could not remove$left"
+    warn "  those settings stay on this machine, and a second install of the"
+    warn "  module reads them again. Is the root filesystem locked?"
+    return 1
 }
 
 # And the other files, which hold no state. These scripts remove them, and the

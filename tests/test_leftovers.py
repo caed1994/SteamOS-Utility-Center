@@ -527,13 +527,29 @@ class RunPurgeTest(unittest.TestCase):
                 handle.write("SETTING=mine\n")
         return root
 
-    def remove(self, func, purge, root):
+    def remove(self, func, purge, root, works=True):
         done = subprocess.run(["bash", self.HARNESS, func, str(purge), root],
                               capture_output=True, text=True)
-        self.assertEqual(done.returncode, 0,
-                         "%s exited %d: %s" % (func, done.returncode,
-                                               done.stderr))
+        if works:
+            self.assertEqual(done.returncode, 0,
+                             "%s exited %d: %s" % (func, done.returncode,
+                                                   done.stderr))
         return done
+
+    def stuck(self, path):
+        """A machine where that settings file cannot be removed.
+
+        A directory in its place, because rm -f fails on one and leaves it
+        there. The machine this reproduces is a different one: a locked root
+        filesystem, where every write and every removal under /etc fails and
+        the installer goes on. What the two have in common is the part under
+        test, which is rm -f reporting nothing and the file staying.
+        """
+        root = self.machine([])
+        os.makedirs(root + path)
+        with open(os.path.join(root + path, "in-the-way"), "w") as handle:
+            handle.write("x\n")
+        return root
 
     def test_the_harness_runs_the_real_function(self):
         """A harness that ran nothing would pass every test below it."""
@@ -577,6 +593,35 @@ class RunPurgeTest(unittest.TestCase):
                 self.assertFalse(os.path.exists(root + old),
                                  "%s left %s, which the next install moves "
                                  "to %s" % (func, old, new))
+
+    def test_a_purge_that_removed_nothing_says_so(self):
+        """Reported: "Remove its settings as well", and the settings stayed.
+
+        rm -f says nothing about a file it could not remove, so the line
+        after it named the file either way. A purge that did nothing read
+        exactly like a purge that worked, on the screen and in the log.
+        """
+        for func, (new, _old) in self.CASES.items():
+            with self.subTest(func):
+                root = self.stuck(new)
+                done = self.remove(func, 1, root, works=False)
+                self.assertIn("could not remove", done.stderr,
+                              "%s said nothing about %s" % (func, new))
+                self.assertNotIn("and the settings in", done.stdout,
+                                 "%s claimed the purge it did not do" % func)
+                self.assertNotIn("and the drives in", done.stdout,
+                                 "%s claimed the purge it did not do" % func)
+
+    def test_a_purge_that_worked_still_says_so(self):
+        """Or the test above passes on a line that nobody ever prints."""
+        for func, (new, _old) in self.CASES.items():
+            with self.subTest(func):
+                root = self.machine([new])
+                done = self.remove(func, 1, root)
+                self.assertRegex(done.stdout, r"and the (settings|drives) in",
+                                 "%s removed %s and said nothing"
+                                 % (func, new))
+                self.assertNotIn("could not remove", done.stderr)
 
     def test_only_that_module_loses_its_settings(self):
         """A purge on one module is not a purge on the machine."""
