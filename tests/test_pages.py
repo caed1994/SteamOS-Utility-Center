@@ -71,6 +71,32 @@ def methods(node):
     return [n.name for n in node.body if isinstance(n, ast.FunctionDef)]
 
 
+# The modules of this window that hold a class somebody replaces in a test.
+#
+# A name taken out of one is a copy that the file holds for itself. A test
+# then has to replace it in each file that took one, and a replacement in the
+# wrong file lets the real thing run: a modal window opened and waited for a
+# press that no test makes, which is a suite that hangs instead of failing.
+# It cost forty minutes to find.
+REPLACEABLE = ("dialogs", "widgets", "runner")
+
+
+def names_taken_out_of(module):
+    """Which files of gui/ take a name out of that module, with the names."""
+    bad = []
+    for name in sorted(os.listdir(GUI)):
+        if not (name.endswith(".py") or name == PANEL_NAME):
+            continue
+        if name == module + ".py":
+            continue
+        for node in ast.walk(tree_of(os.path.join(GUI, name))):
+            if isinstance(node, ast.ImportFrom) and node.module == module:
+                bad.append("%s takes %s out of %s"
+                           % (name, ", ".join(a.name for a in node.names),
+                              module))
+    return bad
+
+
 def panel_class():
     return next(n for n in tree_of(PANEL).body
                 if isinstance(n, ast.ClassDef) and n.name == "Panel")
@@ -436,30 +462,8 @@ class DialogModuleTest(unittest.TestCase):
                 self.assertNotIn("steamos-utility-center", node.module or "")
 
     def test_nothing_takes_a_name_out_of_this_module(self):
-        """`import dialogs`, and never `from dialogs import Dialog`.
-
-        A name taken out of the module is a copy that the file holds for
-        itself. A test then has to replace it in each file that took one,
-        and a replacement in the wrong file lets the real window open and
-        wait for a press that no test makes. That is a suite that hangs
-        instead of failing, and it cost forty minutes to find.
-
-        Measured: the Nanoleaf card moved to a page of its own and two live
-        tests went on replacing Dialog in the window. Both hung.
-        """
-        gui = os.path.join(GUI)
-        bad = []
-        for name in sorted(os.listdir(gui)):
-            if not (name.endswith(".py")
-                    or name == "steamos-utility-center-panel"):
-                continue
-            if name == "dialogs.py":
-                continue
-            for node in ast.walk(tree_of(os.path.join(gui, name))):
-                if isinstance(node, ast.ImportFrom) and node.module == "dialogs":
-                    bad.append("%s takes %s out of dialogs"
-                               % (name, ", ".join(a.name for a in node.names)))
-        self.assertEqual(bad, [])
+        """`import dialogs`, and never `from dialogs import Dialog`."""
+        self.assertEqual(names_taken_out_of("dialogs"), [])
 
     def test_the_window_holds_none_of_them_any_more(self):
         """A class left behind would be the one the window opens, and the
@@ -473,6 +477,64 @@ class DialogModuleTest(unittest.TestCase):
         left = sorted(node.name for node in tree_of(PANEL).body
                       if isinstance(node, ast.ClassDef) and node.name in mine)
         self.assertEqual(left, [])
+
+
+class WidgetModuleTest(unittest.TestCase):
+    """The two parts of the window that are neither a page nor a dialog.
+
+    Popup draws the list of a drop-down, because a tk.Menu cannot take the
+    look of the other controls. Runner runs a command off the drawing
+    thread. They are two modules and not one, because a command runner is
+    not a widget and a reader looking for either one looks for its name.
+    """
+
+    def test_each_holds_what_its_name_says(self):
+        widgets = [n.name for n in tree_of(os.path.join(GUI, "widgets.py")).body
+                   if isinstance(n, ast.ClassDef)]
+        runner = [n.name for n in tree_of(os.path.join(GUI, "runner.py")).body
+                  if isinstance(n, ast.ClassDef)]
+        self.assertEqual(widgets, ["Popup"])
+        self.assertEqual(runner, ["Runner"])
+
+    def test_the_window_holds_neither_any_more(self):
+        left = [node.name for node in tree_of(PANEL).body
+                if isinstance(node, ast.ClassDef)
+                and node.name in ("Popup", "Runner")]
+        self.assertEqual(left, [])
+
+    def test_neither_knows_what_the_window_is(self):
+        for name in ("widgets.py", "runner.py"):
+            tree = tree_of(os.path.join(GUI, name))
+            named = {node.id for node in ast.walk(tree)
+                     if isinstance(node, ast.Name)}
+            self.assertNotIn("Panel", named, name)
+
+    def test_nothing_takes_a_name_out_of_either(self):
+        """Same rule as the dialogs, for the same reason."""
+        for module in ("widgets", "runner"):
+            self.assertEqual(names_taken_out_of(module), [])
+
+    def test_the_sidebar_entry_stays_with_the_helper_it_draws_through(self):
+        """SidebarEntry is the other candidate and is not moved.
+
+        It draws itself through _photo, which the theme code of the window
+        uses ten times over. That helper cannot go to roundrect.py either:
+        that module says of itself that it uses no tkinter, so a test of a
+        shape has a value on a machine with no display.
+        """
+        left = [node.name for node in tree_of(PANEL).body
+                if isinstance(node, ast.ClassDef)
+                and node.name == "SidebarEntry"]
+        self.assertEqual(left, ["SidebarEntry"])
+        # The imports and not the words: that file says "does not use
+        # tkinter" in its own docstring, and a search of the text found it.
+        taken = []
+        for node in ast.walk(tree_of(os.path.join(GUI, "roundrect.py"))):
+            if isinstance(node, ast.Import):
+                taken += [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                taken.append(node.module or "")
+        self.assertEqual([one for one in taken if "tkinter" in one], [])
 
 
 if __name__ == "__main__":
