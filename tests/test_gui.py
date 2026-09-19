@@ -1922,13 +1922,23 @@ class PanelStyleTest(unittest.TestCase):
     """
 
     def setUp(self):
-        path = os.path.join(HERE, "..", "gui", "steamos-utility-center-panel")
-        with open(path) as handle:
-            self.tree = ast.parse(handle.read())
+        # Every file the window is cut into. A style is configured in one
+        # place and applied in another, and the two are in different files
+        # since the pages moved out: Material.TEntry is configured in the
+        # window and applied by three pages and the dialogs. A reader of one
+        # file calls that style dead.
+        self.trees = [ast.parse(text)
+                      for text in window_sources().values()]
+        self.tree = self.trees[0]
+
+    def _nodes(self):
+        for tree in self.trees:
+            for node in ast.walk(tree):
+                yield node
 
     def _configured(self):
         names = set()
-        for node in ast.walk(self.tree):
+        for node in self._nodes():
             if (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
                     and node.func.attr in ("configure", "map")
@@ -1940,7 +1950,7 @@ class PanelStyleTest(unittest.TestCase):
 
     def _used(self):
         names = set()
-        for node in ast.walk(self.tree):
+        for node in self._nodes():
             if not isinstance(node, ast.Call):
                 continue
             for keyword in node.keywords:

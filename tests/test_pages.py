@@ -204,5 +204,102 @@ class SystemPageTest(unittest.TestCase):
             self.assertIn("self._run_privileged(", f.read())
 
 
+class NetworkPageTest(unittest.TestCase):
+    """The third page that moved: the Nanoleaf devices on the network.
+
+    Part of the core and not a module: an effect on one of them is an HTTP
+    call to an address on the LAN, and pairing one needs no rights.
+    """
+
+    def setUp(self):
+        self.tree = tree_of(os.path.join(GUI, "page_network.py"))
+        self.cls = next(n for n in self.tree.body
+                        if isinstance(n, ast.ClassDef))
+
+    def test_it_took_the_whole_card(self):
+        left = [one for one in methods(panel_class())
+                if "nanoleaf" in one.lower() or "network" in one.lower()]
+        self.assertEqual(left, [])
+        self.assertGreaterEqual(len(methods(self.cls)), 16)
+
+    def test_it_makes_no_object_of_its_own(self):
+        self.assertNotIn("__init__", methods(self.cls))
+
+    def test_every_call_to_a_device_stays_off_the_drawing_thread(self):
+        """The reason this card has a method that no other page needs.
+
+        One call costs a timeout of some seconds. _in_background moved with
+        the card, because nothing else on the window calls a device.
+        """
+        self.assertIn("_in_background", methods(self.cls))
+        self.assertNotIn("_in_background", methods(panel_class()))
+
+    def test_the_columns_of_a_device_moved_with_it(self):
+        assigned = {node.targets[0].id for node in self.tree.body
+                    if isinstance(node, ast.Assign)
+                    and isinstance(node.targets[0], ast.Name)}
+        for name in ("NET_NAME", "NET_WHERE", "NET_STATE", "NET_EFFECT",
+                     "NET_SWITCH", "NET_SPACER", "NET_REMOVE"):
+            self.assertIn(name, assigned)
+        with open(PANEL, encoding="utf-8") as handle:
+            self.assertNotIn("\nNET_NAME = ", handle.read())
+
+
+class DialogModuleTest(unittest.TestCase):
+    """The modal windows, which a page needs and cannot take from the window.
+
+    The window imports each page, so a page that imported the window back
+    would be a circle. gui/dialogs.py is what makes the Nanoleaf card
+    possible: it opens two of them.
+    """
+
+    def setUp(self):
+        self.tree = tree_of(os.path.join(GUI, "dialogs.py"))
+        self.classes = [n for n in self.tree.body
+                        if isinstance(n, ast.ClassDef)]
+
+    def test_it_holds_the_base_and_the_ones_built_on_it(self):
+        names = [n.name for n in self.classes]
+        self.assertIn("Dialog", names)
+        for one in self.classes:
+            if one.name == "Dialog":
+                self.assertEqual(one.bases, [])
+            else:
+                self.assertEqual([ast.unparse(b) for b in one.bases],
+                                 ["Dialog"], one.name)
+
+    def test_none_of_them_knows_what_the_window_is(self):
+        """Each takes a widget as its parent and reads nothing else.
+
+        The names in the code and not the words in the comments. The first
+        version of this read the file as text and failed on the line of the
+        docstring that says the same thing.
+        """
+        named = {node.id for node in ast.walk(self.tree)
+                 if isinstance(node, ast.Name)}
+        named |= {node.attr for node in ast.walk(self.tree)
+                  if isinstance(node, ast.Attribute)}
+        self.assertNotIn("Panel", named)
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.assertNotIn("steamos-utility-center", alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                self.assertNotIn("steamos-utility-center", node.module or "")
+
+    def test_the_window_holds_none_of_them_any_more(self):
+        """A class left behind would be the one the window opens, and the
+        module would be a file that nothing reads.
+
+        By name and not by content: assertNotIn on the window's code puts
+        six thousand lines into the failure, and the one name that matters
+        is not in the part a terminal shows.
+        """
+        mine = {one.name for one in self.classes}
+        left = sorted(node.name for node in tree_of(PANEL).body
+                      if isinstance(node, ast.ClassDef) and node.name in mine)
+        self.assertEqual(left, [])
+
+
 if __name__ == "__main__":
     unittest.main()
