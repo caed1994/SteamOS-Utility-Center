@@ -91,3 +91,13 @@ INDENT_STEP = 5 * material.SPACE
 # above a drop-down had that fault.
 ROW_PAD = 6
 BLOCK_GAP = 4 * material.SPACE
+
+# The width of the one drop-down whose entries are paths into /sys.
+#
+# Every other settings menu is MENU_WIDTH, so a column of them has a straight
+# edge. This one is wider because a cut path removes the information that a
+# person needs: the name of the sensor they picked.
+#
+# Here and not in the panel, because the System page reads it as well. See
+# the note at the top of this file.
+SENSOR_WIDTH = 30

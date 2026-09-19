@@ -153,5 +153,56 @@ class CecPageTest(unittest.TestCase):
         self.assertNotIn("__init__", methods(self.cls))
 
 
+class SystemPageTest(unittest.TestCase):
+    """The second page that moved: the drives, controller wake and Decky.
+
+    These are settings of the machine and not of a device this project
+    drives. The LED bar has a strip and HDMI CEC has a television; this page
+    has the computer.
+    """
+
+    def setUp(self):
+        self.tree = tree_of(os.path.join(GUI, "page_system.py"))
+        self.cls = next(n for n in self.tree.body
+                        if isinstance(n, ast.ClassDef))
+
+    def test_it_took_the_whole_page(self):
+        """Every method of the three parts is in it, and none is left over."""
+        left = [one for one in methods(panel_class())
+                if any(word in one.lower()
+                       for word in ("drive", "decky", "wake"))
+                # The window keeps the switch for the wake after a resume.
+                # That is a setting of the Power page and another feature:
+                # it wakes the television and not the machine. See
+                # cec-toolkit and scripts/resume-wake.sh.
+                and "resume" not in one.lower()]
+        self.assertEqual(left, [])
+        self.assertGreaterEqual(len(methods(self.cls)), 19)
+
+    def test_it_makes_no_object_of_its_own(self):
+        self.assertNotIn("__init__", methods(self.cls))
+
+    def test_the_columns_of_a_drive_moved_with_it(self):
+        """A grid that one file lays out and another names is a grid that
+        two files have to agree about."""
+        assigned = {node.targets[0].id for node in self.tree.body
+                    if isinstance(node, ast.Assign)
+                    and isinstance(node.targets[0], ast.Name)}
+        for name in ("DRIVE_WHERE", "DRIVE_TYPE", "DRIVE_STATE",
+                     "DRIVE_OWN", "DRIVE_REMOVE", "DRIVE_SPACER"):
+            self.assertIn(name, assigned)
+        with open(PANEL, encoding="utf-8") as handle:
+            self.assertNotIn("\nDRIVE_WHERE = ", handle.read())
+
+    def test_what_needs_root_stayed_in_the_window(self):
+        """_run_privileged belongs to no page. The settings pages apply the
+        LED and the CPU through it, and this page applies the drives."""
+        self.assertIn("_run_privileged", methods(panel_class()))
+        self.assertNotIn("_run_privileged", methods(self.cls))
+        # And the page still reaches it, which the mixin is what makes true.
+        with open(os.path.join(GUI, "page_system.py"), encoding="utf-8") as f:
+            self.assertIn("self._run_privileged(", f.read())
+
+
 if __name__ == "__main__":
     unittest.main()
