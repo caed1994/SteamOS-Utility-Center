@@ -476,16 +476,47 @@ install -m 0644 "$SOURCE_DIR/udev/99-$NAME.rules" "$UDEV_TEMPLATE_DIR/"
 #
 # node_modules is left out. It is 130 megabytes of another project's build,
 # the plugin ships the built dist beside it, and nothing here reads it.
+# Let a copy that is already on the machine see every branch again.
+#
+# A copy from an older installer carries remote.origin.fetch with one branch
+# in it, because `git clone --depth 1 --branch X` implies --single-branch. No
+# fetch reaches another branch through that refspec, so the menu on the
+# update page stayed at one name while the clone it came from offered four.
+#
+# A reinstall cannot mend it by making the copy again: install.sh runs from
+# the copy once the clone is gone, and copy_toolbox returns before the clone
+# in that case. So this is the step that mends it, and it is the only run
+# that can. The branches themselves arrive at the next Check for updates.
+#
+# `-c safe.directory`, because the copy belongs to the desktop user and this
+# runs as root. One git process and no transport, so -c is enough here. See
+# the clone below, where it is not.
+widen_toolbox_branches() {
+    local wide="+refs/heads/*:refs/remotes/origin/*" now
+    [[ -d "$SOURCE_COPY/.git" ]] || return 0
+    now="$(git -C "$SOURCE_COPY" -c "safe.directory=$SOURCE_COPY" \
+           config remote.origin.fetch 2>/dev/null || true)"
+    [[ "$now" != "$wide" ]] || return 0
+    if git -C "$SOURCE_COPY" -c "safe.directory=$SOURCE_COPY" \
+           config remote.origin.fetch "$wide"; then
+        say "The update page can reach every branch from the next check on"
+    else
+        warn "could not widen the branches of $SOURCE_COPY, so the update"
+        warn "menu goes on listing one branch"
+    fi
+}
+
 copy_toolbox() {
     local git_here=(git -C "$SOURCE_DIR" -c "safe.directory=$SOURCE_DIR")
     local branch url said gitconfig
 
     if [[ "$SOURCE_DIR" -ef "$SOURCE_COPY" ]]; then
         say "Running from $SOURCE_COPY already, so the copy stays as it is"
-        # The owner is still set. A copy that an older installer left with
-        # root is the one thing this run can mend from inside it, and the
-        # update page sends a person here to do exactly that.
+        # The owner is still set, and the branches with it. Those two are
+        # what this run can mend from inside the copy, and the update page
+        # sends a person here to do exactly that.
         give_away_toolbox
+        widen_toolbox_branches
         return 0
     fi
     say "Copying the toolbox to $SOURCE_COPY"
@@ -511,9 +542,30 @@ copy_toolbox() {
         gitconfig="$(mktemp)"
         printf '[safe]\n\tdirectory = %s\n\tdirectory = %s\n' \
             "$SOURCE_DIR" "$SOURCE_DIR/.git" > "$gitconfig"
+        # --no-single-branch, because --depth 1 --branch implies the other
+        # one: the copy is then pinned to one branch by
+        # remote.origin.fetch, and a fetch from the remote below can never
+        # bring another. The menu on the update page reads that list and
+        # offered one branch on an installed machine while the clone it came
+        # from offered four. Measured: 2.1M against 2.4M for the .git of the
+        # copy.
         if said="$(GIT_CONFIG_GLOBAL="$gitconfig" git clone --quiet --depth 1 \
-               ${branch:+--branch "$branch"} \
+               --no-single-branch ${branch:+--branch "$branch"} \
                "file://$SOURCE_DIR" "$SOURCE_COPY" 2>&1)"; then
+            # And the branches that the clone knows of its own remote.
+            #
+            # A clone copies the *local* branches of its source, and a person
+            # keeps one branch checked out and the rest as origin/*. So the
+            # step above alone leaves the same one-branch menu until the
+            # first press of Check for updates. This needs no network: the
+            # source is a directory on this machine.
+            #
+            # Guarded, because this script runs with `set -e` and a short
+            # menu is not a reason to end an installation.
+            GIT_CONFIG_GLOBAL="$gitconfig" git -C "$SOURCE_COPY" fetch \
+                --quiet --depth 1 "file://$SOURCE_DIR" \
+                '+refs/remotes/origin/*:refs/remotes/origin/*' 2>/dev/null \
+                || warn "the update menu lists one branch until the first check"
             if [[ -n "$url" ]]; then
                 # Guarded, because this script runs with `set -e`. An
                 # unguarded git call here takes the whole installation with

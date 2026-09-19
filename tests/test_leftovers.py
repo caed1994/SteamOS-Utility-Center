@@ -666,6 +666,146 @@ class SwitchedLinkTest(unittest.TestCase):
                          "the drives unit is the one case")
 
 
+class RunCopyToolboxTest(unittest.TestCase):
+    """The copy made, and not the source of install.sh read.
+
+    The update page offered one branch on an installed machine and four in
+    the clone it came from. `git clone --depth 1 --branch X` implies
+    --single-branch, so remote.origin.fetch in the copy named that one
+    branch and no fetch could ever bring another.
+
+    Every test above this one is a grep, and "the copy is a clone" passed
+    while the copy was a clone of one branch.
+    """
+
+    HARNESS = os.path.join(REPO, "tests", "shell", "run-copy-toolbox.sh")
+
+    def git(self, where, *args):
+        done = subprocess.run(("git", "-C", where) + args,
+                              capture_output=True, text=True)
+        return done.stdout.strip()
+
+    def source(self):
+        """A clone shaped like a person's: one branch out, the rest as
+        origin/*. That is what `git clone` leaves behind, and the copy takes
+        the local branches only."""
+        where = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, where, ignore_errors=True)
+        src = os.path.join(where, "source")
+        done = subprocess.run(["git", "clone", "--quiet", REPO, src],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return src, os.path.join(where, "copy")
+
+    def branches(self, where):
+        return sorted(
+            set(self.git(where, "for-each-ref",
+                         "--format=%(refname:strip=3)",
+                         "refs/remotes/origin").split()) - {"HEAD"})
+
+    def copy(self):
+        src, dest = self.source()
+        done = subprocess.run(["bash", self.HARNESS, src, dest],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return src, dest
+
+    def test_the_harness_runs_the_real_function(self):
+        """A harness that ran nothing would pass every test below it."""
+        with open(os.path.join(REPO, "install.sh")) as handle:
+            self.assertIn("\ncopy_toolbox()", handle.read())
+        _src, dest = self.copy()
+        self.assertTrue(os.path.isdir(os.path.join(dest, ".git")),
+                        "the copy is not a clone at all")
+        self.assertTrue(os.path.exists(os.path.join(dest, "install.sh")))
+
+    def test_the_copy_knows_every_branch_its_source_knows(self):
+        src, dest = self.copy()
+        self.assertGreater(len(self.branches(src)), 1,
+                           "this test needs a source with several branches")
+        self.assertEqual(self.branches(dest), self.branches(src))
+
+    def test_the_copy_is_not_pinned_to_one_branch(self):
+        """The list above is right at the moment of the install. This is what
+        keeps it right: a fetch from the remote brings every branch."""
+        _src, dest = self.copy()
+        self.assertEqual(self.git(dest, "config", "remote.origin.fetch"),
+                         "+refs/heads/*:refs/remotes/origin/*")
+
+    def test_the_menu_of_the_panel_reads_the_same_list(self):
+        """The page asks ledpanel, so the test asks ledpanel."""
+        sys.path.insert(0, os.path.join(REPO, "gui"))
+        import ledpanel
+        src, dest = self.copy()
+        self.assertEqual(ledpanel.known_branches(dest),
+                         ledpanel.known_branches(src))
+        self.assertIn("experimental", ledpanel.known_branches(dest))
+
+    def test_the_copy_still_points_at_the_remote_of_its_source(self):
+        """A clone of the clone points at the directory a person deletes."""
+        src, dest = self.copy()
+        self.assertEqual(self.git(dest, "remote", "get-url", "origin"),
+                         self.git(src, "remote", "get-url", "origin"))
+
+    def test_the_copy_stays_shallow(self):
+        """The whole point of the copy is that it is small."""
+        _src, dest = self.copy()
+        self.assertEqual(self.git(dest, "rev-parse",
+                                  "--is-shallow-repository"), "true")
+
+    def pinned(self):
+        """A copy as an older installer left it, and a remote with branches.
+
+        The remote is bare, which is the shape of the one on the network.
+        The refs of a clone of a clone are its source's local branches, and
+        that is not the case this is about.
+        """
+        where = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, where, ignore_errors=True)
+        hub = os.path.join(where, "hub.git")
+        for command in (["git", "clone", "--quiet", "--bare", REPO, hub],
+                        ["git", "-C", hub, "branch", "-f", "debug",
+                         "experimental"],
+                        ["git", "clone", "--quiet", "--depth", "1",
+                         "--branch", "experimental", "file://" + hub,
+                         os.path.join(where, "copy")]):
+            done = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+        return os.path.join(where, "copy")
+
+    def test_a_copy_from_an_older_installer_is_mended_in_place(self):
+        """install.sh runs from the copy once the clone is gone, and
+        copy_toolbox returns before the clone in that case. So a reinstall
+        cannot mend the refspec by making the copy again."""
+        copy = self.pinned()
+        self.assertNotEqual(self.git(copy, "config", "remote.origin.fetch"),
+                            "+refs/heads/*:refs/remotes/origin/*")
+        done = subprocess.run(["bash", self.HARNESS, copy, copy],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.git(copy, "config", "remote.origin.fetch"),
+                         "+refs/heads/*:refs/remotes/origin/*")
+
+    def test_a_pinned_copy_reaches_no_other_branch_before_that(self):
+        """The refspec and not a missing fetch. Measured: a fetch on the
+        pinned copy brings nothing new, however often it runs."""
+        copy = self.pinned()
+        subprocess.run(["git", "-C", copy, "fetch", "--quiet", "origin"],
+                       capture_output=True, text=True)
+        self.assertEqual(self.branches(copy), ["experimental"])
+
+    def test_and_the_branches_arrive_at_the_next_check(self):
+        copy = self.pinned()
+        subprocess.run(["bash", self.HARNESS, copy, copy],
+                       capture_output=True, text=True)
+        done = subprocess.run(["git", "-C", copy, "fetch", "--quiet",
+                               "--depth", "1", "origin"],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("debug", self.branches(copy))
+        self.assertIn("experimental", self.branches(copy))
+
+
 class ToolboxCopyTest(unittest.TestCase):
     """The copy of this project that makes the clone something to throw away.
 
