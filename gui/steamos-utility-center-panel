@@ -57,8 +57,8 @@ import widgets                                              # noqa: E402
 # this file back. See gui/panelbase.py.
 from panelbase import (BLOCK_GAP, CARD_INSET, CARD_WRAP,     # noqa: E402
                        CEC_INDENT, COLOUR, CONTENT_MAX,
-                       GROUP_GAP, INDENT_STEP, ROW_FIELD_WIDTH,
-                       ROW_GAP, ROW_PAD, SENSOR_WIDTH, SIDE_MARGIN)
+                       GROUP_GAP, INDENT_STEP, ROW_GAP, ROW_PAD,
+                       SENSOR_WIDTH, SIDE_MARGIN)
 
 # The pages that live in their own module.
 #
@@ -73,7 +73,9 @@ from panelbase import (BLOCK_GAP, CARD_INSET, CARD_WRAP,     # noqa: E402
 # That is a suite that hangs rather than fails. See tests/test_pages.py.
 import dialogs                                              # noqa: E402
 
+import page_about                                           # noqa: E402
 import page_cec                                             # noqa: E402
+import page_modules                                         # noqa: E402
 import page_gpu                                             # noqa: E402
 import page_status                                          # noqa: E402
 import page_network                                         # noqa: E402
@@ -1615,7 +1617,9 @@ class SidebarEntry:
 
 
 class Panel(page_status.StatusPage, page_system.SystemPage,
-            page_network.NetworkPage, page_gpu.GpuPage, page_cec.CecPage):
+            page_network.NetworkPage, page_gpu.GpuPage,
+            page_modules.ModulePage, page_about.AboutPage,
+            page_cec.CecPage):
     def __init__(self, root):
         self.root = root
         root.title("SteamOS Utility Center")
@@ -4160,158 +4164,15 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
     # before there were modules. See _show_cec, which is the same idea for a
     # page that also reports on a television.
 
-    def _read_modules(self):
-        """Asks the machine which modules it has. See modules.py."""
-        self._modules_here = frozenset(ledpanel.modules_here())
 
-    def _module_here(self, name):
-        return name in self._modules_here
 
-    def _module_page(self, parent, name, build):
-        """One section, with the offer to install its module in front of it."""
-        outer = ttk.Frame(parent, style="Page.TFrame")
-        present = ttk.Frame(outer, style="Page.TFrame")
-        self._build_module_line(present, name)
-        build(present).pack(fill="both", expand=True)
-        self._module_halves[name] = (self._build_module_offer(outer, name),
-                                     present)
-        self._show_module(name)
-        return outer
 
-    def _build_module_offer(self, parent, name):
-        """What the page holds before its module is installed.
 
-        It says what the module does, what it puts on the machine, and what it
-        needs, rather than only offering a button. A person decides here, and
-        "install failed" three minutes later is a worse way to find out that
-        the machine has no board on it.
 
-        The words are in server/steamos_utility_center/modules.py, so this page
-        and `./install.sh --modules` say the same thing.
-        """
-        holder = ttk.Frame(parent, style="Page.TFrame")
-        card = self._card(holder)
-        card.pack(fill="x", padx=SIDE_MARGIN, pady=(ROW_GAP, 0))
-        inner = ttk.Frame(card, style="OnCard.TFrame")
-        inner.pack(fill="x", padx=GROUP_GAP, pady=GROUP_GAP)
 
-        said = ledpanel.module_says(name)
-        ttk.Label(inner, text="Not installed yet",
-                  style="Section.TLabel").pack(anchor="w")
-        for text in (said["does"], "Installs " + said["brings"],
-                     "Needs " + said["needs"]):
-            line = ttk.Label(inner, text=text, style="Muted.TLabel",
-                             justify="left", wraplength=CARD_WRAP)
-            line.pack(anchor="w", pady=(ROW_GAP, 0))
-            self._wrapped.append(line)
 
-        row = ttk.Frame(inner, style="OnCard.TFrame")
-        row.pack(anchor="w", pady=(GROUP_GAP, 0))
-        ttk.Button(row, text="Install %s" % said["title"],
-                   style="Filled.TButton",
-                   command=lambda: self._install_module(name)).pack(side="left")
-        ttk.Button(row, text="Check again", style="Text.TButton",
-                   command=self._reread_modules).pack(side="left",
-                                                      padx=(ROW_GAP, 0))
-        return holder
 
-    def _build_module_line(self, parent, name):
-        """The card at the head of a page whose module is installed.
 
-        A name and a button, and no prose at all. The description belongs to
-        a person who must decide, and that person reads the other half of
-        this page. Somebody who opens this page every day must not read the
-        same paragraph every day.
-        """
-        said = ledpanel.module_says(name)
-        card = self._card(parent)
-        card.pack(fill="x", padx=SIDE_MARGIN, pady=(ROW_GAP, 0))
-        inner = ttk.Frame(card, style="OnCard.TFrame")
-        inner.pack(fill="x", padx=GROUP_GAP, pady=GROUP_GAP)
-        inner.columnconfigure(0, weight=1)
-        ttk.Label(inner, text="%s module" % said["title"],
-                  style="Section.TLabel").grid(row=0, column=0, sticky="w")
-        # At the far end of the line, where a rare and deliberate button
-        # belongs. It is not a setting of this page, and a place among the
-        # settings would read as one.
-        #
-        # "Remove module" and not "Remove %s". The System page has a Remove
-        # button on each drive, so one word alone is two buttons a person
-        # must tell apart. The name of the module was in the button before,
-        # and "Drives, controller wake and Game Mode" is 366 pixels of it:
-        # the heading and the button together measured 977 against a card of
-        # about 950 at the font of somebody else's desktop, and the button
-        # was drawn over the end of the heading. The heading already names
-        # the module, one line above.
-        ttk.Button(inner, text="Remove module", style="Text.TButton",
-                   command=lambda: self._remove_module(name)).grid(
-                       row=0, column=1, sticky="e")
-        # And no line of prose under it. The offer above says what the module
-        # does, which is where a person decides. Somebody who reads this card
-        # has the module already.
-        return card
-
-    def _show_module(self, name):
-        """Pack whichever half the machine justifies."""
-        halves = self._module_halves.get(name)
-        if halves is None:
-            return
-        here = self._module_here(name)
-        for half, wanted in ((halves[1], here), (halves[0], not here)):
-            if wanted:
-                half.pack(fill="both", expand=True)
-            else:
-                half.pack_forget()
-
-    def _reread_modules(self):
-        """Reads the machine again and shows the right half of each page."""
-        self._read_modules()
-        for name in self._module_halves:
-            self._show_module(name)
-        # The Apply row belongs to the settings that are on screen, and a
-        # module that went away took its settings with it.
-        self._catch_up()
-        self._refit_page()
-
-    def _install_module(self, name):
-        said = ledpanel.module_says(name)
-        if not self._ask(said["title"],
-                         "This installs the %s module and asks for your "
-                         "password once.\n\nIt installs %s"
-                         % (said["title"], said["brings"]),
-                         confirm="Install"):
-            return
-        self.runner.start(ledpanel.module_command(SOURCE_DIR, name),
-                          lambda _code: self._module_changed(name))
-
-    def _ask_remove(self, name):
-        """Asks about a removal, and returns (go ahead, take the settings).
-
-        A seam beside _ask, which answers one question and cannot carry the
-        second. Everything that opens a window is behind one of these, so a
-        test can answer for a person.
-        """
-        # self.root and not self. Panel is a plain object that holds the Tk
-        # root; it is not a widget, so tkinter finds no interpreter on it and
-        # a press raised AttributeError into the terminal. Every other dialog
-        # here is built on self.root. See DialogParentTest.
-        asked = dialogs.RemoveDialog(self.root, ledpanel.module_says(name))
-        return bool(asked.answer), bool(asked.purge.get())
-
-    def _remove_module(self, name):
-        """The settings are a question here and not a sentence.
-
-        They stayed either way before, and the dialog said so. Files that
-        stay after a removal are a surprise when the only choice is somebody
-        else's.
-        """
-        go, purge = self._ask_remove(name)
-        if not go:
-            return
-        self.runner.start(
-            ledpanel.module_command(SOURCE_DIR, name, remove=True,
-                                    purge=purge),
-            lambda _code: self._module_changed(name))
 
     # Which settings the file of each module holds, for a reread after that
     # module arrived or left. See _reread_module_settings.
@@ -4357,13 +4218,6 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
         self._show_values({key: value for key, value in merged.items()
                            if key in keys})
 
-    def _module_changed(self, name):
-        """After a module arrived or left. The page and the status both move."""
-        self._reread_module_settings(name)
-        self._reread_modules()
-        if name == "cec":
-            self._reread_cec()
-        self._after_install()
 
 
     # -- status and repair ------------------------------------------------
@@ -4622,174 +4476,14 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
 
     # -- about, and the update from git ------------------------------------
 
-    def _build_app(self, where, table, note):
-        """App Settings: everything about this program itself.
 
-        The look of the panel and its update controls, which are settings of
-        the panel and not of the machine. A fault list is a different question
-        and stays on the status page.
-        """
-        outer = self._build_settings(where, table, note)
-        self.update_box = self._build_update(outer)
-        return outer
 
-    def _build_update(self, parent):
-        """Fetch a branch and install it: the two halves of "get the new one".
 
-        On a card, as each other group of settings on this page is. A plain
-        frame here draws a band of the wrong colour at the width of its
-        content, and the live tests check for that.
-        """
-        holder = ttk.Frame(parent, style="Page.TFrame")
-        holder.pack(fill="x")
 
-        if not ledpanel.is_git_clone(SOURCE_DIR):
-            self._note(
-                holder,
-                "%s is not a git clone, so there is nothing to update from - "
-                "this is what downloading a zip leaves you with. Clone it "
-                "with git to get updates here." % SOURCE_DIR, page=True,
-            ).pack(anchor="w", padx=SIDE_MARGIN, pady=(GROUP_GAP, 0))
-            return holder
 
-        card = self._card(holder)
-        card.pack(fill="x", padx=SIDE_MARGIN, pady=(GROUP_GAP, 0))
-        frame = ttk.Frame(card)
-        frame.pack(fill="x", padx=GROUP_GAP, pady=GROUP_GAP)
-        ttk.Label(frame, text="Update", style="Section.TLabel").pack(
-            anchor="w", pady=(0, ROW_GAP))
 
-        row = ttk.Frame(frame, style=self._ground(frame))
-        row.pack(fill="x")
-        ttk.Label(row, text="Branch").pack(side="left", padx=(0, ROW_GAP))
-        self.branch = tk.StringVar()
-        # Built with the branch that is checked out and nothing else, then
-        # filled: _refresh_branches is the one place that knows how the list
-        # is made, and it runs again after every fetch.
-        self._field(row, "branch", self.branch, [],
-                    ledpanel.current_branch(SOURCE_DIR),
-                    width=ROW_FIELD_WIDTH).pack(side="left", padx=(0, GROUP_GAP))
-        self._refresh_branches()
-        ttk.Button(row, text="Check for updates", style="Outlined.TButton",
-                   command=self.check_for_updates).pack(side="left",
-                                                        padx=(0, ROW_GAP))
-        self.update_button = ttk.Button(row, text="Update and install",
-                                        style="Filled.TButton",
-                                        command=self.update_now)
-        self.update_button.pack(side="left")
-        # The result of the last check, in a place with no fold. The log is
-        # almost always folded now, and it was the one place with this
-        # answer.
-        self.update_state = ttk.Label(frame)
-        self.update_state.pack(anchor="w", pady=(ROW_GAP, 0))
-        self._say_update(ledpanel.UPDATE_UNKNOWN, "")
-        # A different branch is a different question, and the old answer is
-        # not one about it.
-        self.branch.trace_add("write", lambda *_a: self._say_update(
-            ledpanel.UPDATE_UNKNOWN, ""))
-        return holder
 
-    def _say_update(self, state, sentence):
-        """Show what the last check found, and gate the install button on it."""
-        self._update_state = state
-        self.update_state.configure(
-            text=sentence,
-            style="Good.TLabel" if state == ledpanel.UPDATE_CURRENT
-            else "Section.TLabel" if state == ledpanel.UPDATE_AVAILABLE
-            else "Muted.TLabel")
-        self._refresh_update()
 
-    def _refresh_update(self):
-        """Nothing to install is a button that says so by not being pressable.
-
-        Only after a check has actually said there is nothing: never having
-        asked is not the same answer, and a button dead before anyone has
-        looked would be the window refusing to do something it can do.
-        """
-        if getattr(self, "update_button", None) is None:
-            return                              # not a clone; there is no row
-        self.update_button.state(
-            ["disabled"] if self._update_state == ledpanel.UPDATE_CURRENT
-            else ["!disabled"])
-
-    def _refresh_branches(self):
-        """Fill the list from what the clone knows, keeping the selection."""
-        branches = ledpanel.known_branches(SOURCE_DIR)
-        current = self.branch.get()
-        # A branch that the clone does not list stays in the menu. The
-        # detached head after a fetch is such a branch. Without this code,
-        # the current entry goes away below the pointer.
-        if current and current not in branches:
-            branches = sorted(branches + [current])
-        self._menus["branch"] = [(name, name) for name in branches]
-
-    def check_for_updates(self):
-        def checked(code):
-            self._refresh_branches()
-            self._say_update(*ledpanel.update_verdict(
-                "".join(self.runner.transcript), code))
-
-        self.runner.start(
-            ledpanel.update_command(SOURCE_DIR, self.branch.get(), check=True),
-            checked)
-
-    def update_now(self):
-        wanted = self.branch.get()
-        if wanted != ledpanel.current_branch(SOURCE_DIR) and not self._ask(
-                "Switch branch",
-                "This will switch from %s to %s and install that instead."
-                % (ledpanel.current_branch(SOURCE_DIR) or "?", wanted),
-                confirm="Switch"):
-            return
-
-        before = ledpanel.head_commit(SOURCE_DIR)
-
-        def updated(code):
-            self._refresh_branches()
-            if code != 0:
-                return                      # the script said why
-            self._say_update(*ledpanel.update_verdict(
-                "".join(self.runner.transcript), code))
-            if ledpanel.head_commit(SOURCE_DIR) == before:
-                self._write("Nothing new, so nothing to install.\n\n")
-                return
-            # Only force a module rebuild when its source actually moved: the
-            # installer skips a module that is loaded and working, which is
-            # right after a repair and wrong after an update that changed it.
-            self.runner.start(
-                ledpanel.reinstall_command(
-                    SOURCE_DIR,
-                    rebuild_module=ledpanel.module_changed(SOURCE_DIR, before)),
-                self._installed)
-
-        self.runner.start(ledpanel.update_command(SOURCE_DIR, wanted), updated)
-
-    def _after_install(self):
-        """Reads the machine again, after anything that installed something.
-
-        The toolkit as well. An installation can replace it now, and this page
-        drew what it read when the window opened: the HDMI CEC block and the
-        line at the foot of the window were both correct only after somebody
-        pressed Check again.
-        """
-        self.refresh_status()
-        if cec.installed():
-            self._reread_cec()
-
-    def _installed(self, code):
-        self._after_install()
-        if code != 0:
-            self._write("The install did not finish, so the panel is still "
-                        "running the old files.\n\n")
-            return
-        if self._ask(
-                "Update",
-                "Installed.\n\nThe panel itself is still running the files it "
-                "started with.", confirm="Restart the panel", deny="Later"):
-            self._restart()
-        else:
-            self._write("Restart the panel when it suits you; until then it "
-                        "is the old one you are looking at.\n\n")
 
     def _restart(self):
         """Replace this process with a fresh copy of the panel.

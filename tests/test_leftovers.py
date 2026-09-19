@@ -453,11 +453,20 @@ class PurgeTest(unittest.TestCase):
 
         The dialog is in gui/dialogs.py, where the window's modal windows
         live: a page of the window needs them, and a page cannot import the
-        window back. The seam that opens it is in the window.
+        window back. The seam that opens it is in gui/page_modules.py, which
+        holds the half of every module page that is about the module.
+
+        The window's code is read wherever it lives: it is cut into one
+        module per page, and a test that named one file stopped reading the
+        thing it asks about at each cut.
         """
-        panel = io.open(os.path.join(REPO, "gui",
-                                     "steamos-utility-center-panel")).read()
-        dialogs = io.open(os.path.join(REPO, "gui", "dialogs.py")).read()
+        gui = os.path.join(REPO, "gui")
+        panel = "\n".join(
+            io.open(os.path.join(gui, name)).read()
+            for name in ["steamos-utility-center-panel"]
+            + sorted(one for one in os.listdir(gui)
+                     if one.startswith("page_") and one.endswith(".py")))
+        dialogs = io.open(os.path.join(gui, "dialogs.py")).read()
         body = dialogs.split("class RemoveDialog")[1].split("\nclass ")[0]
         self.assertIn("BooleanVar(value=False)", body)
         self.assertIn("Remove its settings as well", body)

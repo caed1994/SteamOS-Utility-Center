@@ -182,6 +182,24 @@ class PageModuleTest(unittest.TestCase):
                     self.assertNotIn("steamos-utility-center",
                                      node.module or "", name)
 
+    def test_no_page_names_the_file_it_is_in(self):
+        """__file__ in a page is the page, and never the window.
+
+        _restart replaces this process with a fresh copy of the panel and
+        names the file to run with os.path.abspath(__file__). Moved into a
+        page, it would start a page rather than a window, and nothing would
+        come back. Neither the widget tree nor the suite would say so: no
+        test restarts the panel, and no drawing happens during one.
+
+        Found while cutting the About page out. That method stayed.
+        """
+        bad = []
+        for name, tree, _classes in page_modules():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and node.id == "__file__":
+                    bad.append("%s at line %d" % (name, node.lineno))
+        self.assertEqual(bad, [])
+
     def test_the_window_reads_its_measurements_from_panelbase(self):
         """One answer to how wide a card is, for the window and the pages."""
         panel = tree_of(PANEL)
@@ -401,22 +419,37 @@ class GpuPageTest(unittest.TestCase):
 
     def test_the_width_it_shares_went_to_panelbase(self):
         """BRANCH_WIDTH was the name, and two of its three readers are not a
-        branch. The window reads it as well, so it is a measurement."""
+        branch. Two pages read it now, so it is a measurement.
+
+        The third reader was the update card of the window, which has since
+        moved to gui/page_about.py. So the test names the readers rather
+        than the window.
+        """
         base = tree_of(os.path.join(GUI, "panelbase.py"))
         assigned = {node.targets[0].id for node in base.body
                     if isinstance(node, ast.Assign)
                     and isinstance(node.targets[0], ast.Name)}
         self.assertIn("ROW_FIELD_WIDTH", assigned)
+        # The names in the code and not the words in the comments. The note
+        # in panelbase.py says "It was BRANCH_WIDTH in the window", and a
+        # search of the text found that sentence.
         old, new = [], []
-        for name in (PANEL, os.path.join(GUI, "page_gpu.py")):
-            with open(name, encoding="utf-8") as handle:
-                said = handle.read()
-            if "BRANCH_WIDTH" in said:
-                old.append(os.path.basename(name))
-            if "ROW_FIELD_WIDTH" not in said:
-                new.append(os.path.basename(name))
+        for name in sorted(os.listdir(GUI)):
+            if not (name.endswith(".py") or name == PANEL_NAME):
+                continue
+            named = {node.id for node
+                     in ast.walk(tree_of(os.path.join(GUI, name)))
+                     if isinstance(node, ast.Name)}
+            named |= {alias.name for node
+                      in ast.walk(tree_of(os.path.join(GUI, name)))
+                      if isinstance(node, ast.ImportFrom)
+                      for alias in node.names}
+            if "BRANCH_WIDTH" in named:
+                old.append(name)
+            if "ROW_FIELD_WIDTH" in named and name != "panelbase.py":
+                new.append(name)
         self.assertEqual(old, [], "these still name the old width")
-        self.assertEqual(new, [], "these do not read the new one")
+        self.assertEqual(sorted(new), ["page_about.py", "page_gpu.py"])
 
 
 class DialogModuleTest(unittest.TestCase):
