@@ -110,3 +110,14 @@ SENSOR_WIDTH = 30
 # was _COLOUR in the window, and a name with an underscore in front of it is
 # a name for one module. Two modules read this one.
 COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# The width of a field that stands in a row of buttons rather than in a
+# column of settings.
+#
+# Wide enough for a long branch name without pushing the two update buttons
+# off a narrow window, which is where the value comes from. The graphics
+# card's two drop-downs stand in such a row as well.
+#
+# It was BRANCH_WIDTH in the window. Two of its three readers are not a
+# branch, and the graphics card is in a module of its own now.
+ROW_FIELD_WIDTH = 22

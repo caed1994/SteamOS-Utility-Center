@@ -27,7 +27,8 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 GUI = os.path.join(REPO, "gui")
-PANEL = os.path.join(GUI, "steamos-utility-center-panel")
+PANEL_NAME = "steamos-utility-center-panel"
+PANEL = os.path.join(GUI, PANEL_NAME)
 
 
 def tree_of(path):
@@ -35,15 +36,34 @@ def tree_of(path):
         return ast.parse(handle.read())
 
 
+def inherited():
+    """What the window names as its bases, as {module: class}."""
+    out = {}
+    for base in panel_class().bases:
+        said = ast.unparse(base)
+        if "." in said:
+            module, name = said.split(".", 1)
+            out[module + ".py"] = name
+    return out
+
+
 def page_modules():
-    """Every gui/page_*.py, as (name, the class in it)."""
+    """Every gui/page_*.py, as (name, its tree, [the mixin] + its widgets).
+
+    The mixin is first, and it is the class the window inherits. A page can
+    hold widget classes of its own beside it: page_gpu.py draws a fan curve
+    and nothing else in the window has a curve to edit.
+    """
+    bases = inherited()
     out = []
     for name in sorted(os.listdir(GUI)):
         if not name.startswith("page_") or not name.endswith(".py"):
             continue
         tree = tree_of(os.path.join(GUI, name))
         classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]
-        out.append((name, tree, classes))
+        mixin = [n for n in classes if n.name == bases.get(name)]
+        rest = [n for n in classes if n.name != bases.get(name)]
+        out.append((name, tree, mixin + rest))
     return out
 
 
@@ -63,19 +83,36 @@ class PageModuleTest(unittest.TestCase):
         """Without this the rest of the file passes by saying nothing."""
         self.assertTrue(page_modules(), "no gui/page_*.py at all")
 
-    def test_each_holds_one_class(self):
-        for name, _tree, classes in page_modules():
-            self.assertEqual(len(classes), 1, "%s holds %d classes"
-                             % (name, len(classes)))
-
-    def test_each_class_is_one_the_window_inherits(self):
+    def test_each_holds_a_mixin_that_the_window_inherits(self):
         """A page the window does not inherit is a page that is not there."""
         bases = set()
         for base in panel_class().bases:
             bases.add(ast.unparse(base))
         for name, _tree, classes in page_modules():
+            self.assertTrue(classes, "%s holds no class at all" % name)
             want = "%s.%s" % (name[:-3], classes[0].name)
             self.assertIn(want, bases, "Panel does not inherit %s" % want)
+
+    def test_a_widget_class_beside_it_belongs_to_that_page(self):
+        """A page keeps a widget class only where nothing else draws one.
+
+        A second reader would make it a widget of the window, and a widget
+        of the window belongs where the window can reach it without
+        importing a page.
+        """
+        loose = []
+        for name, _tree, classes in page_modules():
+            for one in classes[1:]:
+                for other in sorted(os.listdir(GUI)):
+                    if other == name or not (other.endswith(".py")
+                                             or other == PANEL_NAME):
+                        continue
+                    with open(os.path.join(GUI, other),
+                              encoding="utf-8") as handle:
+                        if "%s(" % one.name in handle.read():
+                            loose.append("%s uses %s.%s"
+                                         % (other, name, one.name))
+        self.assertEqual(loose, [])
 
     def test_no_two_pages_define_the_same_name(self):
         """Python takes the first mixin in the list and says nothing.
@@ -301,6 +338,59 @@ class StatusPageTest(unittest.TestCase):
                      "_ask_for_the_open_page"):
             self.assertIn(name, methods(panel_class()), name)
             self.assertNotIn(name, mine, name)
+
+
+class GpuPageTest(unittest.TestCase):
+    """The fifth page that moved: the graphics card, through LACT.
+
+    The one page of this window that sets nothing of its own. LACT is
+    another project's daemon and it owns the card.
+    """
+
+    def setUp(self):
+        self.tree = tree_of(os.path.join(GUI, "page_gpu.py"))
+        self.classes = [n for n in self.tree.body
+                        if isinstance(n, ast.ClassDef)]
+        self.cls = next(n for n in self.classes if n.name == "GpuPage")
+
+    def test_it_took_the_whole_page(self):
+        left = [one for one in methods(panel_class()) if "gpu" in one.lower()]
+        self.assertEqual(left, [])
+        self.assertGreaterEqual(len(methods(self.cls)), 14)
+
+    def test_it_makes_no_object_of_its_own(self):
+        self.assertNotIn("__init__", methods(self.cls))
+
+    def test_the_curve_it_draws_came_with_it(self):
+        """Nothing else in the window has a curve to edit, and a page cannot
+        take a class out of the window.
+
+        By the names in the tree and not by the text of the file: a search
+        of the window's code puts six thousand lines into the failure.
+        """
+        self.assertIn("FanCurve", [n.name for n in self.classes])
+        left = [node.name for node in tree_of(PANEL).body
+                if isinstance(node, ast.ClassDef) and node.name == "FanCurve"]
+        self.assertEqual(left, [])
+
+    def test_the_width_it_shares_went_to_panelbase(self):
+        """BRANCH_WIDTH was the name, and two of its three readers are not a
+        branch. The window reads it as well, so it is a measurement."""
+        base = tree_of(os.path.join(GUI, "panelbase.py"))
+        assigned = {node.targets[0].id for node in base.body
+                    if isinstance(node, ast.Assign)
+                    and isinstance(node.targets[0], ast.Name)}
+        self.assertIn("ROW_FIELD_WIDTH", assigned)
+        old, new = [], []
+        for name in (PANEL, os.path.join(GUI, "page_gpu.py")):
+            with open(name, encoding="utf-8") as handle:
+                said = handle.read()
+            if "BRANCH_WIDTH" in said:
+                old.append(os.path.basename(name))
+            if "ROW_FIELD_WIDTH" not in said:
+                new.append(os.path.basename(name))
+        self.assertEqual(old, [], "these still name the old width")
+        self.assertEqual(new, [], "these do not read the new one")
 
 
 class DialogModuleTest(unittest.TestCase):
