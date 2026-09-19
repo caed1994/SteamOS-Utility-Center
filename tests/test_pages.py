@@ -287,6 +287,32 @@ class DialogModuleTest(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 self.assertNotIn("steamos-utility-center", node.module or "")
 
+    def test_nothing_takes_a_name_out_of_this_module(self):
+        """`import dialogs`, and never `from dialogs import Dialog`.
+
+        A name taken out of the module is a copy that the file holds for
+        itself. A test then has to replace it in each file that took one,
+        and a replacement in the wrong file lets the real window open and
+        wait for a press that no test makes. That is a suite that hangs
+        instead of failing, and it cost forty minutes to find.
+
+        Measured: the Nanoleaf card moved to a page of its own and two live
+        tests went on replacing Dialog in the window. Both hung.
+        """
+        gui = os.path.join(GUI)
+        bad = []
+        for name in sorted(os.listdir(gui)):
+            if not (name.endswith(".py")
+                    or name == "steamos-utility-center-panel"):
+                continue
+            if name == "dialogs.py":
+                continue
+            for node in ast.walk(tree_of(os.path.join(gui, name))):
+                if isinstance(node, ast.ImportFrom) and node.module == "dialogs":
+                    bad.append("%s takes %s out of dialogs"
+                               % (name, ", ".join(a.name for a in node.names)))
+        self.assertEqual(bad, [])
+
     def test_the_window_holds_none_of_them_any_more(self):
         """A class left behind would be the one the window opens, and the
         module would be a file that nothing reads.

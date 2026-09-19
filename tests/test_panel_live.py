@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "gui"))
 
 import appsettings                                          # noqa: E402
 import kdetheme                                             # noqa: E402
+import dialogs                                              # noqa: E402
 import ledpanel                                             # noqa: E402
 from steamos_utility_center import ctl                       # noqa: E402
 from steamos_utility_center import modules                   # noqa: E402
@@ -53,6 +54,18 @@ def _panel_module():
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
     return module
+
+
+# Each test that puts a stand-in in gui/dialogs.py takes it out again, with
+# an addCleanup on the line above the replacement.
+#
+# That module is one module for the whole window, so a replacement that stays
+# is a replacement for every test after it. The window itself is loaded fresh
+# for each class, which used to hold such a leak inside the class that made
+# it; reaching the dialogs through their own module ended that.
+#
+# Measured: two tests of the countdown passed on their own and failed in a
+# full run, because a lambda from the graphics card was still in the module.
 
 
 # What the window asked the machine before this file changed the answer.
@@ -98,6 +111,10 @@ class LiveWindowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.root = tk.Tk()
@@ -574,7 +591,7 @@ class LiveWindowTest(unittest.TestCase):
             window.destroy()
 
         self.root.after(150, look)
-        self.panel_module.ColourDialog(self.root, self.panel._follow_shade)
+        self.dialogs.ColourDialog(self.root, self.panel._follow_shade)
         self.assertEqual(len(seen), 2, "the dialog never came up")
         self.assertNotEqual(seen[0], seen[1],
                             "the swatch kept the shade it was baked against")
@@ -1918,6 +1935,10 @@ class SystemPageTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         import tempfile
@@ -2123,6 +2144,10 @@ class CecPageTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.said = self._status()
@@ -2585,6 +2610,10 @@ class GpuBlockTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.daemon = FakeDaemon(answers=dict(self._answers()))
@@ -2899,7 +2928,9 @@ class GpuBlockTest(unittest.TestCase):
         seconds.
         """
         asked = []
-        self.panel_module.CountdownDialog = (
+        self.addCleanup(setattr, self.dialogs, "CountdownDialog",
+                        self.dialogs.CountdownDialog)
+        self.dialogs.CountdownDialog = (
             lambda parent, seconds: (asked.append(seconds),
                                      type("A", (), {"answer": True})())[1])
         self.panel._apply_gpu()
@@ -2912,7 +2943,9 @@ class GpuBlockTest(unittest.TestCase):
     def test_saying_no_puts_the_settings_back_at_once(self):
         # And not a wait for the end of the clock. A user with an answer must
         # not watch a countdown to its end.
-        self.panel_module.CountdownDialog = (
+        self.addCleanup(setattr, self.dialogs, "CountdownDialog",
+                        self.dialogs.CountdownDialog)
+        self.dialogs.CountdownDialog = (
             lambda parent, seconds: type("A", (), {"answer": False})())
         self.panel._apply_gpu()
         sent = [one for one in self.daemon.asked
@@ -2924,7 +2957,9 @@ class GpuBlockTest(unittest.TestCase):
         self.addCleanup(refusing.close)
         self._point_at(refusing.path)
         asked = []
-        self.panel_module.CountdownDialog = (
+        self.addCleanup(setattr, self.dialogs, "CountdownDialog",
+                        self.dialogs.CountdownDialog)
+        self.dialogs.CountdownDialog = (
             lambda parent, seconds: (asked.append(seconds),
                                      type("A", (), {"answer": True})())[1])
         self.panel._apply_gpu()
@@ -2969,6 +3004,10 @@ class WrappingTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         was = cec.installed
@@ -3095,6 +3134,10 @@ class FoldTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         was = self.panel_module.ledpanel.power_part
@@ -3187,6 +3230,10 @@ class StatusShapeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.root = tk.Tk()
@@ -3302,6 +3349,10 @@ class WakeRadioButtonTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         was = modules.installed
@@ -3400,6 +3451,10 @@ class WakeSwitchTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def _build(self, here=True, on=False):
         was = modules.installed
@@ -3461,6 +3516,10 @@ class AdapterGoneNoticeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         was = cec.installed
@@ -3548,6 +3607,10 @@ class HeadlineTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         # The toolkit is not installed on this machine and is not made to
@@ -3603,6 +3666,10 @@ class CardTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.root = tk.Tk()
@@ -3711,6 +3778,10 @@ class GroundTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.root = tk.Tk()
@@ -3761,6 +3832,10 @@ class ButtonRowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         import kdetheme
@@ -3818,6 +3893,10 @@ class FirmwarePageTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         was = self.panel_module.ledpanel.modules_here
@@ -3871,6 +3950,10 @@ class StripHeadTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         # A machine that has the LED module, whatever this one has: the
@@ -3948,6 +4031,10 @@ class SidebarWidthTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.root = tk.Tk()
@@ -4025,6 +4112,10 @@ class NewerCardBlockTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.daemon = FakeDaemon(answers={
@@ -4057,8 +4148,10 @@ class NewerCardBlockTest(unittest.TestCase):
 
     def _keep(self):
         """Answer the confirm dialog yes, as somebody at the machine would."""
-        was = self.panel_module.CountdownDialog
-        self.panel_module.CountdownDialog = (
+        was = self.dialogs.CountdownDialog
+        self.addCleanup(setattr, self.dialogs, "CountdownDialog",
+                        self.dialogs.CountdownDialog)
+        self.dialogs.CountdownDialog = (
             lambda parent, seconds: type("A", (), {"answer": True})())
         self.addCleanup(
             lambda: setattr(self.panel_module, "CountdownDialog", was))
@@ -4131,6 +4224,10 @@ class CountdownTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.root = tk.Tk()
@@ -4144,22 +4241,22 @@ class CountdownTest(unittest.TestCase):
         "put them back", and that answer makes the fault recoverable. It must
         also agree with the action of the daemon.
         """
-        made = self.panel_module.CountdownDialog(self.root, 1)
+        made = self.dialogs.CountdownDialog(self.root, 1)
         self.assertFalse(made.answer)
 
     def test_it_counts_down_in_the_seconds_it_was_given(self):
         seen = []
-        was = self.panel_module.CountdownDialog._tick
+        was = self.dialogs.CountdownDialog._tick
 
         def watch(self):
             seen.append(self.left)
             was(self)
 
-        self.panel_module.CountdownDialog._tick = watch
+        self.dialogs.CountdownDialog._tick = watch
         try:
-            self.panel_module.CountdownDialog(self.root, 2)
+            self.dialogs.CountdownDialog(self.root, 2)
         finally:
-            self.panel_module.CountdownDialog._tick = was
+            self.dialogs.CountdownDialog._tick = was
         self.assertEqual(seen[:3], [2, 1, 0])
 
 
@@ -4174,6 +4271,10 @@ class AppearanceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         import tempfile
@@ -4362,6 +4463,10 @@ class ShortWordsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.root = tk.Tk()
@@ -4465,6 +4570,10 @@ class GpuFirstLookTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.lact = self.panel_module.lact
@@ -4563,6 +4672,10 @@ class NetworkCardTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         self.ledpanel = self.panel_module.ledpanel
@@ -4693,8 +4806,10 @@ class NetworkCardTest(unittest.TestCase):
                 asked.append(args[1] if len(args) > 1 else "")
                 self.answer = False
 
-        was = self.panel_module.Dialog
-        self.panel_module.Dialog = Refuses
+        was = self.dialogs.Dialog
+        self.addCleanup(setattr, self.dialogs, "Dialog",
+                        self.dialogs.Dialog)
+        self.dialogs.Dialog = Refuses
         self.addCleanup(setattr, self.panel_module, "Dialog", was)
         self.panel.remove_nanoleaf(dict(self.DEVICES[0]))
         self.root.update()
@@ -4706,8 +4821,10 @@ class NetworkCardTest(unittest.TestCase):
             def __init__(self, *args, **kwargs):
                 self.answer = True
 
-        was = self.panel_module.Dialog
-        self.panel_module.Dialog = Agrees
+        was = self.dialogs.Dialog
+        self.addCleanup(setattr, self.dialogs, "Dialog",
+                        self.dialogs.Dialog)
+        self.dialogs.Dialog = Agrees
         self.addCleanup(setattr, self.panel_module, "Dialog", was)
         self.panel.remove_nanoleaf(dict(self.DEVICES[0]))
         self._wait()
@@ -4760,6 +4877,10 @@ class DrivesPageTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def setUp(self):
         import tempfile
@@ -5232,6 +5353,10 @@ class ModulePageTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel_module = _panel_module()
+        # One module for every modal window. A class replaced in the
+        # window alone is not the one a page opens, and the real one
+        # then waits for a press that no test makes.
+        cls.dialogs = dialogs
 
     def _panel(self, here):
         """A window built for a machine with exactly those modules."""

@@ -62,8 +62,14 @@ from panelbase import (BLOCK_GAP, CARD_INSET, CARD_WRAP,     # noqa: E402
 #
 # Each is a mixin, so its methods are methods of the window and `self` is the
 # window. See gui/page_cec.py.
-from dialogs import (ColourDialog, CountdownDialog,      # noqa: E402
-                     Dialog, ProfileDialog, RemoveDialog)
+# The modal windows, reached through the module and never by a name taken
+# out of it.
+#
+# A name out of the module is a copy that each file holds for itself. A test
+# then replaces it in each file that took one, and a replacement in the wrong
+# file lets the real window open and wait for a press that no test makes.
+# That is a suite that hangs rather than fails. See tests/test_pages.py.
+import dialogs                                              # noqa: E402
 
 import page_cec                                             # noqa: E402
 import page_network                                         # noqa: E402
@@ -2568,11 +2574,11 @@ class Panel(page_system.SystemPage, page_network.NetworkPage,
 
     def _say(self, title, message):
         """Tell the user something; there is nothing to answer."""
-        Dialog(self.root, title, message)
+        dialogs.Dialog(self.root, title, message)
 
     def _ask(self, title, message, confirm, deny="Cancel"):
         """Ask a yes-or-no question, and return whether it was confirmed."""
-        return Dialog(self.root, title, message, confirm=confirm,
+        return dialogs.Dialog(self.root, title, message, confirm=confirm,
                       deny=deny).answer
 
     def _theme_chosen(self):
@@ -4154,7 +4160,7 @@ class Panel(page_system.SystemPage, page_network.NetworkPage,
             self._say("Profiles", str(exc))
             return
 
-        path = ProfileDialog(self.root, directory, self.roles,
+        path = dialogs.ProfileDialog(self.root, directory, self.roles,
                              saving=True).chosen
         if not path:
             return
@@ -4174,7 +4180,7 @@ class Panel(page_system.SystemPage, page_network.NetworkPage,
         new values before this program writes to /etc.
         """
         directory = ledpanel.profiles_dir(SOURCE_DIR)
-        path = ProfileDialog(self.root, directory, self.roles,
+        path = dialogs.ProfileDialog(self.root, directory, self.roles,
                              saving=False).chosen
         if not path:
             return
@@ -4549,7 +4555,7 @@ class Panel(page_system.SystemPage, page_network.NetworkPage,
         return outer
 
     def flash_colour(self):
-        chosen = ColourDialog(self.root, self._follow_shade).chosen
+        chosen = dialogs.ColourDialog(self.root, self._follow_shade).chosen
         if chosen:
             self.runner.start(ledpanel.notify_command(chosen))
 
@@ -4886,7 +4892,7 @@ class Panel(page_system.SystemPage, page_network.NetworkPage,
             self._say("Graphics card", "The card would not take it:\n%s" % exc)
             self._reread_gpu()
             return
-        keep = CountdownDialog(self.root, seconds).answer
+        keep = dialogs.CountdownDialog(self.root, seconds).answer
         try:
             lact.confirm(keep=keep)
         except lact.LactError as exc:
@@ -5052,7 +5058,7 @@ class Panel(page_system.SystemPage, page_network.NetworkPage,
         # root; it is not a widget, so tkinter finds no interpreter on it and
         # a press raised AttributeError into the terminal. Every other dialog
         # here is built on self.root. See DialogParentTest.
-        asked = RemoveDialog(self.root, ledpanel.module_says(name))
+        asked = dialogs.RemoveDialog(self.root, ledpanel.module_says(name))
         return bool(asked.answer), bool(asked.purge.get())
 
     def _remove_module(self, name):

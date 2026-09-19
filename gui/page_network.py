@@ -27,7 +27,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import ledpanel
-from dialogs import Dialog, PairDialog
+import dialogs
 
 from panelbase import GROUP_GAP, ROW_GAP, SENSOR_WIDTH
 
@@ -219,7 +219,7 @@ class NetworkPage:
                 "multicast, type the address instead.", bad=not found)
             return
         self._tell_network("")
-        dialog = PairDialog(self.root, ips)
+        dialog = dialogs.PairDialog(self.root, ips)
         if dialog.found is None:
             self._tell_network("No device gave a token. The button holds "
                                "the window open for 30 seconds.")
@@ -234,7 +234,7 @@ class NetworkPage:
 
     def remove_nanoleaf(self, device):
         """Takes the device out of the record and its token off the device."""
-        if not Dialog(self.root, "Remove this device?",
+        if not dialogs.Dialog(self.root, "Remove this device?",
                       "%s stays where it is and keeps whatever it plays. "
                       "This window forgets it, and the device forgets the "
                       "token of this machine."
