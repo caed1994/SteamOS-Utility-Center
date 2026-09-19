@@ -2304,6 +2304,17 @@ class CecPageTest(unittest.TestCase):
             for deeper in self._texts(child):
                 yield deeper
 
+    def _missing(self, widget, *words):
+        """The words that are not in that widget, for an assertEqual to [].
+
+        `assertIn` against a window puts every label of this panel into the
+        failure, and the one word that is missing is then not in the part a
+        terminal shows. Four tests here were written that way before this
+        existed.
+        """
+        said = " ".join(self._texts(widget))
+        return [word for word in words if word not in said]
+
     def test_the_ones_that_steamos_has_too_are_marked(self):
         """Reported: every feature of ours off, and the machine still slept
         when the television went off. The switch of SteamOS did it.
@@ -2323,10 +2334,48 @@ class CecPageTest(unittest.TestCase):
         label in this panel into the failure, and the one word that is
         missing is not in the part a terminal shows.
         """
-        said = " ".join(self._texts(self.panel.root))
-        missing = [word for word in (cec.STEAM_SETTINGS, "refused the adapter")
-                   if word not in said]
-        self.assertEqual(missing, [])
+        self.assertEqual(
+            self._missing(self.panel.root, cec.STEAM_SETTINGS,
+                          "refused the adapter"), [])
+
+    # -- the two cards that fold -------------------------------------------
+
+    def test_both_of_them_start_closed(self):
+        """They are two thirds of the page and each holds a job that is done
+        one time: a television that answers, and three settings."""
+        self.assertEqual(sorted(self.panel._cec_folds), ["actions", "config"])
+        for key, (holder, _arrow) in self.panel._cec_folds.items():
+            self.assertFalse(holder.winfo_ismapped(), key)
+
+    def test_a_closed_card_still_says_what_it_is(self):
+        """A card with no name is a gap, and a person looks for what is gone."""
+        self.assertEqual(
+            self._missing(self.panel.root, "Try it", "Configuration"), [])
+
+    def test_the_press_opens_it_and_a_second_press_closes_it(self):
+        for key in ("actions", "config"):
+            with self.subTest(key=key):
+                holder, arrow = self.panel._cec_folds[key]
+                arrow.invoke()
+                self.root.update_idletasks()
+                self.assertTrue(holder.winfo_ismapped(),
+                                "%s stayed closed" % key)
+                arrow.invoke()
+                self.root.update_idletasks()
+                self.assertFalse(holder.winfo_ismapped(),
+                                 "%s stayed open" % key)
+
+    def test_the_arrow_says_which_way_the_press_goes(self):
+        holder, arrow = self.panel._cec_folds["actions"]
+        self.assertIn("Show", str(arrow.cget("text")))
+        arrow.invoke()
+        self.assertIn("Hide", str(arrow.cget("text")))
+
+    def test_what_is_inside_is_built_whether_it_is_open_or_not(self):
+        """The settings are read and written by name. A card that built its
+        content at the first press would have none until then."""
+        self.assertTrue(self.panel._cec_entries)
+        self.assertTrue(self.panel._cec_menus)
 
     def test_the_switches_open_where_the_machine_says(self):
         self.said["services"]["steam-button"]["is_enabled"] = True

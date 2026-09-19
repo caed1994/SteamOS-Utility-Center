@@ -63,6 +63,10 @@ class CecPage:
         # it, a write to a variable starts the same handler as a click, and a
         # refresh after one change changes each switch again.
         self._cec_settling = False
+        # Which of the folding cards on this page are open. Empty, so both
+        # start closed. See _folding_card.
+        self._cec_open = set()
+        self._cec_folds = {}
 
         self.cec_missing = self._build_cec_offer(outer)
         self.cec_present = self._build_cec_switches(outer)
@@ -250,6 +254,53 @@ class CecPage:
         else:
             self.cec_cost.pack_forget()
 
+    def _folding_card(self, parent, key, title, pady=None):
+        """A card whose content one press shows or hides. Returns the holder.
+
+        The caller fills what comes back and knows nothing else about the
+        fold. The title stays whatever the fold says, so a closed card is
+        still a card with a name and not a gap.
+
+        Both cards that use this hold a job that is done one time: a
+        television that answers, and three settings whose value is right
+        after the first try. They were two thirds of the page afterwards.
+
+        The fold is the one the Status page uses, in the words that page
+        uses. A second shape for one question is a second thing to learn.
+        """
+        card = self._card(parent)
+        card.pack(fill="x", padx=SIDE_MARGIN,
+                  pady=pady if pady is not None else (GROUP_GAP, 0))
+        inner = ttk.Frame(card, style="OnCard.TFrame")
+        inner.pack(fill="x", padx=GROUP_GAP, pady=GROUP_GAP)
+        head = ttk.Frame(inner, style="OnCard.TFrame")
+        head.pack(fill="x")
+        ttk.Label(head, text=title, style="Section.TLabel").pack(side="left")
+        arrow = ttk.Button(head, style="Text.TButton",
+                           command=lambda k=key: self._fold_cec_card(k))
+        arrow.pack(side="right")
+        holder = ttk.Frame(inner, style="OnCard.TFrame")
+        self._cec_folds[key] = (holder, arrow)
+        self._show_cec_fold(key)
+        return holder
+
+    def _show_cec_fold(self, key):
+        """Put one card in the state the set says, and name that state."""
+        holder, arrow = self._cec_folds[key]
+        if key in self._cec_open:
+            holder.pack(fill="x", pady=(ROW_GAP, 0))
+            arrow.configure(text="Hide \u25b4")
+        else:
+            holder.pack_forget()
+            arrow.configure(text="Show \u25be")
+
+    def _fold_cec_card(self, key):
+        """Show or hide one card. Nothing else is read and nothing rebuilt."""
+        self._cec_open.symmetric_difference_update({key})
+        self._show_cec_fold(key)
+        self._refit_page()
+        self._fit_window()
+
     def _build_cec_actions(self, parent):
         """Four things that happen once and leave nothing behind.
 
@@ -257,12 +308,7 @@ class CecPage:
         reaches the television, before switching on a feature and rebooting
         into it to see.
         """
-        card = self._card(parent)
-        card.pack(fill="x", padx=SIDE_MARGIN, pady=(GROUP_GAP, 0))
-        inner = ttk.Frame(card, style="OnCard.TFrame")
-        inner.pack(fill="x", padx=GROUP_GAP, pady=GROUP_GAP)
-        ttk.Label(inner, text="Try it", style="Section.TLabel").pack(
-                      anchor="w", pady=(0, ROW_GAP))
+        inner = self._folding_card(parent, "actions", "Try it")
         self._buttons(inner, [
             (label, lambda k=key: self._cec_action(k))
             for key, label, _tail in cec.ACTIONS])
@@ -275,11 +321,8 @@ class CecPage:
         They belong in the file, where each of them has its own paragraph of
         explanation. On a page here they are forty rows with no context.
         """
-        card = self._card(parent)
-        card.pack(fill="x", padx=SIDE_MARGIN, pady=(GROUP_GAP, GROUP_GAP))
-        inner = ttk.Frame(card, style="OnCard.TFrame")
-        inner.pack(fill="x", padx=GROUP_GAP, pady=GROUP_GAP)
-        ttk.Label(inner, text="Configuration", style="Section.TLabel").pack(anchor="w", pady=(0, ROW_GAP))
+        inner = self._folding_card(parent, "config", "Configuration",
+                                   pady=(GROUP_GAP, GROUP_GAP))
 
         grid = ttk.Frame(inner, style="OnCard.TFrame")
         grid.pack(fill="x")
