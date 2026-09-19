@@ -245,6 +245,64 @@ class NetworkPageTest(unittest.TestCase):
             self.assertNotIn("\nNET_NAME = ", handle.read())
 
 
+class StatusPageTest(unittest.TestCase):
+    """The fourth page that moved: what this machine has, and what is wrong.
+
+    Every other page sets something. This one reads, and it is the page a
+    person opens when something stopped working.
+    """
+
+    def setUp(self):
+        self.tree = tree_of(os.path.join(GUI, "page_status.py"))
+        self.cls = next(n for n in self.tree.body
+                        if isinstance(n, ast.ClassDef))
+
+    def test_it_took_the_whole_page(self):
+        left = [one for one in methods(panel_class())
+                if "status" in one.lower() or "part" in one.lower()]
+        self.assertEqual(left, [])
+        self.assertGreaterEqual(len(methods(self.cls)), 12)
+
+    def test_it_makes_no_object_of_its_own(self):
+        self.assertNotIn("__init__", methods(self.cls))
+
+    def test_the_one_name_that_the_rest_of_the_window_calls(self):
+        """refresh_status is called from the window and from two pages. A
+        mixin is what keeps it one name on one object for all of them."""
+        self.assertIn("refresh_status", methods(self.cls))
+        said = []
+        for name in sorted(os.listdir(GUI)):
+            if not (name.endswith(".py") or name == "steamos-utility-center-panel"):
+                continue
+            if name == "page_status.py":
+                continue
+            with open(os.path.join(GUI, name), encoding="utf-8") as handle:
+                if "self.refresh_status(" in handle.read():
+                    said.append(name)
+        self.assertIn("steamos-utility-center-panel", said)
+        self.assertGreater(len(said), 1, "only the window calls it")
+
+    def test_the_light_and_its_size_moved_together(self):
+        """A size that one file names and another draws with is a size that
+        two files have to agree about."""
+        assigned = {node.targets[0].id for node in self.tree.body
+                    if isinstance(node, ast.Assign)
+                    and isinstance(node.targets[0], ast.Name)}
+        self.assertIn("STATUS_DOT", assigned)
+        self.assertIn("_light", methods(self.cls))
+        with open(PANEL, encoding="utf-8") as handle:
+            self.assertNotIn("\nSTATUS_DOT = ", handle.read())
+
+    def test_what_the_window_keeps_is_what_another_page_needs(self):
+        """_forget_dead_labels is the graphics card's as well, and the three
+        that fit the window are the window's layout and not this page's."""
+        mine = methods(self.cls)
+        for name in ("_forget_dead_labels", "_fit_window", "_refit",
+                     "_ask_for_the_open_page"):
+            self.assertIn(name, methods(panel_class()), name)
+            self.assertNotIn(name, mine, name)
+
+
 class DialogModuleTest(unittest.TestCase):
     """The modal windows, which a page needs and cannot take from the window.
 
