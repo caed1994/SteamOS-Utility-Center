@@ -2294,6 +2294,40 @@ class CecPageTest(unittest.TestCase):
         self.assertEqual(sorted(self.panel._cec_vars),
                          sorted(name for name, _k, _l, _s in cec.FEATURES))
 
+    def _texts(self, widget):
+        """Every piece of text under one widget, for a card to be read."""
+        for child in widget.winfo_children():
+            try:
+                yield str(child.cget("text"))
+            except Exception:
+                pass
+            for deeper in self._texts(child):
+                yield deeper
+
+    def test_the_ones_that_steamos_has_too_are_marked(self):
+        """Reported: every feature of ours off, and the machine still slept
+        when the television went off. The switch of SteamOS did it.
+
+        A person who cannot see the overlap looks for the fault in our code.
+        """
+        marked = [name for name, (switch, _named, _explain)
+                  in self.panel._cec_rows.items()
+                  if "SteamOS does this too" in " ".join(
+                      self._texts(switch.master))]
+        self.assertEqual(sorted(marked), sorted(cec.STEAM_OWN))
+
+    def test_the_card_says_what_it_is_beside_those_switches(self):
+        """And that this installation is what makes them work at all.
+
+        The words and not the card: `assertIn` against a window puts every
+        label in this panel into the failure, and the one word that is
+        missing is not in the part a terminal shows.
+        """
+        said = " ".join(self._texts(self.panel.root))
+        missing = [word for word in (cec.STEAM_SETTINGS, "refused the adapter")
+                   if word not in said]
+        self.assertEqual(missing, [])
+
     def test_the_switches_open_where_the_machine_says(self):
         self.said["services"]["steam-button"]["is_enabled"] = True
         self.said["external_volume"]["enabled"] = True

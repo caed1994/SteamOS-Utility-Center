@@ -113,6 +113,37 @@ BY_NAME = {name: (kind, label, said) for name, kind, label, said in FEATURES}
 # keeps it. See dbus-next/ORIGIN.
 PYTHON_DIR = "/var/lib/steamos-utility-center/python"
 
+# The features that SteamOS has a switch of its own for.
+#
+# SteamOS puts them under Settings > Display > HDMI-CEC. Ours stay, because
+# the switch of SteamOS is on and does nothing on some televisions: measured
+# on a TCL, where "turn the television off when this machine sleeps" is on in
+# SteamOS and the television stays on. That is what power-standby and its
+# ladder of standby commands are for.
+#
+# The other side of it, and the reason to install this module whatever these
+# switches say: `cecd`, which is the CEC daemon of SteamOS, is refused the
+# adapter after a boot. It reads the device one time and keeps the refusal,
+# so every switch of SteamOS then does nothing at all. The register helper of
+# the toolkit repairs the permissions and restarts it. See
+# cec-toolkit/README.md, the row about steamos-cec-permissions.service.
+#
+# Measured on a machine: with this module installed, the switches of SteamOS
+# operate in Game Mode and in Desktop Mode. With the module removed and the
+# machine restarted, none of them operates.
+#
+# steam-button and boot-wake are not here. SteamOS wakes the television when
+# the machine resumes, and neither of those is a resume: one is a press on a
+# machine that is already awake, the other is a cold boot.
+#
+# SteamAlsoTest holds every name here against FEATURES.
+STEAM_OWN = ("resume-wake", "power-standby", "tv-standby",
+             "input-away-suspend")
+
+# Where a person finds them, for a sentence on the page.
+STEAM_SETTINGS = "Settings > Display > HDMI-CEC"
+
+
 # The features whose program runs all the time.
 #
 # For these, "switched on" and "not running" is a fault: the feature is off

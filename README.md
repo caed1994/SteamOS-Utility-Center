@@ -841,17 +841,32 @@ usually has none. It also needs `cec-ctl` from v4l-utils, `varlinkctl` from
 systemd, and the python `dbus_next` module. The panel names what is missing
 before the installation.
 
+**What SteamOS already does.** SteamOS has switches of its own under
+Settings > Display > HDMI-CEC. They work only where this module is
+installed: `cecd`, the CEC daemon of SteamOS, is refused the adapter after a
+boot and reads the device one time, so the refusal stays. The register helper
+of the toolkit repairs the permissions and restarts it. Measured on a
+machine: with this module the switches of SteamOS operate in Game Mode and in
+Desktop Mode, and with the module removed and the machine restarted none of
+them operates.
+
+So four of the switches below are a second answer and not the only one. The
+page marks them. They stay because the switch of SteamOS is on and does
+nothing on some televisions: measured on a TCL, "turn the television off when
+this machine sleeps" is on in SteamOS and the television stays on.
+
 Each feature has a switch that takes effect at the click:
 
-| Switch | What it does |
-| ------ | ------------ |
-| **Steam button wakes the television** | Home or Guide on a controller switches the TV and the receiver on and changes the input to this machine |
-| **Wake the television at start** | the same, when Game Mode starts after a cold boot |
-| **Turn the television off with the machine** | sends standby before this machine suspends or shuts down |
-| **Sleep when the television does** | suspends this machine when the TV broadcasts standby |
-| **Sleep when the television switches away** | suspends after the TV is on another input for some time |
-| **Volume buttons control the television** | Game Mode shows `+` and `-`, and they change the receiver volume. It needs a reboot to appear, and an amplifier |
-| **Recover Gamescope after a wake** | restarts Gamescope if the display comes back in a bad state |
+| Switch | What it does | SteamOS |
+| ------ | ------------ | ------- |
+| **Steam button wakes the television** | Home or Guide on a controller switches the TV and the receiver on and changes the input to this machine | no |
+| **Wake the television at start** | the same, when Game Mode starts after a cold boot | no |
+| **Wake the television on resume** | the same, when this machine wakes from sleep | yes |
+| **Turn the television off with the machine** | sends standby before this machine suspends or shuts down | yes |
+| **Sleep when the television does** | suspends this machine when the TV broadcasts standby | yes |
+| **Sleep when the television switches away** | suspends after the TV is on another input for some time | yes |
+| **Volume buttons control the television** | Game Mode shows `+` and `-`, and they change the receiver volume. It needs a reboot to appear, and an amplifier | no |
+| **Recover Gamescope after a wake** | restarts Gamescope if the display comes back in a bad state | no |
 
 **Try it** sends one wake, standby or volume command and leaves nothing behind.
 **Discover** fills in the adapter, the device that carries the volume, and the

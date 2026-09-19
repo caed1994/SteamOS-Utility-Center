@@ -710,6 +710,48 @@ class PanelCommandTest(unittest.TestCase):
                                                       "status"]))
 
 
+class SteamOwnTest(unittest.TestCase):
+    """The features that SteamOS has a switch of its own for.
+
+    The page marks them, because a person who turns one of ours off and
+    finds the machine still sleeping looks for the fault in our code. It is
+    the switch of SteamOS that acts.
+
+    Reported: the CEC module installed, every feature of ours off, and the
+    machine slept whenever the television went off. Removing the module and
+    restarting stopped it, which made ours look like the cause.
+    """
+
+    def test_every_name_is_a_feature(self):
+        """A name that no feature carries marks nothing and says nothing."""
+        named = {name for name, _kind, _label, _said in cec.FEATURES}
+        self.assertEqual(sorted(set(cec.STEAM_OWN) - named), [])
+
+    def test_it_is_a_part_and_not_all_of_them(self):
+        """All of them would make the module look like a duplicate, and none
+        would put the page back where the report started."""
+        self.assertTrue(cec.STEAM_OWN)
+        self.assertLess(len(cec.STEAM_OWN), len(cec.FEATURES))
+
+    def test_the_two_that_no_resume_covers_are_not_in_it(self):
+        """SteamOS wakes the television when the machine resumes.
+
+        A press on a machine that is awake is not a resume, and a cold boot
+        is not one either.
+        """
+        self.assertNotIn("steam-button", cec.STEAM_OWN)
+        self.assertNotIn("boot-wake", cec.STEAM_OWN)
+
+    def test_the_one_that_fails_on_a_television_is_in_it(self):
+        """Measured on a TCL: the switch of SteamOS is on and the television
+        stays on. That is the reason ours stays as well."""
+        self.assertIn("power-standby", cec.STEAM_OWN)
+
+    def test_it_says_where_a_person_finds_them(self):
+        self.assertIn("HDMI-CEC", cec.STEAM_SETTINGS)
+        self.assertIn("Settings", cec.STEAM_SETTINGS)
+
+
 if __name__ == "__main__":                                  # pragma: no cover
     unittest.main()
 

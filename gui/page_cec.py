@@ -154,6 +154,24 @@ class CecPage:
         inner.pack(fill="x", padx=GROUP_GAP, pady=GROUP_GAP)
         ttk.Label(inner, text="Features", style="Section.TLabel").pack(anchor="w", pady=(0, ROW_GAP))
 
+        # What this card is beside the switches of SteamOS itself.
+        #
+        # Without it a person turns one of these off, the machine goes on
+        # sleeping when the television does, and the fault looks like ours.
+        # It is the switch of SteamOS that acts. See cec.STEAM_OWN.
+        overlap = ttk.Label(
+            inner, style="Muted.TLabel", justify="left",
+            wraplength=CARD_WRAP,
+            text="SteamOS has switches of its own under %s. This "
+                 "installation is what makes them work: its daemon is "
+                 "refused the adapter after a boot, and the toolkit repairs "
+                 "that. The features marked below are in SteamOS as well. "
+                 "Ours are the second answer, for a television that the "
+                 "switch of SteamOS turns on and does not move."
+                 % cec.STEAM_SETTINGS)
+        overlap.pack(anchor="w", pady=(0, GROUP_GAP))
+        self._wrapped.append(overlap)
+
         for index, (name, _kind, label, said) in enumerate(cec.FEATURES):
             block = ttk.Frame(inner, style="OnCard.TFrame")
             block.pack(fill="x", pady=(0 if index == 0 else GROUP_GAP, 0))
@@ -182,6 +200,17 @@ class CecPage:
             # Under the name, so the name is what says how far in it starts -
             # which is the switch's own width, and that is the font's.
             self._wrap_insets[str(explain)] = named
+            # And the mark, for a feature that SteamOS has as well. Under the
+            # explanation rather than beside the name: the name is what the
+            # eye runs down, and a suffix on it would break that column.
+            if name in cec.STEAM_OWN:
+                also = ttk.Label(block, style="Muted.TLabel", justify="left",
+                                 wraplength=CARD_WRAP - CEC_INDENT,
+                                 text="SteamOS does this too.")
+                also.grid(row=2, column=1, sticky="w", padx=(ROW_GAP, 0),
+                          pady=(2, 0))
+                self._wrapped.append(also)
+                self._wrap_insets[str(also)] = named
             self._cec_vars[name] = variable
             self._cec_rows[name] = (switch, named, explain)
 
