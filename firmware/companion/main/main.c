@@ -334,13 +334,19 @@ static void network_task(void *arg)
             xSemaphoreTake(lock,portMAX_DELAY);
             bool wifi=state.wifi,online=state.online;
             xSemaphoreGive(lock);
-            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u wifi=%d pc=%d standby=%d",
+            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u wifi=%d pc=%d standby=%d key_slowest=%ums",
                 now_ms/1000,now_ms-atomic_load(&ui_heartbeat_ms),
                 (unsigned)esp_get_free_heap_size(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
                 (unsigned)esp_get_minimum_free_heap_size(),
-                (unsigned)uxTaskGetStackHighWaterMark(NULL),wifi,online,atomic_load(&display_asleep));
+                (unsigned)uxTaskGetStackHighWaterMark(NULL),wifi,online,
+                atomic_load(&display_asleep),
+                /* The slowest turn of the key loop since the last line.
+                 * The shortest press the panel can see is about twice
+                 * this, so a number far above PWRKEY_PERIOD_MS is why a
+                 * press did nothing. See panel_power.c. */
+                (unsigned)panel_power_slowest_read_ms());
         }
         panel_action_t action;
         if (xQueueReceive(actions,&action,pdMS_TO_TICKS(100))==pdTRUE) {

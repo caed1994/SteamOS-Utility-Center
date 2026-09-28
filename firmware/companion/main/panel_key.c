@@ -9,12 +9,14 @@ bool panel_key_sample(panel_key_t *key,bool pressed,uint32_t now)
         key->initialized=true;key->raw=pressed;key->changed_ms=now;return false;
     }
     if(pressed!=key->raw){key->raw=pressed;key->changed_ms=now;return false;}
-    if((uint32_t)(now-key->changed_ms)<40)return false;
+    if((uint32_t)(now-key->changed_ms)<PANEL_KEY_SETTLE_MS)return false;
     if(!key->ready){if(!pressed){key->ready=true;key->stable=false;}return false;}
     if(pressed==key->stable)return false;
     key->stable=pressed;
     if(pressed){key->pressed_ms=now;key->down=true;return false;}
-    bool short_press=key->down && (uint32_t)(now-key->pressed_ms)>=60 && (uint32_t)(now-key->pressed_ms)<=1000;
+    bool short_press=key->down
+        && (uint32_t)(now-key->pressed_ms)>=PANEL_KEY_SHORTEST_MS
+        && (uint32_t)(now-key->pressed_ms)<=PANEL_KEY_LONGEST_MS;
     key->down=false;
     return short_press;
 }
