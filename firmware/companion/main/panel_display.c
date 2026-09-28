@@ -12,6 +12,7 @@
 #include "esp_memory_utils.h"
 #include "driver/ledc.h"
 #include "driver/gpio.h"
+#include "esp_rom_gpio.h"
 
 static lv_display_t *panel_screen;
 static lv_indev_t *panel_input;
@@ -106,8 +107,15 @@ static void backlight_off(void)
      * floats between the two owners. */
     ledc_stop(LEDC_LOW_SPEED_MODE,BACKLIGHT_CHANNEL,BACKLIGHT_OFF_LEVEL);
     gpio_set_level(BACKLIGHT_PIN,BACKLIGHT_OFF_LEVEL);
-    /* And out of the matrix. gpio_config leaves a pull-up, which on an
-     * inverted input pulls towards dark and not towards light. */
+    /* And out of the matrix, which is this call and not gpio_config.
+     *
+     * gpio_config sets the direction and the pulls of a pad. It does not
+     * touch the routing, so the pad stayed connected to LEDC and the first
+     * version of this said it had taken the pin and had not. This is the
+     * call that gives the pad back to the GPIO matrix. */
+    esp_rom_gpio_pad_select_gpio(BACKLIGHT_PIN);
+    /* gpio_config leaves a pull-up, which on an inverted input pulls
+     * towards dark and not towards light. */
     gpio_config_t plain={
         .pin_bit_mask=1ULL<<BACKLIGHT_PIN,
         .mode=GPIO_MODE_OUTPUT,

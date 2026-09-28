@@ -47,10 +47,30 @@ class BacklightTest(unittest.TestCase):
 
     def test_the_pin_leaves_the_matrix_that_was_pulsing_it(self):
         """The whole fix. ledc_stop alone did not hold on the board, and
-        this makes the reason for that beside the point."""
+        this makes the reason for that beside the point.
+
+        esp_rom_gpio_pad_select_gpio and not gpio_config. gpio_config sets
+        the direction and the pulls of a pad and leaves the routing alone.
+        So the first version of this said it took the pin back from LEDC,
+        and it did not. This test is why that cannot happen twice.
+        """
         text = self.source()
-        self.assertIn("gpio_config", text)
+        self.assertIn("esp_rom_gpio_pad_select_gpio(BACKLIGHT_PIN)", text)
         self.assertIn("GPIO_MODE_OUTPUT", text)
+
+    def test_the_pad_is_handed_over_before_it_is_configured(self):
+        """The routing first, then the direction and the pulls. The other
+        order configures a pad that something else still drives."""
+        text = self.source()
+        start = text.index("static void backlight_off")
+        body = text[start:text.index("\n}", start)]
+        self.assertLess(body.index("esp_rom_gpio_pad_select_gpio"),
+                        body.index("gpio_config(&plain)"))
+
+    def test_it_reads_the_pin_back_and_says_what_it_got(self):
+        """So "it still flickers" arrives with the number that says whether
+        the takeover worked."""
+        self.assertIn("gpio_get_level(BACKLIGHT_PIN)", self.source())
 
     def test_the_level_it_is_held_at_is_the_dark_one(self):
         """Inverted: a HIGH is dark. A pull-up therefore pulls towards dark,
