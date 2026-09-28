@@ -16,9 +16,12 @@
 #include "nvs.h"
 #include "cJSON.h"
 #include "config.h"
+#include "panel_text.h"
 
 extern const char setup_page_start[] asm("_binary_setup_html_start");
 extern const char setup_page_end[] asm("_binary_setup_html_end");
+extern const char setup_page_de_start[] asm("_binary_setup_de_html_start");
+extern const char setup_page_de_end[] asm("_binary_setup_de_html_end");
 static bool portal_running;
 static esp_netif_t *ap_netif;
 
@@ -41,6 +44,12 @@ static esp_err_t index_get(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "X-Frame-Options", "DENY");
+    // The page in the language the panel is set to. Two files and not one
+    // with a switch in it: this is served by a phone that has just joined
+    // an access point with no way out, so nothing on it can be fetched.
+    if (panel_text_language() == PANEL_GERMAN)
+        return httpd_resp_send(req, setup_page_de_start,
+                               setup_page_de_end-setup_page_de_start-1);
     return httpd_resp_send(req, setup_page_start, setup_page_end-setup_page_start-1);
 }
 
@@ -80,7 +89,7 @@ static esp_err_t save_post(httpd_req_t *req)
 {
     char type[64];
     if (httpd_req_get_hdr_value_str(req,"Content-Type",type,sizeof(type))!=ESP_OK || strcmp(type,"application/json")!=0)
-        return error_reply(req,"Bitte das Einrichtungsformular verwenden.");
+        return error_reply(req,panel_text(TXT_FORM_PLEASE));
     if (req->content_len<=0 || req->content_len>1024) return error_reply(req,"Daten zu lang.");
     char body[1025];
     int received=0;
@@ -99,8 +108,8 @@ static esp_err_t save_post(httpd_req_t *req)
     cJSON_Delete(root);
     size_t slen=strlen(config.server);
     if (slen && config.server[slen-1]=='/') config.server[slen-1]=0;
-    if (!ok || !valid_server(config.server)) return error_reply(req,"WLAN-Daten, PC-Adresse oder Token ungueltig.");
-    for (const char *p=config.token; *p; p++) if (!isalnum((unsigned char)*p) && *p!='_' && *p!='-') return error_reply(req,"Token enthaelt ungueltige Zeichen.");
+    if (!ok || !valid_server(config.server)) return error_reply(req,panel_text(TXT_FORM_BAD));
+    for (const char *p=config.token; *p; p++) if (!isalnum((unsigned char)*p) && *p!='_' && *p!='-') return error_reply(req,panel_text(TXT_TOKEN_BAD));
     nvs_handle_t handle;
     esp_err_t err=nvs_open("panel", NVS_READWRITE, &handle);
     if (err==ESP_OK) {
@@ -119,7 +128,7 @@ static esp_err_t save_post(httpd_req_t *req)
     }
     httpd_resp_set_type(req,"text/plain; charset=utf-8");
     httpd_resp_set_hdr(req,"Cache-Control","no-store");
-    esp_err_t sent=httpd_resp_sendstr(req,"Gespeichert. Das Panel startet neu. Verbinde dein Handy wieder mit deinem Heim-WLAN.");
+    esp_err_t sent=httpd_resp_sendstr(req,panel_text(TXT_FORM_SAVED));
     xTaskCreate(restart_task,"restart",2048,NULL,5,NULL);
     return sent;
 }

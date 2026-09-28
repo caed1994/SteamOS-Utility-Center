@@ -1,0 +1,18 @@
+<!-- SPDX-FileCopyrightText: 2026 caed1994 -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!doctype html>
+<html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SteamOS-Panel einrichten</title>
+<style>
+body{background:#101827;color:#f2f5fa;font:16px system-ui;margin:0;padding:24px;box-sizing:border-box}main{max-width:460px;margin:auto}h1{color:#59d8b5;font-size:25px}label{display:block;margin:20px 0 7px}input,button{font:inherit;box-sizing:border-box;width:100%;padding:14px;border:1px solid #405269;border-radius:10px;color:inherit;background:#202d40}button{margin-top:24px;background:#59d8b5;color:#101827;font-weight:600}p{line-height:1.5}small{color:#b9c7d7}#result{white-space:pre-wrap}
+</style>
+<main><h1>SteamOS-Panel einrichten</h1><p>Verbinde das Panel mit deinem Heimnetz und deinem SteamOS-PC.</p>
+<form id="setup"><label for="ssid">WLAN-Name (2,4 GHz)</label><input id="ssid" name="ssid" required maxlength="32" autocomplete="off">
+<label for="password">WLAN-Passwort</label><input id="password" name="password" required type="password" minlength="8" maxlength="64" autocomplete="new-password">
+<label for="server">PC-Adresse</label><input id="server" name="server" required value="http://192.168.178.50:8765" inputmode="url"><small>IP-Adresse deines PCs im Heimnetz.</small>
+<label for="token">Verbindungstoken</label><input id="token" name="token" required type="password" minlength="32" maxlength="127" autocomplete="off"><small>Aus ~/.config/steamos-utility-center/companion-token auf dem PC.</small>
+<button id="save" type="submit">Speichern und verbinden</button></form><p id="result" role="status" aria-live="polite"></p></main>
+<script>
+const form=document.getElementById('setup'), output=document.getElementById('result'), button=document.getElementById('save');
+form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;output.textContent='Speichere …';try{const data=Object.fromEntries(new FormData(form));data.server=data.server.trim();data.token=data.token.trim();const response=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});output.textContent=await response.text();if(!response.ok)button.disabled=false;}catch(error){output.textContent='Keine Verbindung. Bitte noch einmal versuchen.';button.disabled=false;}});
+</script></html>

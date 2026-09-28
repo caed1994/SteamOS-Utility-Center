@@ -31,6 +31,7 @@
 #include "ui.h"
 #include "config.h"
 #include "panel_auth.h"
+#include "panel_text.h"
 
 static atomic_uint ui_heartbeat_ms;
 static atomic_bool display_asleep;
@@ -45,20 +46,32 @@ typedef struct { char data[4096]; size_t length; bool overflow; } response_t;
 
 static panel_settings_t settings_load(void)
 {
-    panel_settings_t settings={.brightness=70,.sound_volume=30,.touch_tones=false};
+    panel_settings_t settings={.brightness=70,.sound_volume=30,
+                               .touch_tones=false,
+                               .language=PANEL_ENGLISH};
     nvs_handle_t h;
     if(nvs_open("panel_ui",NVS_READONLY,&h)==ESP_OK){
         uint8_t value;
         if(nvs_get_u8(h,"brightness",&value)==ESP_OK && value>=5 && value<=100)settings.brightness=value;
         if(nvs_get_u8(h,"sound_volume",&value)==ESP_OK && value<=100)settings.sound_volume=value;
         if(nvs_get_u8(h,"touch_tones",&value)==ESP_OK)settings.touch_tones=value==1;
+        // Anything this firmware does not know about reads as English,
+        // which is what a board with nothing stored answers in.
+        if(nvs_get_u8(h,"language",&value)==ESP_OK && value<PANEL_LANGUAGE_COUNT)
+            settings.language=(panel_language_t)value;
         nvs_close(h);
     }
+    // Here, and not where the screen is built. The setup portal opens
+    // before that and serves a page of its own, and it has to serve the
+    // one that matches. See index_get in config.c.
+    panel_text_set(settings.language);
     return settings;
 }
 static void setting_set(panel_setting_t key,int value,bool save)
 {
-    const char *name=key==PANEL_BRIGHTNESS?"brightness":key==PANEL_SOUND_VOLUME?"sound_volume":"touch_tones";
+    const char *name=key==PANEL_BRIGHTNESS?"brightness":
+                     key==PANEL_SOUND_VOLUME?"sound_volume":
+                     key==PANEL_LANGUAGE?"language":"touch_tones";
     esp_err_t result=ESP_OK;
     if(key==PANEL_BRIGHTNESS){
         if(!atomic_load(&display_asleep))result=bsp_display_brightness_set(value);
@@ -75,7 +88,7 @@ static void setting_set(panel_setting_t key,int value,bool save)
     }
     if(result!=ESP_OK){
         xSemaphoreTake(lock,portMAX_DELAY);
-        snprintf(state.message,sizeof(state.message),"Einstellung fehlgeschlagen");
+        snprintf(state.message,sizeof(state.message),panel_text(TXT_NOT_CONFIRMED));
         xSemaphoreGive(lock);
     }
 }
@@ -144,7 +157,7 @@ static void action_send(panel_action_t action)
 {
     if (xQueueSend(actions,&action,0)!=pdTRUE) {
         xSemaphoreTake(lock,portMAX_DELAY);
-        snprintf(state.message,sizeof(state.message),"Bitte kurz warten.");
+        snprintf(state.message,sizeof(state.message),panel_text(TXT_WAIT));
         xSemaphoreGive(lock);
     }
 }
@@ -257,12 +270,10 @@ static int request(const char *path, const char *action)
     cJSON *charging=cJSON_GetObjectItemCaseSensitive(first,"status");
     cJSON *volume=cJSON_GetObjectItemCaseSensitive(audio,"percent");
     cJSON *muted=cJSON_GetObjectItemCaseSensitive(audio,"muted");
-    const char *charge="Verbunden";
-    if (cJSON_IsString(charging)) {
-        if (strcmp(charging->valuestring,"Charging")==0) charge="Wird geladen";
-        if (strcmp(charging->valuestring,"Full")==0) charge="Voll geladen";
-        if (strcmp(charging->valuestring,"Discharging")==0) charge="Akkubetrieb";
-    }
+    // The word the service sends, and not a word of any language on this
+    // screen. See panel_state_t.
+    bool charge=cJSON_IsString(charging)
+        && strcmp(charging->valuestring,"Charging")==0;
     xSemaphoreTake(lock,portMAX_DELAY);
     state.battery=cJSON_IsNumber(battery) && battery->valueint>=0 && battery->valueint<=100 ? battery->valueint : -1;
     state.volume=cJSON_IsNumber(volume) && volume->valueint>=0 && volume->valueint<=100 ? volume->valueint : -1;
@@ -273,7 +284,7 @@ static int request(const char *path, const char *action)
     state.gpu_watts=metric(telemetry,"gpu_w",2000);
     snprintf(state.controller,sizeof(state.controller),"%s",cJSON_IsString(name) ? name->valuestring : "Controller");
     snprintf(state.host,sizeof(state.host),"%s",host->valuestring);
-    snprintf(state.charging,sizeof(state.charging),"%s",charge);
+    state.charging=charge;
     xSemaphoreGive(lock);
     cJSON_Delete(root);
     return 200;
@@ -338,7 +349,7 @@ static void network_task(void *arg)
             if (online && connected() && action>=0 && action<PANEL_SETUP) {
                 int code=request("/v1/action",names[action]);
                 xSemaphoreTake(lock,portMAX_DELAY);
-                snprintf(state.message,sizeof(state.message),"%s",code==200 ? "Befehl gesendet" : code==401 ? "Token pruefen" : "Befehl nicht bestaetigt");
+                snprintf(state.message,sizeof(state.message),"%s",code==200 ? panel_text(TXT_SENT) : code==401 ? panel_text(TXT_CHECK_TOKEN) : panel_text(TXT_NOT_CONFIRMED));
                 xSemaphoreGive(lock);
                 feedback_until=xTaskGetTickCount()+pdMS_TO_TICKS(5000);
                 last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
@@ -349,7 +360,7 @@ static void network_task(void *arg)
             int code=connected() ? request("/v1/status",NULL) : 0;
             xSemaphoreTake(lock,portMAX_DELAY);
             state.online=code==200;
-            if ((int32_t)(xTaskGetTickCount()-feedback_until)>=0) snprintf(state.message,sizeof(state.message),"%s",code==200 ? "Status aktuell" : code==401 ? "Token pruefen: Einrichten" : state.wifi ? "PC oder Dienst nicht erreichbar" : "WLAN-Verbindung wird aufgebaut");
+            if ((int32_t)(xTaskGetTickCount()-feedback_until)>=0) snprintf(state.message,sizeof(state.message),"%s",code==200 ? panel_text(TXT_UP_TO_DATE) : code==401 ? panel_text(TXT_CHECK_SETUP) : state.wifi ? panel_text(TXT_NO_ANSWER) : panel_text(TXT_JOINING));
             xSemaphoreGive(lock);
         }
     }
