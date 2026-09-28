@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -337,6 +338,139 @@ class TokenTest(unittest.TestCase):
         root to read, and a SteamOS update leaves a home directory alone."""
         self.assertTrue(companion.token_path("/home/deck").startswith(
             "/home/deck/.config/"))
+
+
+class FirmwareImageTest(unittest.TestCase):
+    """The image in the repository, against the firmware beside it.
+
+    Build output in a repository is a thing to be careful with, and this is
+    the care: CI writes the fingerprint of the source it built from, and the
+    page refuses an image whose fingerprint does not match. Without the
+    check, an update that changed the firmware and a flash from the old
+    image give a board that talks to a service it does not match, and a wall
+    that says "no PC" with nothing to explain it.
+    """
+
+    def tree(self):
+        """A machine with a firmware source in it, and nothing else."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        where = os.path.join(root, companion.FIRMWARE_DIR)
+        os.makedirs(os.path.join(where, "main"))
+        for name in ("CMakeLists.txt", "partitions.csv",
+                     "sdkconfig.defaults", "dependencies.lock"):
+            with open(os.path.join(where, name), "w") as handle:
+                handle.write(name + "\n")
+        with open(os.path.join(where, "main", "main.c"), "w") as handle:
+            handle.write("int main(void){return 0;}\n")
+        return root
+
+    def image(self, root, where, stamp=None):
+        place = os.path.join(root, where)
+        for part in companion.IMAGE_PARTS:
+            path = os.path.join(place, part)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as handle:
+                handle.write(b"\x00")
+        if stamp is not None:
+            with open(os.path.join(place, companion.STAMP_NAME), "w") as h:
+                h.write(stamp + "\n")
+        return place
+
+    def test_the_same_source_gives_the_same_fingerprint(self):
+        root = self.tree()
+        self.assertEqual(companion.firmware_fingerprint(root),
+                         companion.firmware_fingerprint(root))
+
+    def test_a_changed_source_file_changes_it(self):
+        root = self.tree()
+        before = companion.firmware_fingerprint(root)
+        path = os.path.join(root, companion.FIRMWARE_DIR, "main", "main.c")
+        with open(path, "a") as handle:
+            handle.write("// one more line\n")
+        self.assertNotEqual(companion.firmware_fingerprint(root), before)
+
+    def test_a_file_that_moves_changes_it(self):
+        """The path is in the hash beside the bytes. Without it, a rename
+        gives the same answer as no change at all."""
+        root = self.tree()
+        before = companion.firmware_fingerprint(root)
+        main = os.path.join(root, companion.FIRMWARE_DIR, "main")
+        os.rename(os.path.join(main, "main.c"),
+                  os.path.join(main, "start.c"))
+        self.assertNotEqual(companion.firmware_fingerprint(root), before)
+
+    def test_a_note_beside_the_firmware_does_not_change_it(self):
+        """A licence or a README is not a reason to build again."""
+        root = self.tree()
+        before = companion.firmware_fingerprint(root)
+        with open(os.path.join(root, companion.FIRMWARE_DIR, "NOTES.md"),
+                  "w") as handle:
+            handle.write("# notes\n")
+        self.assertEqual(companion.firmware_fingerprint(root), before)
+
+    def test_an_image_is_all_three_parts_or_none(self):
+        root = self.tree()
+        place = self.image(root, companion.PREBUILT_DIR)
+        self.assertTrue(companion.image_is_complete(place))
+        os.unlink(os.path.join(place, "steamos_companion.bin"))
+        self.assertFalse(companion.image_is_complete(place),
+                         "a build that stopped is not an image")
+
+    def test_a_missing_stamp_reads_as_no_stamp(self):
+        root = self.tree()
+        place = self.image(root, companion.PREBUILT_DIR)
+        self.assertEqual(companion.image_stamp(place), "")
+        self.assertEqual(companion.image_stamp("/does/not/exist"), "")
+
+    def test_the_stamp_the_job_writes_is_the_one_the_page_reads(self):
+        """The whole chain, with the fingerprint in the middle."""
+        root = self.tree()
+        place = self.image(root, companion.PREBUILT_DIR,
+                           stamp=companion.firmware_fingerprint(root))
+        self.assertEqual(companion.image_stamp(place),
+                         companion.firmware_fingerprint(root))
+
+
+class WorkflowTest(unittest.TestCase):
+    """The job that builds the image, read rather than run.
+
+    Nothing here can run GitHub Actions, so this holds the two facts that a
+    reader of the file cannot check for themselves: it builds at the version
+    the lock names, and it writes the stamp with the same function the page
+    reads.
+    """
+
+    def source(self):
+        with open(os.path.join(
+                REPO, ".github", "workflows",
+                "companion-firmware.yml")) as handle:
+            return handle.read()
+
+    def locked_version(self):
+        with open(os.path.join(REPO, companion.FIRMWARE_DIR,
+                               "dependencies.lock")) as handle:
+            lines = handle.read().splitlines()
+        for index, line in enumerate(lines):
+            if line.strip() == "idf:":
+                for after in lines[index:index + 5]:
+                    if after.strip().startswith("version:"):
+                        return after.split(":", 1)[1].strip()
+        raise AssertionError("dependencies.lock names no idf version")
+
+    def test_it_builds_at_the_version_the_lock_names(self):
+        """A container of another version is a build nobody measured."""
+        self.assertIn("espressif/idf:v%s" % self.locked_version(),
+                      self.source())
+
+    def test_it_writes_the_stamp_with_the_function_the_page_reads(self):
+        text = self.source()
+        self.assertIn("firmware_fingerprint", text)
+        self.assertIn(companion.STAMP_NAME, text)
+
+    def test_it_does_not_start_itself_again(self):
+        """It commits under firmware/companion, which is what starts it."""
+        self.assertIn("'!firmware/companion/prebuilt/**'", self.source())
 
 
 class OneSensorReaderTest(unittest.TestCase):

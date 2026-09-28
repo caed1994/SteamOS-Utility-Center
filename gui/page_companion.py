@@ -180,17 +180,30 @@ class CompanionPage:
 
     # -- the board ---------------------------------------------------------
 
+    # What the page says for each state of the image. The button is a button
+    # and the sentence beside it is the whole explanation, so a person who
+    # cannot press it knows why without reading anything else.
+    IMAGE_SAYS = {
+        ledpanel.IMAGE_SHIPPED:
+            "The image that came with this version is here. Press the button "
+            "and the board is written.",
+        ledpanel.IMAGE_BUILT_HERE:
+            "A build you made yourself is in firmware/companion/build, and "
+            "the button writes that one rather than the one that came with "
+            "this version.",
+        ledpanel.IMAGE_STALE:
+            "The image here was built from a different version of the "
+            "firmware, so the button is off. Update this panel under App "
+            "Settings; the image comes with the update.",
+        ledpanel.IMAGE_NONE:
+            "No image here. Update this panel under App Settings, which "
+            "brings one. Or build it yourself with ESP-IDF v5.5 in "
+            "firmware/companion.",
+    }
+
     def _companion_build_state(self):
-        if ledpanel.companion_image(SOURCE_DIR):
-            return "A built image is here, so the button below can write it."
-        return (
-            "No built image here. The image is build output and it goes out "
-            "of date at the first change to the firmware, so this project "
-            "keeps the source and not the binary. Build it one time with "
-            "ESP-IDF v5.5:\n"
-            "    cd firmware/companion\n"
-            "    idf.py set-target esp32s3\n"
-            "    idf.py build")
+        _where, state = ledpanel.companion_image(SOURCE_DIR)
+        return self.IMAGE_SAYS[state]
 
     def _build_companion_board(self, parent):
         inner = self._companion_card(parent, "The board")
@@ -217,21 +230,25 @@ class CompanionPage:
         The question is not a formality. A flash that stops halfway leaves a
         board that does not start, and the way back is the BOOT button and a
         second try.
+
+        An image that no build of this firmware produced is refused here and
+        not written with a warning. The panel would come back talking to a
+        service it does not match, and what a person sees then is "no PC" on
+        a wall with nothing to say why.
         """
         port = self.companion_port.get().strip() or DEFAULT_BOARD_PORT
-        if not ledpanel.companion_image(SOURCE_DIR):
-            self._say("Flash the panel",
-                      "There is no built image in firmware/companion/build.\n\n"
-                      "Build it first with ESP-IDF, as the card says.")
+        where, state = ledpanel.companion_image(SOURCE_DIR)
+        if state in (ledpanel.IMAGE_NONE, ledpanel.IMAGE_STALE):
+            self._say("Flash the panel", self.IMAGE_SAYS[state])
             return
         asked = dialogs.Dialog(
             self.root, "Flash the panel",
-            "This writes the firmware in firmware/companion/build to the "
-            "board on %s.\n\nIt replaces what is on the board. A flash that "
-            "stops halfway needs the BOOT button and a second try." % port,
+            "This writes the image in %s to the board on %s.\n\nIt replaces "
+            "what is on the board. A flash that stops halfway needs the BOOT "
+            "button and a second try." % (where, port),
             confirm="Flash")
         if not asked.answer:
             return
         self.runner.start(
-            ledpanel.flash_companion_command(SOURCE_DIR, port),
+            ledpanel.flash_companion_command(SOURCE_DIR, port, where),
             lambda _code: self._reread_companion())

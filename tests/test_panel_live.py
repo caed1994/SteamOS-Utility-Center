@@ -5728,9 +5728,10 @@ class CompanionPageTest(unittest.TestCase):
         panel.runner.start = lambda command, done=None: self.ran.append(command)
         return panel
 
-    def _with_image(self, where="/tmp/companion-build"):
+    def _with_image(self, state=None, where="/tmp/companion-image"):
+        state = ledpanel.IMAGE_SHIPPED if state is None else state
         was = ledpanel.companion_image
-        ledpanel.companion_image = lambda source_dir: where
+        ledpanel.companion_image = lambda source_dir: (where, state)
         self.addCleanup(setattr, ledpanel, "companion_image", was)
 
     def _answer(self, yes):
@@ -5752,9 +5753,7 @@ class CompanionPageTest(unittest.TestCase):
         """The one that matters. A flash from an incomplete build leaves a
         board that does not start, and the way back is the BOOT button."""
         panel = self._panel()
-        was = ledpanel.companion_image
-        ledpanel.companion_image = lambda source_dir: ""
-        self.addCleanup(setattr, ledpanel, "companion_image", was)
+        self._with_image(ledpanel.IMAGE_NONE, where="")
         # The dialog is answered even though this test expects no dialog.
         # Without it, a check that stops working does not fail this test: it
         # opens the real modal window and wait_window never returns, and the
@@ -5764,8 +5763,7 @@ class CompanionPageTest(unittest.TestCase):
         panel._say = lambda title, text, **kw: said.append(text)
         panel._flash_companion()
         self.assertEqual(self.ran, [])
-        self.assertTrue(said and "idf.py" in said[0].lower()
-                        or said and "build" in said[0].lower())
+        self.assertTrue(said, "it said nothing about the missing image")
 
     def test_a_flash_asks_first_and_stops_on_no(self):
         panel = self._panel()
@@ -5784,7 +5782,8 @@ class CompanionPageTest(unittest.TestCase):
         self.assertEqual(len(self.ran), 1)
         self.assertTrue(self.ran[0][0].endswith("scripts/flash-companion.sh"),
                         self.ran[0])
-        self.assertEqual(self.ran[0][-1], "/dev/ttyUSB7")
+        self.assertIn("/dev/ttyUSB7", self.ran[0])
+        self.assertEqual(self.ran[0][-1], "/tmp/companion-image")
 
     def test_the_flash_needs_no_password(self):
         """esptool belongs to the home directory of the person, and a copy
@@ -5802,8 +5801,40 @@ class CompanionPageTest(unittest.TestCase):
         self._answer(True)
         panel.companion_port.delete(0, "end")
         panel._flash_companion()
-        self.assertEqual(self.ran[0][-1],
-                         self.panel_module.page_companion.DEFAULT_BOARD_PORT)
+        self.assertIn(self.panel_module.page_companion.DEFAULT_BOARD_PORT,
+                      self.ran[0])
+
+    def test_an_image_from_another_firmware_is_refused(self):
+        """The one that keeps a panel working.
+
+        A board written with firmware that does not match the service comes
+        back saying "no PC" on a wall, with nothing on its screen to say
+        why. So a stale image stops here and is never written with a
+        warning.
+        """
+        panel = self._panel()
+        self._with_image(ledpanel.IMAGE_STALE)
+        self._answer(True)
+        said = []
+        panel._say = lambda title, text, **kw: said.append(text)
+        panel._flash_companion()
+        self.assertEqual(self.ran, [])
+        self.assertIn("different version", said[0])
+
+    def test_a_build_of_your_own_is_the_one_that_is_written(self):
+        panel = self._panel()
+        self._with_image(ledpanel.IMAGE_BUILT_HERE, where="/tmp/mine")
+        self._answer(True)
+        panel._flash_companion()
+        self.assertEqual(self.ran[0][-1], "/tmp/mine")
+
+    def test_the_card_says_something_for_every_state(self):
+        """Or a state nobody wrote a sentence for is a KeyError on a page."""
+        panel = self._panel()
+        for state in (ledpanel.IMAGE_SHIPPED, ledpanel.IMAGE_BUILT_HERE,
+                      ledpanel.IMAGE_STALE, ledpanel.IMAGE_NONE):
+            self._with_image(state)
+            self.assertTrue(panel._companion_build_state().strip(), state)
 
     def test_the_secret_stays_hidden_until_somebody_asks(self):
         panel = self._panel()

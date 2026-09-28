@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: 2026 caed1994
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Builds the wall panel's firmware and puts the image back in the repository.
+#
+# The image is in the repository so that a person presses Flash on the panel
+# page and the board is written, with nothing to fetch and nothing to put
+# anywhere. An update brings the image with every other file.
+#
+# Build output in a repository goes out of date, so nothing here leaves that
+# to somebody remembering. This job is the only writer of prebuilt/, it runs
+# on every change under firmware/companion, and it writes the fingerprint of
+# the source it built from beside the image. The page compares the two and
+# refuses an image that does not match. See companion.firmware_fingerprint.
+#
+# The container is Espressif's own, at the version dependencies.lock names.
+# Nothing is installed on anybody's machine, here or on a Steam Machine.
+
+name: Wall panel firmware
+
+on:
+  push:
+    paths:
+      - 'firmware/companion/**'
+      - '!firmware/companion/prebuilt/**'
+      - '.github/workflows/companion-firmware.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # One build for each branch. A second push while this runs replaces it:
+  # the image of the older commit is not one anybody wants.
+  group: companion-firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.5
+
+    steps:
+      - name: Check out this branch
+        uses: actions/checkout@v4
+
+      - name: Let git read a checkout that another user made
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build the firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          . "$IDF_PATH/export.sh"
+          cd firmware/companion
+          idf.py set-target esp32s3
+          idf.py build
+
+      - name: Put the image where the panel looks for it
+        shell: bash
+        run: |
+          set -euo pipefail
+          build=firmware/companion/build
+          out=firmware/companion/prebuilt
+          mkdir -p "$out/bootloader" "$out/partition_table"
+          cp "$build/bootloader/bootloader.bin"               "$out/bootloader/"
+          cp "$build/partition_table/partition-table.bin"     "$out/partition_table/"
+          cp "$build/steamos_companion.bin"                   "$out/"
+          # The fingerprint of the source this was built from. The page reads
+          # it and refuses an image that does not match the firmware beside
+          # it. One function answers here and there.
+          PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=server python3 -c \
+            'from steamos_utility_center import companion; print(companion.firmware_fingerprint("."))' \
+            > "$out/built-from"
+          ( cd "$out" && sha256sum bootloader/bootloader.bin \
+              partition_table/partition-table.bin steamos_companion.bin \
+              > SHA256SUMS )
+          ls -l "$out"
+
+      - name: Commit it, if it changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add firmware/companion/prebuilt
+          if git diff --cached --quiet; then
+            echo "the image is the same as the one already here"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit \
+            -m "Build the wall panel firmware for ${GITHUB_SHA:0:7}" \
+            -m "The image that the Flash button on the panel page writes, built from the firmware in this commit. built-from holds the fingerprint of that source, and the page refuses an image whose fingerprint does not match." \
+            -m "Written by .github/workflows/companion-firmware.yml. A push made with GITHUB_TOKEN starts no further run, so this commit does not build again."
+          git push origin "HEAD:${GITHUB_REF_NAME}"

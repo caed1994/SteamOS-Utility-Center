@@ -4,7 +4,7 @@
 
 # Writes the wall panel's firmware to a Waveshare ESP32-S3-Touch-LCD-4B.
 #
-#   ./scripts/flash-companion.sh /dev/ttyACM0 [build directory]
+#   ./scripts/flash-companion.sh /dev/ttyACM0 [image directory]
 #
 # No ESP-IDF and no toolchain. This needs three files that a build leaves
 # behind, and esptool, which it puts in a virtual environment in the home
@@ -12,17 +12,15 @@
 # nowhere else to write, and "pip install --user" lands where the next system
 # update takes it.
 #
+# The image that comes with this version is in firmware/companion/prebuilt,
+# built by CI from the firmware beside it, and that is the default. The panel
+# page passes the directory rather than leaving it to this script: the page
+# knows whether a build of your own is there, and one decider is one answer.
+#
 # Not run as root. The port needs the caller in the right group, and a
 # virtual environment owned by root stops every later run that person makes.
 # See scripts/install-platformio.sh, which refuses root for the same reason.
 #
-# The image itself is not in this repository. It is 1.5 MB of build output
-# that goes out of date at the first change to firmware/companion, and a
-# stale binary beside the source it no longer matches is worse than none.
-# Build it one time with ESP-IDF v5.5:
-#
-#     cd firmware/companion && idf.py set-target esp32s3 && idf.py build
-
 set -euo pipefail
 
 # The version this was tested against. A newer esptool changes its command
@@ -36,12 +34,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 
 PORT="${1:-}"
-BUILD="${2:-$REPO/firmware/companion/build}"
+BUILD="${2:-$REPO/firmware/companion/prebuilt}"
 
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 
-[[ -n "$PORT" ]] || die "usage: flash-companion.sh <port> [build directory]"
+[[ -n "$PORT" ]] || die "usage: flash-companion.sh <port> [image directory]"
 [[ $EUID -ne 0 ]] || die "run this as yourself, not with sudo. See the note above."
 [[ -e "$PORT" ]] || die "$PORT is not there. Use a data cable, not a charging one."
 
@@ -51,7 +49,8 @@ PARTITIONS="$BUILD/partition_table/partition-table.bin"
 APPLICATION="$BUILD/steamos_companion.bin"
 for part in "$BOOTLOADER" "$PARTITIONS" "$APPLICATION"; do
     [[ -f "$part" ]] || die "no firmware in $BUILD ($(basename "$part") is missing).
-Build it first:  cd firmware/companion && idf.py set-target esp32s3 && idf.py build"
+Update the panel, which brings the image, or build one yourself:
+  cd firmware/companion && idf.py set-target esp32s3 && idf.py build"
 done
 
 VENV="$HOME/.local/share/steamos-utility-center/esptool"

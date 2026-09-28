@@ -13,10 +13,11 @@ profiles/
 
 # ESP-IDF build output for the wall panel's firmware.
 #
-# Not in the repository, and not ignored by accident: it is 1.5 MB that goes
-# out of date at the first change under firmware/companion. The installer
-# still carries it to the toolbox copy, because copy_toolbox lays the working
-# tree over the clone. So a build here reaches the flash button on the page.
+# The image that a person flashes is firmware/companion/prebuilt, which CI
+# writes and git carries. This is the working directory of a build somebody
+# makes themselves, which the page prefers when it is there and which nobody
+# else needs. The installer still carries it to the toolbox copy, because
+# copy_toolbox lays the working tree over the clone.
 firmware/companion/build/
 firmware/companion/sdkconfig
 firmware/companion/sdkconfig.old

@@ -127,6 +127,79 @@ def token_path(home=None):
                         TOKEN_FILE)
 
 
+# The firmware of the panel, and the image built from it.
+#
+# The image is in this repository, and it arrives with an update like every
+# other file. That is the whole point: a person presses Flash on the page and
+# the board is written, with nothing to fetch and nothing to put anywhere.
+#
+# It is build output in a repository, which is a thing to be careful with. So
+# it never sits there unchecked: CI builds it from the source beside it and
+# writes the fingerprint of that source next to it, and the page refuses an
+# image whose fingerprint does not match. A stale image is then a sentence on
+# the screen and not a panel that says "no PC" on the wall.
+FIRMWARE_DIR = os.path.join("firmware", "companion")
+PREBUILT_DIR = os.path.join(FIRMWARE_DIR, "prebuilt")
+BUILD_DIR = os.path.join(FIRMWARE_DIR, "build")
+STAMP_NAME = "built-from"
+
+# The three parts of an image, at the names an ESP-IDF build gives them.
+IMAGE_PARTS = (os.path.join("bootloader", "bootloader.bin"),
+               os.path.join("partition_table", "partition-table.bin"),
+               "steamos_companion.bin")
+
+# What the build reads. Everything else under firmware/companion is a note or
+# a licence, and a change to one of those is not a reason to build again.
+FIRMWARE_SOURCE = ("main", "CMakeLists.txt", "partitions.csv",
+                   "sdkconfig.defaults", "dependencies.lock")
+
+
+def firmware_fingerprint(root="."):
+    """One hash of every file the firmware build reads.
+
+    The path is in the hash beside the bytes. Without it, a file that moves
+    to another name gives the same answer as a file that did not move.
+
+    The same function answers in three places: the CI job that writes the
+    stamp, the page that compares it, and the test that holds the two equal.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(FIRMWARE_SOURCE):
+        start = os.path.join(root, FIRMWARE_DIR, name)
+        if os.path.isfile(start):
+            found = [start]
+        else:
+            found = sorted(os.path.join(base, one)
+                           for base, _dirs, names in os.walk(start)
+                           for one in names)
+        for path in found:
+            digest.update(os.path.relpath(path, root).encode())
+            digest.update(b"\0")
+            with open(path, "rb") as handle:
+                digest.update(handle.read())
+            digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def image_is_complete(where):
+    """Whether that directory holds all three parts of an image.
+
+    All three or none. A directory with one of them is a build that stopped,
+    and a flash from it leaves a board that does not start.
+    """
+    return all(os.path.isfile(os.path.join(where, part))
+               for part in IMAGE_PARTS)
+
+
+def image_stamp(where):
+    """The fingerprint the build of that image recorded, or "" for none."""
+    try:
+        with open(os.path.join(where, STAMP_NAME)) as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
 def addresses():
     """The addresses of this machine on the network, as the panel needs them.
 

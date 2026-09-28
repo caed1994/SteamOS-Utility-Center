@@ -1790,42 +1790,53 @@ def module_command(source_dir, name, remove=False, purge=False):
 
 # -- the panel on the wall ---------------------------------------------------
 #
-# The image is not in this repository. It is 1.5 MB of build output that goes
-# out of date at the first change under firmware/companion, and a stale binary
-# beside the source it no longer matches is worse than none. So the page asks
-# whether a build is there and says what to do when it is not.
+# The image is in this repository, so an update brings it like every other
+# file and a person presses Flash with nothing to fetch. CI is its only
+# writer: it builds the image from the firmware beside it and records the
+# fingerprint of that source. See .github/workflows/companion-firmware.yml.
+#
+# Build output in a repository goes out of date, so the state below is asked
+# before the button does anything. A stale image is a sentence on the page,
+# and never a board that is written with firmware for another service.
 
-COMPANION_BUILD = os.path.join("firmware", "companion", "build")
-
-# The three parts of an image, at the names an ESP-IDF build leaves them.
-COMPANION_PARTS = (os.path.join("bootloader", "bootloader.bin"),
-                   os.path.join("partition_table", "partition-table.bin"),
-                   "steamos_companion.bin")
+# Where a flash takes its image from, and what that image is.
+IMAGE_BUILT_HERE = "built-here"     # firmware/companion/build, from idf.py
+IMAGE_SHIPPED = "shipped"           # firmware/companion/prebuilt, from CI
+IMAGE_STALE = "stale"               # shipped, and not from this firmware
+IMAGE_NONE = "none"
 
 
 def companion_image(source_dir):
-    """The directory that holds a complete image, or "" for none.
+    """Returns (directory, state) for the image a flash would write.
 
-    All three parts or nothing. A directory with one of them is a build that
-    stopped, and a flash from it leaves a board that does not start and a
-    person holding the BOOT button.
+    A build made here wins. Somebody who ran idf.py means the thing they
+    just built, and no fingerprint of ours can be more current than that.
     """
-    where = os.path.join(source_dir, COMPANION_BUILD)
-    if all(os.path.isfile(os.path.join(where, part))
-           for part in COMPANION_PARTS):
-        return where
-    return ""
+    here = os.path.join(source_dir, companion_module.BUILD_DIR)
+    if companion_module.image_is_complete(here):
+        return here, IMAGE_BUILT_HERE
+    shipped = os.path.join(source_dir, companion_module.PREBUILT_DIR)
+    if not companion_module.image_is_complete(shipped):
+        return "", IMAGE_NONE
+    if (companion_module.image_stamp(shipped)
+            != companion_module.firmware_fingerprint(source_dir)):
+        return shipped, IMAGE_STALE
+    return shipped, IMAGE_SHIPPED
 
 
-def flash_companion_command(source_dir, port):
+def flash_companion_command(source_dir, port, image_dir):
     """Returns the command that writes the firmware to the panel's board.
+
+    The directory is a parameter and not a guess inside the script. The page
+    decides which image to write, and one decider is one answer.
 
     No pkexec, unlike the LED bar's flash. Nothing holds this port, esptool
     belongs in the home directory of the person, and a copy of it owned by
     root stops every later run they make. See scripts/flash-companion.sh,
     which refuses to run as root for that reason.
     """
-    return [os.path.join(source_dir, "scripts", "flash-companion.sh"), port]
+    return [os.path.join(source_dir, "scripts", "flash-companion.sh"), port,
+            image_dir]
 
 
 def companion_running():
