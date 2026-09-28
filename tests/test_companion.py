@@ -144,66 +144,178 @@ class TelemetryTest(unittest.TestCase):
 
 
 class ServiceTest(unittest.TestCase):
+    """The service, asked the way the panel asks."""
+
     def serve(self):
-        httpd = ThreadingHTTPServer(("127.0.0.1", 0),
-                                    companion.make_handler(TOKEN))
+        self.nonces = companion.Nonces()
+        httpd = ThreadingHTTPServer(
+            ("127.0.0.1", 0), companion.make_handler(TOKEN, self.nonces))
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(httpd.server_close)
         self.addCleanup(httpd.shutdown)
-        return HTTPConnection("127.0.0.1", httpd.server_port)
+        self.conn = HTTPConnection("127.0.0.1", httpd.server_port)
+        self.addCleanup(self.conn.close)
+        return self.conn
 
-    def test_no_token_reaches_nothing(self):
+    def ask(self, method, path, body=b"", nonce=None, auth=None,
+            headers=None):
+        """One signed request. Each part is a parameter, so a test can put
+        one of them wrong and leave the others right."""
+        nonce = self.nonces.issue() if nonce is None else nonce
+        sent = {companion.NONCE_HEADER: nonce,
+                companion.AUTH_HEADER: auth if auth is not None
+                else companion.signature(TOKEN, method, path, nonce, body)}
+        sent.update(headers or {})
+        self.conn.request(method, path, body, sent)
+        answer = self.conn.getresponse()
+        answer.read()
+        return answer
+
+    def action(self, name, **kw):
+        return self.ask("POST", "/v1/action",
+                        json.dumps({"action": name}).encode(), **kw)
+
+    def test_a_signed_read_is_answered(self):
+        self.serve()
+        self.assertEqual(self.ask("GET", "/v1/status").status, 200)
+
+    def test_nothing_at_all_reaches_nothing(self):
         conn = self.serve()
         conn.request("GET", "/v1/status")
-        self.assertEqual(conn.getresponse().status, 401)
+        answer = conn.getresponse()
+        answer.read()
+        self.assertEqual(answer.status, 401)
+
+    def test_the_bare_token_in_a_header_reaches_nothing(self):
+        """The scheme this replaced. A panel with old firmware is refused,
+        rather than quietly keeping the weaker of the two."""
+        conn = self.serve()
+        conn.request("GET", "/v1/status", headers={"X-Panel-Token": TOKEN})
+        answer = conn.getresponse()
+        answer.read()
+        self.assertEqual(answer.status, 401)
+
+    def test_the_same_request_a_second_time_is_refused(self):
+        """The point of the whole scheme. Somebody who reads one request off
+        the network holds a suspend for as long as the token lasts."""
+        self.serve()
+        nonce = self.nonces.issue()
+        auth = companion.signature(TOKEN, "GET", "/v1/status", nonce, b"")
+        self.assertEqual(self.ask("GET", "/v1/status", nonce=nonce,
+                                  auth=auth).status, 200)
+        self.assertEqual(self.ask("GET", "/v1/status", nonce=nonce,
+                                  auth=auth).status, 401)
+
+    def test_a_signature_for_one_path_does_not_fit_another(self):
+        self.serve()
+        nonce = self.nonces.issue()
+        auth = companion.signature(TOKEN, "GET", "/v1/status", nonce, b"")
+        self.assertEqual(self.ask("GET", "/v1/other", nonce=nonce,
+                                  auth=auth).status, 401)
+
+    def test_a_captured_press_cannot_be_re_addressed(self):
+        """mute and poweroff go to the same path with the same method. The
+        body is under the signature, which is what tells them apart."""
+        self.serve()
+        nonce = self.nonces.issue()
+        mute = json.dumps({"action": "mute"}).encode()
+        auth = companion.signature(TOKEN, "POST", "/v1/action", nonce, mute)
+        with mock.patch.object(companion.subprocess, "run") as ran:
+            self.assertEqual(
+                self.ask("POST", "/v1/action",
+                         json.dumps({"action": "poweroff"}).encode(),
+                         nonce=nonce, auth=auth).status, 401)
+            ran.assert_not_called()
+
+    def test_a_wrong_signature_leaves_the_nonce_alone(self):
+        """Or a stranger burns the nonce of the panel by guessing at it."""
+        self.serve()
+        nonce = self.nonces.issue()
+        self.assertEqual(self.ask("GET", "/v1/status", nonce=nonce,
+                                  auth="0" * 64).status, 401)
+        self.assertEqual(self.ask("GET", "/v1/status", nonce=nonce).status,
+                         200)
+
+    def test_every_answer_carries_the_next_nonce(self):
+        """Including the 401, which is how a panel that lost its nonce comes
+        back with no help from anybody."""
+        conn = self.serve()
+        conn.request("GET", "/v1/status")
+        answer = conn.getresponse()
+        answer.read()
+        offered = answer.getheader(companion.NONCE_HEADER)
+        self.assertTrue(offered)
+        auth = companion.signature(TOKEN, "GET", "/v1/status", offered, b"")
+        self.assertEqual(self.ask("GET", "/v1/status", nonce=offered,
+                                  auth=auth).status, 200)
 
     def test_an_unknown_path_answers_the_same_to_a_stranger(self):
-        """The token is asked before the path, so the codes that come back
-        tell a stranger nothing about which paths exist."""
         conn = self.serve()
         for path in ("/v1/status", "/v1/nothing", "/"):
             conn.request("GET", path)
-            self.assertEqual(conn.getresponse().status, 401, path)
+            answer = conn.getresponse()
+            answer.read()
+            self.assertEqual(answer.status, 401, path)
 
     def test_an_action_that_is_not_in_the_table_runs_nothing(self):
-        conn = self.serve()
+        self.serve()
         with mock.patch.object(companion.subprocess, "run") as ran:
-            conn.request("POST", "/v1/action", json.dumps({"action": "shell"}),
-                         {"X-Panel-Token": TOKEN})
-            self.assertEqual(conn.getresponse().status, 400)
+            self.assertEqual(self.action("shell").status, 400)
             ran.assert_not_called()
 
     def test_a_known_action_runs_and_answers(self):
-        conn = self.serve()
+        self.serve()
         with mock.patch.object(companion.subprocess, "run") as ran:
-            conn.request("POST", "/v1/action", json.dumps({"action": "mute"}),
-                         {"X-Panel-Token": TOKEN})
-            self.assertEqual(conn.getresponse().status, 200)
+            self.assertEqual(self.action("mute").status, 200)
             ran.assert_called_once()
             self.assertEqual(ran.call_args[0][0], companion.ACTIONS["mute"])
 
     def test_a_refused_command_comes_back_as_a_refusal(self):
-        conn = self.serve()
+        self.serve()
         with mock.patch.object(companion.subprocess, "run") as ran:
             ran.side_effect = companion.subprocess.CalledProcessError(
                 1, ["systemctl"])
-            conn.request("POST", "/v1/action",
-                         json.dumps({"action": "suspend"}),
-                         {"X-Panel-Token": TOKEN})
-            self.assertEqual(conn.getresponse().status, 502)
+            self.assertEqual(self.action("suspend").status, 502)
 
     def test_a_body_that_is_too_long_is_not_read(self):
         conn = self.serve()
-        conn.request("POST", "/v1/action", "x" * (companion.BODY_LIMIT + 1),
-                     {"X-Panel-Token": TOKEN})
-        self.assertEqual(conn.getresponse().status, 400)
+        conn.request("POST", "/v1/action", b"x" * (companion.BODY_LIMIT + 1))
+        answer = conn.getresponse()
+        answer.read()
+        self.assertEqual(answer.status, 400)
 
     def test_every_action_is_a_tuple_and_never_a_string(self):
         """A string goes to a shell. Each of these goes to execve."""
         for name, command in companion.ACTIONS.items():
             self.assertIsInstance(command, tuple, name)
             self.assertTrue(all(isinstance(one, str) for one in command), name)
+
+
+class NonceTest(unittest.TestCase):
+    def test_one_spend_for_each(self):
+        room = companion.Nonces()
+        value = room.issue()
+        self.assertTrue(room.spend(value))
+        self.assertFalse(room.spend(value))
+
+    def test_one_that_nobody_gave_out_is_refused(self):
+        self.assertFalse(companion.Nonces().spend("made up"))
+
+    def test_the_room_is_bounded_and_the_oldest_leaves(self):
+        """A stranger asks for as many as they like, and memory is not a
+        thing to hand to a stranger."""
+        room = companion.Nonces(room=4)
+        first = room.issue()
+        for _ in range(4):
+            room.issue()
+        self.assertFalse(room.spend(first))
+        self.assertLessEqual(len(room._open), 4)
+
+    def test_two_are_never_the_same(self):
+        room = companion.Nonces(room=500)
+        values = {room.issue() for _ in range(400)}
+        self.assertEqual(len(values), 400)
 
 
 class TokenTest(unittest.TestCase):

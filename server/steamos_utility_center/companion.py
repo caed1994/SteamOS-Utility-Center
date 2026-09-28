@@ -25,11 +25,15 @@ them learns about a new chip.
 
 from __future__ import annotations
 
+import collections
+import hashlib
 import hmac
 import json
 import os
 import re
+import secrets
 import subprocess
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -50,6 +54,32 @@ TOKEN_MINIMUM = 32
 
 # A request body carries one short JSON object. Anything longer is not one.
 BODY_LIMIT = 256
+
+# How the panel proves that it knows the secret without sending it.
+#
+# The first version put the token in a header on every request, and the panel
+# asks every three seconds. That is the secret on the air 28,800 times a day,
+# over plain HTTP on a home network. One reader of one of those requests then
+# holds Suspend, Reboot and Power off for as long as the token lasts.
+#
+# So the secret stays on both ends and never moves. This service hands out a
+# nonce, the panel signs with it, and the signature covers the method, the
+# path and the body. A captured request is then worth nothing: its nonce is
+# spent, and the signature does not fit another path or another action.
+#
+# No clock is needed at either end. That matters, because the board has no
+# battery clock and asks no time server.
+NONCE_HEADER = "X-Panel-Nonce"
+AUTH_HEADER = "X-Panel-Auth"
+NONCE_BYTES = 16
+
+# How many nonces stay open at one time.
+#
+# Anybody on the network can ask for one, because every answer carries one.
+# So the room is bounded and the oldest leaves. A panel whose nonce is pushed
+# out gets a 401 with a fresh one and signs again, which costs one round trip
+# and needs nobody to do anything.
+NONCE_ROOM = 64
 
 # What a press is allowed to be. A name from this table, never a string from
 # the network. Each command is a tuple and goes to subprocess without a
@@ -264,8 +294,49 @@ def press(name):
     return 200, {"ok": True}
 
 
-def make_handler(token):
+def signature(token, method, path, nonce, body):
+    """What the panel sends in place of the secret.
+
+    The method, the path and the body are all under the signature. Without
+    them a captured "mute" is a "poweroff" that somebody re-addresses, and a
+    captured status read is an action.
+    """
+    message = "\n".join((method, path, nonce,
+                          hashlib.sha256(body).hexdigest())).encode()
+    return hmac.new(token.encode(), message, hashlib.sha256).hexdigest()
+
+
+class Nonces:
+    """The nonces this service gave out and nobody has spent.
+
+    One spend for each nonce, which is what makes a captured request useless.
+    The room is bounded, because a stranger on the network can ask for as
+    many as they like. See NONCE_ROOM.
+    """
+
+    def __init__(self, room=NONCE_ROOM):
+        self.room = room
+        self._open = collections.OrderedDict()
+        # ThreadingHTTPServer answers each request in a thread of its own.
+        self._lock = threading.Lock()
+
+    def issue(self):
+        value = secrets.token_hex(NONCE_BYTES)
+        with self._lock:
+            self._open[value] = True
+            while len(self._open) > self.room:
+                self._open.popitem(last=False)
+        return value
+
+    def spend(self, value):
+        """True one time for each nonce, and False for every time after."""
+        with self._lock:
+            return self._open.pop(value, None) is not None
+
+
+def make_handler(token, nonces=None):
     """The request handler for one token."""
+    nonces = Nonces() if nonces is None else nonces
 
     class Handler(BaseHTTPRequestHandler):
         # The log of BaseHTTPRequestHandler goes to stderr, which is the
@@ -284,12 +355,25 @@ def make_handler(token):
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
+            # Every answer carries the next nonce, so the panel always holds
+            # one and the ordinary poll stays at one round trip. A 401
+            # carries one too, which is how a panel that lost its nonce
+            # comes back without anybody doing anything.
+            self.send_header(NONCE_HEADER, nonces.issue())
             self.end_headers()
             self.wfile.write(body)
 
-        def authorized(self):
-            given = self.headers.get("X-Panel-Token", "")
-            return hmac.compare_digest(given.encode(), token.encode())
+        def authorized(self, body=b""):
+            nonce = self.headers.get(NONCE_HEADER, "")
+            given = self.headers.get(AUTH_HEADER, "")
+            if not nonce or not given:
+                return False
+            wanted = signature(token, self.command, self.path, nonce, body)
+            # The signature first and the spend second. The other order lets
+            # a stranger burn the nonce of the panel by guessing at it.
+            if not hmac.compare_digest(given, wanted):
+                return False
+            return nonces.spend(nonce)
 
         def do_GET(self):
             # The check comes before the path, so a stranger cannot learn
@@ -301,16 +385,21 @@ def make_handler(token):
             self.reply(200, status())
 
         def do_POST(self):
-            if not self.authorized():
-                return self.reply(401, {"error": "unauthorized"})
-            if self.path != "/v1/action":
-                return self.reply(404, {"error": "not found"})
+            # The body is read before the check, because the signature
+            # covers it. BODY_LIMIT is what keeps that read small.
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 1 <= length <= BODY_LIMIT:
                     raise ValueError
-                asked = json.loads(self.rfile.read(length))
-                name = asked["action"]
+                body = self.rfile.read(length)
+            except (ValueError, TypeError):
+                return self.reply(400, {"error": "invalid request"})
+            if not self.authorized(body):
+                return self.reply(401, {"error": "unauthorized"})
+            if self.path != "/v1/action":
+                return self.reply(404, {"error": "not found"})
+            try:
+                name = json.loads(body)["action"]
             except (ValueError, KeyError, TypeError):
                 return self.reply(400, {"error": "invalid request"})
             self.reply(*press(name))

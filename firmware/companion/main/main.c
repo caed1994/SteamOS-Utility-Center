@@ -30,6 +30,7 @@
 #include "bsp/display.h"
 #include "ui.h"
 #include "config.h"
+#include "panel_auth.h"
 
 static atomic_uint ui_heartbeat_ms;
 static atomic_bool display_asleep;
@@ -154,8 +155,39 @@ static bool connected(void)
     return result;
 }
 
+// The nonce that the service last gave out, and the name it sends it under.
+//
+// One buffer and no lock. esp_http_client_perform is synchronous and the
+// poll task is the only caller, so the header arrives on the task that is
+// waiting for it. Empty at the first request after a start, which the
+// service answers with 401 and a fresh nonce. See request().
+#define PANEL_NONCE_HEADER "X-Panel-Nonce"
+#define PANEL_AUTH_HEADER "X-Panel-Auth"
+static char panel_nonce[PANEL_AUTH_HEX];
+
+static bool same_header(const char *given, const char *wanted)
+{
+    // The names of headers do not depend on case, and servers differ.
+    for (; *given && *wanted; given++, wanted++) {
+        char a=*given, b=*wanted;
+        if (a>='A' && a<='Z') a=(char)(a-'A'+'a');
+        if (b>='A' && b<='Z') b=(char)(b-'A'+'a');
+        if (a!=b) return false;
+    }
+    return *given==0 && *wanted==0;
+}
+
 static esp_err_t collect_data(esp_http_client_event_t *event)
 {
+    if (event->event_id==HTTP_EVENT_ON_HEADER) {
+        if (event->header_key && event->header_value
+            && same_header(event->header_key,PANEL_NONCE_HEADER)) {
+            size_t length=strlen(event->header_value);
+            if (length>0 && length<sizeof(panel_nonce))
+                memcpy(panel_nonce,event->header_value,length+1);
+        }
+        return ESP_OK;
+    }
     if (event->event_id==HTTP_EVENT_ON_DATA) {
         response_t *out=event->user_data;
         if (event->data_len<0 || out->length+(size_t)event->data_len>=sizeof(out->data)) {
@@ -169,25 +201,48 @@ static esp_err_t collect_data(esp_http_client_event_t *event)
     return ESP_OK;
 }
 
-static int request(const char *path, const char *action)
+// One attempt. The token itself never goes on the wire: what goes is a
+// signature over the method, the path and the body, with the nonce that the
+// service last gave out. See panel_auth.h.
+static int attempt(const char *path, const char *action, response_t *out)
 {
-    char url[224], body[96];
-    response_t *out=calloc(1,sizeof(*out));
-    if (!out) return 0;
+    char url[224], body[96], auth[PANEL_AUTH_HEX];
+    const char *payload="";
+    memset(out,0,sizeof(*out));
     snprintf(url,sizeof(url),"%s%s",config.server,path);
-    esp_http_client_config_t cfg={.url=url,.timeout_ms=4000,.event_handler=collect_data,.user_data=out,.disable_auto_redirect=true};
-    esp_http_client_handle_t client=esp_http_client_init(&cfg);
-    if (!client) { free(out); return 0; }
-    esp_http_client_set_header(client,"X-Panel-Token",config.token);
     if (action) {
         snprintf(body,sizeof(body),"{\"action\":\"%s\"}",action);
+        payload=body;
+    }
+    esp_http_client_config_t cfg={.url=url,.timeout_ms=4000,.event_handler=collect_data,.user_data=out,.disable_auto_redirect=true};
+    esp_http_client_handle_t client=esp_http_client_init(&cfg);
+    if (!client) return 0;
+    if (panel_auth_sign(config.token,action ? "POST" : "GET",path,panel_nonce,
+                        payload,strlen(payload),auth)) {
+        esp_http_client_set_header(client,PANEL_NONCE_HEADER,panel_nonce);
+        esp_http_client_set_header(client,PANEL_AUTH_HEADER,auth);
+    }
+    if (action) {
         esp_http_client_set_method(client,HTTP_METHOD_POST);
         esp_http_client_set_header(client,"Content-Type","application/json");
-        esp_http_client_set_post_field(client,body,strlen(body));
+        esp_http_client_set_post_field(client,payload,strlen(payload));
     }
     esp_err_t err=esp_http_client_perform(client);
     int code=err==ESP_OK && !out->overflow ? esp_http_client_get_status_code(client) : 0;
     esp_http_client_cleanup(client);
+    return code;
+}
+
+static int request(const char *path, const char *action)
+{
+    response_t *out=calloc(1,sizeof(*out));
+    if (!out) return 0;
+    int code=attempt(path,action,out);
+    // 401 is the nonce, not the secret: it was spent, or the service
+    // restarted and forgot it. The answer carried a fresh one, so one more
+    // attempt is the whole recovery. A rejected request ran nothing, so
+    // sending an action again is safe.
+    if (code==401) code=attempt(path,action,out);
     if (code!=200 || action) { free(out); return code; }
     cJSON *root=cJSON_Parse(out->data);
     free(out);
