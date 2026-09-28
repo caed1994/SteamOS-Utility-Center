@@ -59,23 +59,30 @@ jobs:
       - name: Record what the board support does with the backlight
         # The components are downloaded by the build and are in no
         # repository, so nothing outside a build can read them. The backlight
-        # of this board has cost two rounds of guessing already, so the build
-        # prints what the board support really does with it. It is a grep,
+        # of this board has cost rounds of guessing already, so the build
+        # prints what the board support really does with it. It reads files,
         # it changes nothing, and it puts the answer in the log where the
         # next person who needs it will look.
+        #
+        # The timer is the part that decides. The brightness function writes
+        # a duty of up to 1023, and 1023 means "nearly always on" at ten bits
+        # and "one eighth on" at thirteen. The first is a backlight that will
+        # not go off; the second is a backlight at most of its brightness.
         shell: bash
         run: |
           set -uo pipefail
-          root=firmware/companion/managed_components
-          echo "--- backlight and brightness in the board support ---"
-          grep -rn --include='*.c' --include='*.h' \
-            -e 'brightness_set' -e 'backlight' -e 'ledc_' -e 'BK_LIGHT' \
-            "$root"/waveshare__esp32_s3_touch_lcd_4b 2>/dev/null \
-            | head -60 || echo "(nothing matched)"
-          echo "--- the brightness function itself ---"
-          awk '/brightness_set|backlight_on|backlight_off/,/^\}/' \
-            "$root"/waveshare__esp32_s3_touch_lcd_4b/*.c 2>/dev/null \
-            | head -80 || true
+          bsp=firmware/companion/managed_components/waveshare__esp32_s3_touch_lcd_4b
+          echo "===== the backlight timer and channel ====="
+          sed -n '/LCD_backlight_channel = {/,/^}/p;/LCD_backlight_timer = {/,/^}/p' \
+            "$bsp"/esp32_s3_touch_lcd_4b.c 2>/dev/null || true
+          echo "===== the brightness function ====="
+          sed -n '/^esp_err_t bsp_display_brightness_set/,/^}/p' \
+            "$bsp"/esp32_s3_touch_lcd_4b.c 2>/dev/null || true
+          echo "===== the names it uses ====="
+          grep -rnE '#define +(LCD_LEDC_CH|BSP_LCD_BACKLIGHT|LCD_BACKLIGHT|BSP_LCD_BL)' \
+            "$bsp" 2>/dev/null || echo "(no such define)"
+          echo "===== every LEDC call in the board support ====="
+          grep -rn 'ledc_' "$bsp" --include='*.c' 2>/dev/null || true
 
       - name: Put the image where the panel looks for it
         shell: bash
