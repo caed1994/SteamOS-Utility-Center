@@ -46,11 +46,12 @@ LED = "led"
 PEGBOARD = "pegboard"
 POWER = "power"
 CEC = "cec"
+COMPANION = "companion"
 SYSTEM = "system"
 
 # The order of the pages of the panel, so a list of modules reads in the order
 # a person meets them.
-ORDER = (LED, PEGBOARD, POWER, CEC, SYSTEM)
+ORDER = (LED, PEGBOARD, POWER, CEC, COMPANION, SYSTEM)
 
 
 # What each module is, in the words the panel puts on the page.
@@ -106,6 +107,18 @@ SAYS = {
                   "else's work, kept in this repository under cec-toolkit/.",
         "needs": "a CEC adapter, and a television that answers on it.",
     },
+    COMPANION: {
+        "title": "Wall panel",
+        "does": "Answers a Smart 86 Box on the network. The panel shows the "
+                "battery of your controller, the volume and the two "
+                "temperatures, and its buttons reach the volume, standby, "
+                "restart and power off.",
+        "brings": "a service in your own session, and a secret that it and "
+                  "the panel share. It needs no password and no root, so the "
+                  "panel reaches what you reach and nothing more.",
+        "needs": "a Waveshare ESP32-S3-Touch-LCD-4B on the same network, "
+                 "with the firmware in firmware/companion.",
+    },
     SYSTEM: {
         "title": "Drives, controller wake and Game Mode",
         "does": "Mounts the drives you choose at each boot, lets a controller "
@@ -129,6 +142,9 @@ MARK = {
                            "steamos-utility-center-pegboard-apply"),
     POWER: os.path.join(INSTALL_DIR, "steamos-utility-center-power-apply"),
     SYSTEM: os.path.join(INSTALL_DIR, "steamos-utility-center-mounts-apply"),
+    # The program and not an applier. This module writes nothing as root, so
+    # it has no applier to be marked by. See companion.py.
+    COMPANION: os.path.join(INSTALL_DIR, "steamos-utility-center-companion"),
 }
 
 

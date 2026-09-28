@@ -47,6 +47,7 @@ KEPT = {}
 REMOVERS = {modules.LED: "remove_led",
             modules.PEGBOARD: "remove_pegboard",
             modules.POWER: "remove_power",
+            modules.COMPANION: "remove_companion",
             modules.SYSTEM: "remove_system"}
 
 
@@ -514,6 +515,10 @@ class RunPurgeTest(unittest.TestCase):
                          "/etc/steamos-led-power.conf"),
         "remove_pegboard": ("/etc/steamos-utility-center-pegboard.conf", None),
         "remove_system": ("/var/lib/steamos-utility-center/mounts.conf", None),
+        # In the home directory and not in /etc. The panel's secret belongs
+        # to one person and one panel. See COMPANION_TOKEN_DIR.
+        "remove_companion": (
+            "/home/deck/.config/steamos-utility-center/companion-token", None),
     }
 
     HARNESS = os.path.join(REPO, "tests", "shell", "run-remove.sh")
@@ -607,10 +612,9 @@ class RunPurgeTest(unittest.TestCase):
                 done = self.remove(func, 1, root, works=False)
                 self.assertIn("could not remove", done.stderr,
                               "%s said nothing about %s" % (func, new))
-                self.assertNotIn("and the settings in", done.stdout,
-                                 "%s claimed the purge it did not do" % func)
-                self.assertNotIn("and the drives in", done.stdout,
-                                 "%s claimed the purge it did not do" % func)
+                self.assertNotRegex(done.stdout, r"and the .+ in /",
+                                    "%s claimed the purge it did not do"
+                                    % func)
 
     def test_a_purge_that_worked_still_says_so(self):
         """Or the test above passes on a line that nobody ever prints."""
@@ -618,7 +622,7 @@ class RunPurgeTest(unittest.TestCase):
             with self.subTest(func):
                 root = self.machine([new])
                 done = self.remove(func, 1, root)
-                self.assertRegex(done.stdout, r"and the (settings|drives) in",
+                self.assertRegex(done.stdout, r"and the .+ in /",
                                  "%s removed %s and said nothing"
                                  % (func, new))
                 self.assertNotIn("could not remove", done.stderr)

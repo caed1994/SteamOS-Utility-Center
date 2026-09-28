@@ -36,6 +36,16 @@ remove_legacy_sleep_hooks() { :; }
 remove_user_units()   { :; }
 remove_mount_units()  { :; }
 remove_decky_plugin() { :; }
+# The desktop user, answered for a machine in a directory. remove_companion
+# asks for it twice: once to take the unit out of the session, and once to
+# find the secret that a purge removes.
+watcher_user_dirs() {
+    WATCHER_USER="deck"
+    WATCHER_HOME="$ROOT/home/deck"
+    WATCHER_DIR="$WATCHER_HOME/.config/systemd/user"
+    return 0
+}
+user_systemctl() { :; }
 
 SOURCE_DIR="$REPO"
 eval "$(awk "/^$FUNC\\(\\)/,/^}/" "$REPO/install.sh")"

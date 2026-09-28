@@ -76,6 +76,8 @@ unlock_rootfs || true
 # at a different point.
 
 remove_user_units
+# And the panel's, which is a module of its own and not in that list.
+remove_companion_unit
 
 # --- what the installer put in that user's home -----------------------------
 #

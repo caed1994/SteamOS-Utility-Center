@@ -126,6 +126,9 @@ PROGRAMS = {
     "steamos-utility-center-pegboard-sleep": modules.PEGBOARD,
     "steamos-utility-center-mounts-apply": modules.SYSTEM,
     "steamos-utility-center-wake-apply": modules.SYSTEM,
+    # No applier: this module writes nothing as root. Its program is
+    # what says the module is here. See modules.MARK.
+    "steamos-utility-center-companion": modules.COMPANION,
 }
 
 # The names a person can type, which are links on the read-only filesystem.

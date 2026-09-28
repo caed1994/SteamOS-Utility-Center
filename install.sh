@@ -1123,6 +1123,83 @@ remove_system() {
     fi
 }
 
+# -- companion: the panel on the wall ----------------------------------------
+#
+# The one module that installs no applier and writes no sudoers line.
+#
+# Its service runs in the session of the desktop user, so the panel reaches
+# what that person reaches and nothing more: wpctl talks to their PipeWire,
+# and systemctl suspend asks logind, which decides by who is at the machine.
+# A service with root and a network port would reach the whole machine. See
+# server/steamos_utility_center/companion.py.
+
+# The secret, written one time and kept after that.
+#
+# Kept, because the panel on the wall holds a copy and a person typed it in
+# through a web form on their phone. A new secret at every install is a panel
+# that stops after an update with nothing on the screen to say why.
+write_companion_token() {
+    local path="$1" dir
+    dir="$(dirname "$path")"
+    runuser -u "$WATCHER_USER" -- mkdir -p "$dir" || return 1
+    runuser -u "$WATCHER_USER" -- chmod 0700 "$dir" || true
+    if [[ -s "$path" ]]; then
+        say "  the panel's secret in $path stays"
+        return 0
+    fi
+    # 32 bytes, which token_urlsafe writes as 43 characters. The service
+    # refuses anything under 32. See companion.TOKEN_MINIMUM.
+    runuser -u "$WATCHER_USER" -- \
+        python3 -c 'import secrets; print(secrets.token_urlsafe(32))' \
+        > "$path" || return 1
+    chown "$WATCHER_USER:$WATCHER_USER" "$path"
+    chmod 0600 "$path"
+    say "  wrote the panel's secret to $path"
+    return 0
+}
+
+install_companion() {
+    say "Installing the wall panel module"
+    install -m 0755 "$SOURCE_DIR/server/steamos-utility-center-companion" \
+        "$INSTALL_DIR/steamos-utility-center-companion"
+
+    if ! watcher_user_dirs; then
+        warn "cannot tell which desktop user to install the panel service for."
+        warn "Run the installer with sudo from your normal account."
+        return 1
+    fi
+    runuser -u "$WATCHER_USER" -- mkdir -p "$WATCHER_DIR/$WATCHER_WANTS" \
+        || { warn "cannot write to $WATCHER_DIR"; return 1; }
+    local token
+    token="$(companion_token_path)"
+    write_companion_token "$token" \
+        || { warn "could not write $token"; return 1; }
+    install_one_user_unit "$COMPANION_UNIT" \
+        || { warn "could not install $COMPANION_UNIT"; return 1; }
+    user_systemctl daemon-reload || true
+    user_systemctl restart "$COMPANION_UNIT" \
+        || warn "the panel service starts at the next login"
+    say "  the panel asks this machine on port 8765"
+    say "  give it the secret in $token"
+}
+
+remove_companion() {
+    say "Removing the wall panel module"
+    remove_companion_unit
+    rm -f "$INSTALL_DIR/steamos-utility-center-companion"
+    if [[ $PURGE -eq 1 ]]; then
+        # The message follows the result. See remove_led.
+        if ! watcher_user_dirs; then
+            warn "cannot tell which desktop user holds the panel's secret,"
+            warn "so it stays on this machine."
+        elif purge_config "$(companion_token_path)"; then
+            say "  and the panel's secret in $(companion_token_path)"
+        fi
+    elif watcher_user_dirs; then
+        say "  the secret in $(companion_token_path) stays, for a second install"
+    fi
+}
+
 # --- the units that run in the desktop session ------------------------------
 
 # Set by install_user_units for the summary at the end, so the outcome is

@@ -61,6 +61,20 @@ POWER_UNIT_PATH="$UNIT_DIR/$NAME-power.service"
 # operates on a machine with no LED bar. See
 # server/steamos_utility_center/pegboard.py.
 PEGBOARD_CONFIG_PATH="$ROOT/etc/$NAME-pegboard.conf"
+# The wall panel's shared secret. In the home directory of the desktop user
+# and not in /etc: it belongs to one person and one panel, the service that
+# reads it runs as that person, and a SteamOS update leaves a home alone.
+# watcher_user_dirs gives the home, so the whole path is only known there.
+COMPANION_TOKEN_DIR=".config/$NAME"
+COMPANION_TOKEN_FILE="companion-token"
+
+# The whole path, once watcher_user_dirs has said whose home it is. Here and
+# not in install.sh: the uninstaller and the tests reach it too, and a path
+# that two scripts spell is a path that two scripts spell differently.
+companion_token_path() {
+    printf '%s/%s/%s' "$WATCHER_HOME" "$COMPANION_TOKEN_DIR" \
+        "$COMPANION_TOKEN_FILE"
+}
 PEGBOARD_UNIT_PATH="$UNIT_DIR/$NAME-pegboard.service"
 PEGBOARD_APPLIER_PATH="$INSTALL_DIR/$NAME-pegboard-apply"
 # What takes the board dark for a suspend. A shutdown needs nothing:
@@ -294,6 +308,10 @@ DECKY_PLUGIN="homebrew/plugins/SteamOS Utility Center"
 
 WATCHER_UNIT="$NAME-achievements.service"
 PHONE_UNIT="$NAME-phone.service"
+# The wall panel's service. It is a user unit for the same reason as the two
+# above, and it is not in WATCHER_UNITS because it is a module of its own:
+# the core installs those two and this one arrives with its module.
+COMPANION_UNIT="$NAME-companion.service"
 # Each unit that this installs into the systemd of the user. Both scripts walk
 # this list. A unit in one script and not in the other is a file that nothing
 # removes.
@@ -873,6 +891,25 @@ remove_user_units() {
 
     user_systemctl daemon-reload || true
     say "Removed the desktop-session services for $WATCHER_USER"
+}
+
+# The wall panel's service, taken out of the session of the desktop user.
+#
+# Its own function and not a name in WATCHER_UNITS. That list is removed
+# whenever the LED module goes, and the panel is a module of its own: a
+# person who takes the LED bar off must keep the panel on the wall working.
+#
+# Shared, because both the module removal in install.sh and uninstall.sh have
+# to do exactly this. A second copy is a copy that stops at another point.
+remove_companion_unit() {
+    watcher_user_dirs || return 0
+    [[ -f "$WATCHER_DIR/$COMPANION_UNIT" ]] || return 0
+    user_systemctl stop "$COMPANION_UNIT" || true
+    rm -f "$WATCHER_DIR/$COMPANION_UNIT" \
+        "$WATCHER_DIR/$WATCHER_WANTS/$COMPANION_UNIT"
+    user_systemctl daemon-reload || true
+    say "Removed the panel service from the session of $WATCHER_USER"
+    return 0
 }
 
 # The mount units of the drives on the System page.
