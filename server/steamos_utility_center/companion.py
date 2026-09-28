@@ -1,0 +1,342 @@
+# SPDX-FileCopyrightText: 2026 caed1994
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""What the Smart 86 Box panel reads from this machine, and what it can press.
+
+The panel is an ESP32-S3 with a 4 inch touch screen on the wall. It has no
+cable to this machine. It asks over the network every three seconds, and it
+sends a press as a second request. firmware/companion holds its side.
+
+This service answers two paths and nothing else:
+
+    GET  /v1/status     the controllers, the audio and the sensors
+    POST /v1/action     one of six named presses
+
+It runs in the session of the desktop user and never as root. That is not a
+limitation to work around, it is the design: `systemctl suspend` and `wpctl`
+both belong to a session, and a service with no root cannot lose more than
+that session holds. The panel therefore reaches exactly what the person at
+the keyboard reaches.
+
+The sensors come from temperature.py, which this project already uses for the
+LED bar. Two readers of /sys/class/hwmon become two answers on the day one of
+them learns about a new chip.
+"""
+
+from __future__ import annotations
+
+import hmac
+import json
+import os
+import re
+import subprocess
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+from . import temperature
+
+# The port, and the file that holds the shared secret.
+#
+# The token is in the home directory and not in /etc. It belongs to one
+# person and one panel, it needs no root to read, and a SteamOS update leaves
+# a home directory alone. install.sh writes it with mode 0600.
+PORT = 8765
+TOKEN_DIR = os.path.join(".config", "steamos-utility-center")
+TOKEN_FILE = "companion-token"
+
+# Below this length a token is a password, and a password on a network is a
+# token that somebody guesses. install.sh writes 32 bytes of secrets.token_urlsafe.
+TOKEN_MINIMUM = 32
+
+# A request body carries one short JSON object. Anything longer is not one.
+BODY_LIMIT = 256
+
+# What a press is allowed to be. A name from this table, never a string from
+# the network. Each command is a tuple and goes to subprocess without a
+# shell, so a name that is not here reaches nothing at all.
+ACTIONS = {
+    "volume_up": ("wpctl", "set-volume", "-l", "1.0",
+                  "@DEFAULT_AUDIO_SINK@", "5%+"),
+    "volume_down": ("wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"),
+    "mute": ("wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"),
+    "suspend": ("systemctl", "suspend"),
+    "reboot": ("systemctl", "reboot"),
+    "poweroff": ("systemctl", "poweroff"),
+}
+
+# The battery of a controller, which the kernel publishes as a power supply
+# beside the one of a laptop. The name tells them apart.
+CONTROLLER_ROOT = "/sys/class/power_supply"
+CONTROLLER_KINDS = ("battery", "gaming input")
+CONTROLLER_NAMES = ("controller", "dualsense", "ps-controller", "steam",
+                    "xpad")
+CONTROLLER_LABELS = (("ps-controller", "PlayStation Controller"),
+                     ("sony_controller", "PlayStation Controller"),
+                     ("steam", "Steam Controller"),
+                     ("xpad", "Xbox Controller"))
+
+# The chips that answer "how hot is the processor" and "how hot is the card".
+# temperature.py ranks the sensors inside a chip, and this says which chips
+# belong to which of the two numbers on the panel.
+CPU_CHIPS = ("k10temp", "coretemp", "zenpower")
+GPU_CHIPS = ("amdgpu",)
+
+# hwmon reports microwatts for power and thousandths of a degree for heat.
+MICROWATTS = 1000000
+
+# What a reading has to be under to be a reading. A card that reports 4000
+# degrees reports a broken sensor, and a dash on the panel is the honest
+# answer to that.
+SANE_CELSIUS = 150
+SANE_WATTS = 2000
+
+
+def token_path(home=None):
+    """Where the shared secret of this machine and its panel is."""
+    return os.path.join(home or os.path.expanduser("~"), TOKEN_DIR,
+                        TOKEN_FILE)
+
+
+def run(*args):
+    """One command, and its output, or nothing at all when it fails.
+
+    Nothing rather than an exception: this is called to fill a field on a
+    screen, and a missing field is a better answer than a service that stops.
+    """
+    try:
+        done = subprocess.run(args, capture_output=True, text=True,
+                              timeout=3, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout.strip()
+
+
+def _read_text(path):
+    try:
+        with open(path, "r", errors="replace") as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
+def _read_number(path, scale=1):
+    text = _read_text(path)
+    try:
+        return int(text) / scale
+    except (TypeError, ValueError):
+        return None
+
+
+def _label_for(name):
+    for term, label in CONTROLLER_LABELS:
+        if term in name:
+            return label
+    return "Controller"
+
+
+def controllers(root=CONTROLLER_ROOT):
+    """Every game controller with a battery that the kernel reports.
+
+    The panel shows the first one. This gives all of them, because the count
+    is the answer to "is anything connected" and a later firmware pages
+    through them.
+    """
+    found = []
+    for name in sorted(os.listdir(root) if os.path.isdir(root) else []):
+        path = os.path.join(root, name)
+        kind = (_read_text(os.path.join(path, "type")) or "").lower()
+        lowered = name.lower()
+        if kind not in CONTROLLER_KINDS:
+            continue
+        if not any(term in lowered for term in CONTROLLER_NAMES):
+            continue
+        if _read_text(os.path.join(path, "present")) == "0":
+            continue
+        capacity = _read_number(os.path.join(path, "capacity"))
+        if capacity is None:
+            continue
+        model = _read_text(os.path.join(path, "model_name"))
+        found.append({
+            "name": (model or "")[:63] or _label_for(lowered),
+            "percent": max(0, min(100, int(capacity))),
+            "status": _read_text(os.path.join(path, "status")) or "Unknown",
+        })
+    return found
+
+
+def audio():
+    """The volume of the default output, as a percentage, and its mute."""
+    said = run("wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@")
+    found = re.search(r"Volume:\s*([0-9.]+)", said)
+    return {
+        "percent": max(0, min(100, round(float(found.group(1)) * 100)))
+        if found else None,
+        "muted": "[MUTED]" in said,
+    }
+
+
+def _best(sensors, chips):
+    """The sensor of those chips that answers best. See temperature.py."""
+    wanted = [one for one in sensors if one["chip"].lower() in chips]
+    return temperature.pick_sensor(wanted)
+
+
+def _graphics_card(sensors):
+    """The directory of the graphics card, where more than one answers.
+
+    A Ryzen with a graphics part and a card in the slot gives two amdgpu
+    chips. The card is the one a person means by "the GPU", and the size of
+    its memory is what tells the two apart.
+    """
+    places = {os.path.dirname(one["path"]) for one in sensors
+              if one["chip"].lower() in GPU_CHIPS}
+    if not places:
+        return None
+    return max(places, key=lambda place: _read_number(
+        os.path.join(place, "device", "mem_info_vram_total")) or 0)
+
+
+def _sane(value, limit):
+    if value is None or not 0 <= value <= limit:
+        return None
+    return round(value)
+
+
+def telemetry(root=temperature.HWMON_ROOT):
+    """The two temperatures and the power of the card, or a None for each.
+
+    The reads are temperature.py's. This file says which chip is the
+    processor and which is the card, and temperature.py says which sensor
+    inside a chip is the one to show.
+    """
+    sensors = temperature.find_sensors(root)
+    cpu = _best(sensors, CPU_CHIPS)
+    place = _graphics_card(sensors)
+    gpu = _best([one for one in sensors
+                 if os.path.dirname(one["path"]) == place], GPU_CHIPS)
+
+    watts = None
+    if place:
+        watts = _read_number(os.path.join(place, "power1_average"),
+                             MICROWATTS)
+        if watts is None:
+            watts = _read_number(os.path.join(place, "power1_input"),
+                                 MICROWATTS)
+    return {
+        "cpu_c": _sane(temperature.read_celsius(cpu["path"]) if cpu else None,
+                       SANE_CELSIUS),
+        "gpu_c": _sane(temperature.read_celsius(gpu["path"]) if gpu else None,
+                       SANE_CELSIUS),
+        "gpu_w": _sane(watts, SANE_WATTS),
+    }
+
+
+def status():
+    """Everything one GET answers with."""
+    return {
+        "host": os.uname().nodename,
+        "controllers": controllers(),
+        "audio": audio(),
+        "telemetry": telemetry(),
+    }
+
+
+def press(name):
+    """Runs one named action. Returns (HTTP code, body) for the panel.
+
+    A refusal comes back as a code and not as silence. The panel draws it,
+    and somebody who presses "Suspend" and sees nothing happen otherwise has
+    no way to tell a rejected press from a lost one.
+    """
+    if not isinstance(name, str) or name not in ACTIONS:
+        return 400, {"error": "unsupported action"}
+    try:
+        subprocess.run(ACTIONS[name], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=3, check=True)
+    except subprocess.CalledProcessError:
+        return 502, {"error": "command rejected"}
+    except subprocess.TimeoutExpired:
+        # No retry: a suspend that answers late is a suspend that happened.
+        return 504, {"error": "command result unknown; do not retry"}
+    except OSError:
+        return 503, {"error": "command unavailable"}
+    return 200, {"ok": True}
+
+
+def make_handler(token):
+    """The request handler for one token."""
+
+    class Handler(BaseHTTPRequestHandler):
+        # The log of BaseHTTPRequestHandler goes to stderr, which is the
+        # journal here. One line for every poll is one line every three
+        # seconds, and it buries everything else.
+        def log_message(self, fmt, *args):
+            pass
+
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(5)
+
+        def reply(self, code, obj):
+            body = json.dumps(obj, separators=(",", ":")).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def authorized(self):
+            given = self.headers.get("X-Panel-Token", "")
+            return hmac.compare_digest(given.encode(), token.encode())
+
+        def do_GET(self):
+            # The check comes before the path, so a stranger cannot learn
+            # which paths exist by reading the codes that come back.
+            if not self.authorized():
+                return self.reply(401, {"error": "unauthorized"})
+            if self.path != "/v1/status":
+                return self.reply(404, {"error": "not found"})
+            self.reply(200, status())
+
+        def do_POST(self):
+            if not self.authorized():
+                return self.reply(401, {"error": "unauthorized"})
+            if self.path != "/v1/action":
+                return self.reply(404, {"error": "not found"})
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 1 <= length <= BODY_LIMIT:
+                    raise ValueError
+                asked = json.loads(self.rfile.read(length))
+                name = asked["action"]
+            except (ValueError, KeyError, TypeError):
+                return self.reply(400, {"error": "invalid request"})
+            self.reply(*press(name))
+
+    return Handler
+
+
+def read_token(path):
+    """The secret from its file, or a message that says what to do.
+
+    A missing file is the ordinary state before the first install, so it
+    gives a sentence and not a traceback in the journal.
+    """
+    try:
+        token = Path(path).read_text().strip()
+    except OSError as exc:
+        raise SystemExit("cannot read %s: %s\n"
+                         "Install the companion module to write one."
+                         % (path, exc))
+    if len(token) < TOKEN_MINIMUM:
+        raise SystemExit("the token in %s is shorter than %d characters"
+                         % (path, TOKEN_MINIMUM))
+    return token
+
+
+def serve(host="0.0.0.0", port=PORT, home=None):
+    """Answers until the service stops."""
+    token = read_token(token_path(home))
+    ThreadingHTTPServer((host, port), make_handler(token)).serve_forever()

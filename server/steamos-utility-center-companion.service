@@ -1,0 +1,25 @@
+[Unit]
+# A *user* unit, and that is the whole security design of this module.
+#
+# The panel presses Suspend, Reboot and the volume. Each one belongs to a
+# session: wpctl talks to the PipeWire of this user, and systemctl suspend
+# asks logind, which decides by who is at the machine. A service with no root
+# thus reaches exactly what the person at the keyboard reaches, and no more.
+# A root service with a network port would reach the whole machine.
+# Log: journalctl --user -u steamos-utility-center-companion -f
+Description=Answer the Smart 86 Box panel with status and presses
+# Ordering only, deliberately NOT PartOf=: the panel has to keep working
+# across a switch to Game Mode, and that takes the graphical session away.
+After=graphical-session.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@INSTALL_DIR@/steamos-utility-center-companion
+# The port stays taken for a moment after a restart, and the token file
+# arrives with the installation. Both are states that pass.
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -32,7 +32,12 @@ HWMON_ROOT = "/sys/class/hwmon"
 #
 # The SSD, the wifi card and the battery give real temperatures, but not the
 # temperature that a person means.
-PREFERRED_CHIPS = ("k10temp", "amdgpu", "coretemp", "cpu_thermal", "acpitz")
+# zenpower replaces k10temp on a Ryzen, and a machine that loads it
+# usually has no k10temp left. Without the name here, such a machine
+# falls through to acpitz, which reads a point on the board and not the
+# processor. It came from the companion firmware, which knew it first.
+PREFERRED_CHIPS = ("k10temp", "zenpower", "amdgpu", "coretemp",
+                   "cpu_thermal", "acpitz")
 
 # In a chip, the sensor for the full package. AMD drives its own fan curve
 # from Tctl. On amdgpu, edge is the die.

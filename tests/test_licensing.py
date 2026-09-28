@@ -21,7 +21,10 @@ LICENCE = "GPL-3.0-or-later"
 # The files of this project. These are the suffixes, and also the programs
 # with no language in their name. A script with the name
 # steamos-utility-center is source code.
-SUFFIXES = (".py", ".sh", ".cpp", ".h")
+# .c arrived with firmware/companion, which is this project's code and
+# not a carried one. Without the suffix here its files were the only
+# source in the tree that no header sweep reached.
+SUFFIXES = (".py", ".sh", ".c", ".cpp", ".h")
 SCRIPTS = ("server/steamos-utility-center", "gui/steamos-utility-center-panel")
 
 # Code under the licence of another project. This project cannot change that

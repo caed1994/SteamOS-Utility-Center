@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 caed1994
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""Answer the Smart 86 Box panel on the network.
+
+Started in the session of the desktop user by
+steamos-utility-center-companion.service. It runs until the session ends.
+
+    steamos-utility-center-companion              answer on every interface
+    steamos-utility-center-companion --host IP    answer on one interface
+    steamos-utility-center-companion --port N     a different port
+
+The work is in the module, so that a test reaches each part of it without a
+socket. See server/steamos_utility_center/companion.py.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from steamos_utility_center import companion                        # noqa: E402
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # Every interface by default. The panel is on the wireless network and
+    # this machine is on the cable, so one address is the wrong guess more
+    # often than it is the right one. --host narrows it where that matters.
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=companion.PORT)
+    args = parser.parse_args(argv)
+    companion.serve(host=args.host, port=args.port)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
