@@ -11,6 +11,7 @@
 #include "esp_lvgl_port.h"
 #include "esp_memory_utils.h"
 #include "driver/ledc.h"
+#include "driver/gpio.h"
 
 static lv_display_t *panel_screen;
 static lv_indev_t *panel_input;
@@ -66,24 +67,93 @@ lv_display_t *panel_display_start(void)
     return screen;
 }
 
+/* The backlight of this board, and why turning it off needs more than the
+ * board support offers.
+ *
+ * Read out of the board support by the build, and printed by the step in
+ * .github/workflows/companion-firmware.yml that says what it does:
+ *
+ *     .gpio_num        = GPIO_NUM_4
+ *     .duty_resolution = LEDC_TIMER_10_BIT     full scale is 1024
+ *     .freq_hz         = 5000
+ *     bsp_display_brightness_set(p):
+ *         duty = 1023 * (100 - p) / 100
+ *
+ * The input is inverted, so a LOW is light. At p=0 the duty is 1023 of
+ * 1024, which leaves one LOW slot in every period: an enable pulse of
+ * about 200 ns, five thousand times a second. The boost converter behind
+ * the LEDs takes that as a request to start, cannot reach regulation on
+ * it, shuts down and tries again. On the board that reads as a display
+ * that swings between dark and dim for as long as it is asleep.
+ *
+ * bsp_display_backlight_off() is brightness_set(0), so the board support
+ * has no way to stop this. The version before this one called ledc_stop at
+ * an idle HIGH, and on the board the swinging stayed.
+ *
+ * So the pin leaves the LEDC matrix altogether while the panel sleeps, and
+ * is held HIGH as a plain output. Whatever the reason ledc_stop was not
+ * enough, the LEDC hardware is no longer connected to the pin and can put
+ * no pulse on it. Waking gives the pin back to LEDC and sets the
+ * brightness again. */
+#define BACKLIGHT_PIN BSP_LCD_BACKLIGHT
+#define BACKLIGHT_OFF_LEVEL 1       /* inverted: HIGH is dark */
+#define BACKLIGHT_CHANNEL CONFIG_BSP_DISPLAY_BRIGHTNESS_LEDC_CH
+#define BACKLIGHT_TIMER LEDC_TIMER_1
+
+static void backlight_off(void)
+{
+    /* Idle HIGH first, while the pin is still driven by LEDC, so it never
+     * floats between the two owners. */
+    ledc_stop(LEDC_LOW_SPEED_MODE,BACKLIGHT_CHANNEL,BACKLIGHT_OFF_LEVEL);
+    gpio_set_level(BACKLIGHT_PIN,BACKLIGHT_OFF_LEVEL);
+    /* And out of the matrix. gpio_config leaves a pull-up, which on an
+     * inverted input pulls towards dark and not towards light. */
+    gpio_config_t plain={
+        .pin_bit_mask=1ULL<<BACKLIGHT_PIN,
+        .mode=GPIO_MODE_OUTPUT,
+        .pull_up_en=GPIO_PULLUP_ENABLE,
+        .pull_down_en=GPIO_PULLDOWN_DISABLE,
+        .intr_type=GPIO_INTR_DISABLE,
+    };
+    gpio_config(&plain);
+    gpio_set_level(BACKLIGHT_PIN,BACKLIGHT_OFF_LEVEL);
+}
+
+static esp_err_t backlight_on(int brightness)
+{
+    /* The channel as the board support made it, so the pin goes back to
+     * LEDC with the timer and the resolution it had. */
+    const ledc_channel_config_t channel={
+        .gpio_num=BACKLIGHT_PIN,
+        .speed_mode=LEDC_LOW_SPEED_MODE,
+        .channel=BACKLIGHT_CHANNEL,
+        .intr_type=LEDC_INTR_DISABLE,
+        .timer_sel=BACKLIGHT_TIMER,
+        .duty=0,
+        .hpoint=0,
+    };
+    esp_err_t err=ledc_channel_config(&channel);
+    if(err!=ESP_OK)return err;
+    return bsp_display_brightness_set(brightness);
+}
+
 esp_err_t panel_display_standby(bool sleep,int brightness)
 {
     if(!panel_screen || !panel_input)return ESP_ERR_INVALID_STATE;
     if(sleep==is_asleep)return ESP_OK;
     if(sleep){
-        /* The 4B backlight input is inverted. BSP brightness(0) produces
-         * duty=1023 at 10-bit resolution, leaving one LOW slot per period.
-         * Stop PWM at constant HIGH instead: no residual enable pulses.
-         * BSP brightness_set() calls ledc_update_duty(), re-enabling PWM on wake. */
-        esp_err_t err=ledc_stop(LEDC_LOW_SPEED_MODE,CONFIG_BSP_DISPLAY_BRIGHTNESS_LEDC_CH,1);
-        if(err!=ESP_OK)return err;
+        /* The drawing stops before the light does. The backlight fades over
+         * some milliseconds, and a half-drawn frame during that fade is
+         * visible. */
         panel_ui_sleep(panel_screen,panel_input,true);
-        ESP_LOGI("panel_display","Backlight OFF: PWM stopped, idle HIGH");
+        backlight_off();
+        ESP_LOGI("panel_display","Backlight OFF: pin %d held high, off the LEDC matrix",
+                 (int)BACKLIGHT_PIN);
     }else{
         panel_ui_sleep(panel_screen,panel_input,false);
-        esp_err_t err=bsp_display_brightness_set(brightness);
+        esp_err_t err=backlight_on(brightness);
         if(err!=ESP_OK){
-            ledc_stop(LEDC_LOW_SPEED_MODE,CONFIG_BSP_DISPLAY_BRIGHTNESS_LEDC_CH,1);
+            backlight_off();
             panel_ui_sleep(panel_screen,panel_input,true);
             return err;
         }
