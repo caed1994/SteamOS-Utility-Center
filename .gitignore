@@ -10,3 +10,14 @@ firmware/led-client/.vscode/
 
 # Saved settings profiles from the control panel
 profiles/
+
+# ESP-IDF build output for the wall panel's firmware.
+#
+# Not in the repository, and not ignored by accident: it is 1.5 MB that goes
+# out of date at the first change under firmware/companion. The installer
+# still carries it to the toolbox copy, because copy_toolbox lays the working
+# tree over the clone. So a build here reaches the flash button on the page.
+firmware/companion/build/
+firmware/companion/sdkconfig
+firmware/companion/sdkconfig.old
+firmware/companion/managed_components/
