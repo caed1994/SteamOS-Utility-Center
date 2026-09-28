@@ -1417,13 +1417,13 @@ class PanelSettingsTest(unittest.TestCase):
         # The Nanoleaf board sits under the bar: it is the second thing this
         # program lights, and it is not a setting of the machine.
         self.assertEqual([entry[0] for entry in sections],
-                         ["strip", "pegboard", "power", "cec", "keyboard",
+                         ["strip", "pegboard", "power", "cec", "companion", "keyboard",
                           "status", "app"])
         # "System" and no longer "Keyboard Layout". The drives are on that
         # page as well now, and both are settings of the machine.
         self.assertEqual([entry[1] for entry in sections],
                          ["LED Strip", "Nanoleaf", "CPU & GPU power",
-                          "HDMI CEC Mods", "System", "Status",
+                          "HDMI CEC Mods", "Wall Panel", "System", "Status",
                           "App Settings"])
         self.assertEqual(ast.literal_eval(assigned["ABOUT"])[0], "about")
         # Three fields and not four. Each entry carried a subtitle, and they

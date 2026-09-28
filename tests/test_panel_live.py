@@ -5699,3 +5699,160 @@ class ModulePageTest(unittest.TestCase):
         panel = self._panel([])
         panel.section = "keyboard"
         self.assertTrue(panel._has_settings())
+
+
+class CompanionPageTest(unittest.TestCase):
+    """The Wall Panel page, in a real window.
+
+    Nothing on this page writes a setting. It reports three things that live
+    outside this window, and it has one button that writes to hardware. That
+    button is why the tests below exist: a flash that starts with no image,
+    or without being asked for, leaves a board that does not start.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.panel_module = _panel_module()
+
+    def _panel(self):
+        was = ledpanel.modules_here
+        ledpanel.modules_here = lambda home=None: (modules.COMPANION,)
+        self.addCleanup(setattr, ledpanel, "modules_here", was)
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        panel = self.panel_module.Panel(root)
+        root.update_idletasks()
+        panel._open_section("companion")
+        root.update_idletasks()
+        self.ran = []
+        panel.runner.start = lambda command, done=None: self.ran.append(command)
+        return panel
+
+    def _with_image(self, where="/tmp/companion-build"):
+        was = ledpanel.companion_image
+        ledpanel.companion_image = lambda source_dir: where
+        self.addCleanup(setattr, ledpanel, "companion_image", was)
+
+    def _answer(self, yes):
+        was = dialogs.Dialog
+        holder = type("Asked", (), {"answer": yes})
+
+        def stand_in(*args, **kwargs):
+            self.asked = (args, kwargs)
+            return holder()
+
+        dialogs.Dialog = stand_in
+        self.addCleanup(setattr, dialogs, "Dialog", was)
+
+    def test_the_page_is_there_and_named(self):
+        panel = self._panel()
+        self.assertEqual(str(panel.section_title.cget("text")), "Wall Panel")
+
+    def test_with_no_image_the_button_runs_nothing(self):
+        """The one that matters. A flash from an incomplete build leaves a
+        board that does not start, and the way back is the BOOT button."""
+        panel = self._panel()
+        was = ledpanel.companion_image
+        ledpanel.companion_image = lambda source_dir: ""
+        self.addCleanup(setattr, ledpanel, "companion_image", was)
+        # The dialog is answered even though this test expects no dialog.
+        # Without it, a check that stops working does not fail this test: it
+        # opens the real modal window and wait_window never returns, and the
+        # whole suite hangs until somebody kills it. Measured.
+        self._answer(True)
+        said = []
+        panel._say = lambda title, text, **kw: said.append(text)
+        panel._flash_companion()
+        self.assertEqual(self.ran, [])
+        self.assertTrue(said and "idf.py" in said[0].lower()
+                        or said and "build" in said[0].lower())
+
+    def test_a_flash_asks_first_and_stops_on_no(self):
+        panel = self._panel()
+        self._with_image()
+        self._answer(False)
+        panel._flash_companion()
+        self.assertEqual(self.ran, [])
+
+    def test_a_flash_that_is_confirmed_runs_the_script(self):
+        panel = self._panel()
+        self._with_image()
+        self._answer(True)
+        panel.companion_port.delete(0, "end")
+        panel.companion_port.insert(0, "/dev/ttyUSB7")
+        panel._flash_companion()
+        self.assertEqual(len(self.ran), 1)
+        self.assertTrue(self.ran[0][0].endswith("scripts/flash-companion.sh"),
+                        self.ran[0])
+        self.assertEqual(self.ran[0][-1], "/dev/ttyUSB7")
+
+    def test_the_flash_needs_no_password(self):
+        """esptool belongs to the home directory of the person, and a copy
+        of it owned by root stops every later run they make."""
+        panel = self._panel()
+        self._with_image()
+        self._answer(True)
+        panel._flash_companion()
+        self.assertNotIn("pkexec", self.ran[0])
+        self.assertNotIn("sudo", self.ran[0])
+
+    def test_an_empty_port_falls_back_rather_than_flashing_nothing(self):
+        panel = self._panel()
+        self._with_image()
+        self._answer(True)
+        panel.companion_port.delete(0, "end")
+        panel._flash_companion()
+        self.assertEqual(self.ran[0][-1],
+                         self.panel_module.page_companion.DEFAULT_BOARD_PORT)
+
+    def test_the_secret_stays_hidden_until_somebody_asks(self):
+        panel = self._panel()
+        was = ledpanel.companion_token
+        ledpanel.companion_token = lambda home=None: "s" * 43
+        self.addCleanup(setattr, ledpanel, "companion_token", was)
+        panel.companion_secret.configure(text=panel._companion_hidden())
+        self.assertNotIn("s" * 43, str(panel.companion_secret.cget("text")))
+        panel._show_companion_token()
+        self.assertEqual(str(panel.companion_secret.cget("text")), "s" * 43)
+        panel._show_companion_token()
+        self.assertNotIn("s" * 43, str(panel.companion_secret.cget("text")))
+
+    def test_the_page_writes_no_secret(self):
+        """It is read here and written by the installer, one time. A new one
+        is a panel on a wall that stops with nothing on its screen."""
+        with open(os.path.join(HERE, "..", "gui", "page_companion.py")) as fh:
+            text = fh.read()
+        for word in ("token_urlsafe", "secrets.", "open(", "write("):
+            self.assertNotIn(word, text, word)
+
+    def test_a_change_of_theme_builds_this_page_again(self):
+        """Reported by AppearanceTest, and a real fault of this page.
+
+        A rebuild makes the window again. The labels of the old window
+        stayed on self, so getattr found one and configure failed on a widget
+        that Tk destroyed. The section list after this page then never got
+        built, and every later test lost its sections.
+        """
+        panel = self._panel()
+        panel.rebuild()
+        panel.root.update_idletasks()
+        self.assertIn("companion", panel._section_pages)
+        self.assertIn("app", panel._section_pages,
+                      "the rebuild stopped at this page")
+        panel._open_section("companion")
+        self.assertTrue(panel.companion_state.winfo_exists())
+
+    def test_a_late_answer_after_a_rebuild_writes_nothing(self):
+        """The runner can come back after a change of theme."""
+        panel = self._panel()
+        old = panel.companion_state
+        panel.rebuild()
+        panel.root.update_idletasks()
+        panel.companion_state = old         # the label of the old window
+        panel._reread_companion()           # and no TclError from it
+
+    def test_the_address_card_names_the_port_the_service_answers_on(self):
+        panel = self._panel()
+        said = str(panel.companion_where.cget("text"))
+        self.assertTrue(said.startswith("http://") or "no address" in said,
+                        said)

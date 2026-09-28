@@ -470,7 +470,7 @@ class GpuPageTest(unittest.TestCase):
 
     def test_the_width_it_shares_went_to_panelbase(self):
         """BRANCH_WIDTH was the name, and two of its three readers are not a
-        branch. Two pages read it now, so it is a measurement.
+        branch. Three pages read it now, so it is a measurement.
 
         The third reader was the update card of the window, which has since
         moved to gui/page_about.py. So the test names the readers rather
@@ -500,7 +500,9 @@ class GpuPageTest(unittest.TestCase):
             if "ROW_FIELD_WIDTH" in named and name != "panelbase.py":
                 new.append(name)
         self.assertEqual(old, [], "these still name the old width")
-        self.assertEqual(sorted(new), ["page_about.py", "page_gpu.py"])
+        self.assertEqual(sorted(new), ["page_about.py",
+                                       "page_companion.py",
+                                       "page_gpu.py"])
 
 
 class DialogModuleTest(unittest.TestCase):

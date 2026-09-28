@@ -18,6 +18,7 @@ import subprocess
 
 from steamos_utility_center import cec as cec_module
 from steamos_utility_center import checkup as checkup_module
+from steamos_utility_center import companion as companion_module
 from steamos_utility_center import ctl as ctl_module
 from steamos_utility_center import config as config_module
 from steamos_utility_center import lact as lact_module
@@ -46,6 +47,7 @@ MODULE_NAME = "leds-valve-shim"
 SERVICE = "steamos-utility-center.service"
 WATCHER = "steamos-utility-center-achievements.service"
 PHONE_BRIDGE = "steamos-utility-center-phone.service"
+COMPANION_SERVICE = "steamos-utility-center-companion.service"
 
 # The time to wait for an answer from KDE Connect. After this time, the panel
 # reports no answer. This time is shorter than the wait of the service,
@@ -1784,6 +1786,78 @@ def module_command(source_dir, name, remove=False, purge=False):
         # the wrong one.
         command.append("--purge")
     return command
+
+
+# -- the panel on the wall ---------------------------------------------------
+#
+# The image is not in this repository. It is 1.5 MB of build output that goes
+# out of date at the first change under firmware/companion, and a stale binary
+# beside the source it no longer matches is worse than none. So the page asks
+# whether a build is there and says what to do when it is not.
+
+COMPANION_BUILD = os.path.join("firmware", "companion", "build")
+
+# The three parts of an image, at the names an ESP-IDF build leaves them.
+COMPANION_PARTS = (os.path.join("bootloader", "bootloader.bin"),
+                   os.path.join("partition_table", "partition-table.bin"),
+                   "steamos_companion.bin")
+
+
+def companion_image(source_dir):
+    """The directory that holds a complete image, or "" for none.
+
+    All three parts or nothing. A directory with one of them is a build that
+    stopped, and a flash from it leaves a board that does not start and a
+    person holding the BOOT button.
+    """
+    where = os.path.join(source_dir, COMPANION_BUILD)
+    if all(os.path.isfile(os.path.join(where, part))
+           for part in COMPANION_PARTS):
+        return where
+    return ""
+
+
+def flash_companion_command(source_dir, port):
+    """Returns the command that writes the firmware to the panel's board.
+
+    No pkexec, unlike the LED bar's flash. Nothing holds this port, esptool
+    belongs in the home directory of the person, and a copy of it owned by
+    root stops every later run they make. See scripts/flash-companion.sh,
+    which refuses to run as root for that reason.
+    """
+    return [os.path.join(source_dir, "scripts", "flash-companion.sh"), port]
+
+
+def companion_running():
+    """Whether the panel's service answers in this session."""
+    return Probe().unit_active(COMPANION_SERVICE, user=True)
+
+
+def restart_companion_command():
+    """Returns the command that starts the panel's service again.
+
+    In the session and with no root, as the service itself is.
+    """
+    return ["systemctl", "--user", "restart", COMPANION_SERVICE]
+
+
+def companion_token(home=None):
+    """The secret this machine shares with its panel, or "" for none.
+
+    Read and never written here. The installer writes it one time, because a
+    new secret is a panel on a wall that stops with nothing on the screen to
+    say why.
+    """
+    try:
+        with open(companion_module.token_path(home)) as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def companion_addresses():
+    """Where the panel reaches this machine."""
+    return companion_module.addresses()
 
 
 def module_says(name):

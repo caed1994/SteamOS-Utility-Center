@@ -75,6 +75,7 @@ import dialogs                                              # noqa: E402
 
 import page_about                                           # noqa: E402
 import page_cec                                             # noqa: E402
+import page_companion                                       # noqa: E402
 import page_modules                                         # noqa: E402
 import page_gpu                                             # noqa: E402
 import page_status                                          # noqa: E402
@@ -484,6 +485,10 @@ SECTIONS = (
     ("pegboard", "Nanoleaf", "strip"),
     ("power", "CPU & GPU power", "bolt"),
     ("cec", "HDMI CEC Mods", "screen"),
+    # The panel on the wall. It is a device of this machine like the two
+    # above, and it is not a page of settings: everything on it is a state
+    # of the machine or a step a person takes one time.
+    ("companion", "Wall Panel", "screen"),
     # It was "Keyboard Layout". The drives are here too now, and both are
     # settings of the machine rather than of the bar. The key stays "keyboard",
     # because the code refers to a section by that key and a rename of it is a
@@ -1619,7 +1624,7 @@ class SidebarEntry:
 class Panel(page_status.StatusPage, page_system.SystemPage,
             page_network.NetworkPage, page_gpu.GpuPage,
             page_modules.ModulePage, page_about.AboutPage,
-            page_cec.CecPage):
+            page_cec.CecPage, page_companion.CompanionPage):
     def __init__(self, root):
         self.root = root
         root.title("SteamOS Utility Center")
@@ -1837,6 +1842,13 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
                                       b(where, t, n))
             elif key == "cec":
                 page = self._page(self.sections, self._build_cec)
+            elif key == "companion":
+                # Behind the offer to install, as the modules with a settings
+                # table are. Nothing on this page works without the service.
+                page = self._page(
+                    self.sections,
+                    lambda where: self._module_page(
+                        where, modules.COMPANION, self._build_companion))
             elif key in SOON:
                 page = self._page(self.sections,
                                   lambda where, k=key: self._build_soon(where,
@@ -2035,6 +2047,10 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
         self._say_headline()
         if key == "cec":
             self._catch_up_cec()
+        elif key == "companion":
+            # The service state and the build are both outside this window,
+            # so they are read when the page is opened and not once at start.
+            self._reread_companion()
         elif key == "power":
             self._catch_up_gpu()
         # After this page has a geometry, and not before. See

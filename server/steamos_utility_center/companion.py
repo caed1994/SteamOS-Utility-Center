@@ -127,6 +127,17 @@ def token_path(home=None):
                         TOKEN_FILE)
 
 
+def addresses():
+    """The addresses of this machine on the network, as the panel needs them.
+
+    The form on the phone asks for http://<address>:8765, and reading it off
+    this page beats reading it off a router. hostname -I gives every address
+    this machine answers on, and the first is the one to try.
+    """
+    said = run("hostname", "-I")
+    return tuple(one for one in said.split() if one and ":" not in one)
+
+
 def run(*args):
     """One command, and its output, or nothing at all when it fails.
 
