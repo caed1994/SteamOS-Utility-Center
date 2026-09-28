@@ -83,6 +83,21 @@ jobs:
             "$bsp" 2>/dev/null || echo "(no such define)"
           echo "===== every LEDC call in the board support ====="
           grep -rn 'ledc_' "$bsp" --include='*.c' 2>/dev/null || true
+          echo "===== what else can reach the panel: rails and expander ====="
+          # Holding the backlight pin high did not stop the swinging, so
+          # something other than LEDC reaches those LEDs. These are the two
+          # candidates on this board: the power chip that feeds the rails,
+          # and the expander that carries the reset and enable lines.
+          grep -rnE 'axp|AXP|power_init|dcdc|DCDC|aldo|ALDO|bldo|BLDO' \
+            "$bsp" --include='*.c' --include='*.h' 2>/dev/null | head -40 \
+            || echo "(nothing matched)"
+          echo "===== expander pins the board support names ====="
+          grep -rnE 'IO_EXPANDER_PIN_NUM|EXIO|tca95|TCA95' \
+            "$bsp" --include='*.c' --include='*.h' 2>/dev/null | head -40 \
+            || echo "(nothing matched)"
+          echo "===== every pin the board support defines ====="
+          grep -rnE '#define +BSP_[A-Z0-9_]+ +\(?GPIO_NUM' \
+            "$bsp" --include='*.h' 2>/dev/null || true
 
       - name: Put the image where the panel looks for it
         shell: bash

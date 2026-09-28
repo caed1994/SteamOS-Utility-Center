@@ -117,6 +117,14 @@ static void backlight_off(void)
     };
     gpio_config(&plain);
     gpio_set_level(BACKLIGHT_PIN,BACKLIGHT_OFF_LEVEL);
+    /* Read the pin back, so a report of "it still flickers" arrives with
+     * the one number that says whether this worked. A level that is not
+     * BACKLIGHT_OFF_LEVEL means the pin is not held and the fault is here.
+     * The same level means the LEDs are lit from somewhere this file does
+     * not reach, and the next place to look is the power chip. */
+    ESP_LOGW("panel_display","backlight pin %d reads %d, wanted %d",
+             (int)BACKLIGHT_PIN,gpio_get_level(BACKLIGHT_PIN),
+             BACKLIGHT_OFF_LEVEL);
 }
 
 static esp_err_t backlight_on(int brightness)
