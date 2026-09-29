@@ -11,8 +11,6 @@
 #include "esp_lvgl_port.h"
 #include "esp_memory_utils.h"
 #include "driver/ledc.h"
-#include "driver/gpio.h"
-#include "esp_rom_sys.h"
 
 static lv_display_t *panel_screen;
 static lv_indev_t *panel_input;
@@ -109,31 +107,6 @@ lv_display_t *panel_display_start(void)
 #define BACKLIGHT_PIN BSP_LCD_BACKLIGHT
 #define BACKLIGHT_CHANNEL CONFIG_BSP_DISPLAY_BRIGHTNESS_LEDC_CH
 
-/* How the pin is measured, and why a single read is not a measurement.
- *
- * The backlight runs at 5 kHz, so one read of the pin lands at one point of
- * a 200 us period and says nothing about the rest of it. A duty of 1023 of
- * 1024 reads high on 1023 tries out of 1024, which is indistinguishable
- * from a pin that is held high, and that one slot in a thousand is the
- * whole fault here.
- *
- * So the pin is read many times at a step that does not divide the period,
- * which walks the phase across it. Constant high gives every sample, a
- * constant low gives none, and anything between the two is a pin that
- * still moves. Approximately seven milliseconds in total, once per sleep. */
-#define BACKLIGHT_SAMPLES 240
-#define BACKLIGHT_SAMPLE_STEP_US 37
-
-static int backlight_high_reads(void)
-{
-    int high=0;
-    for(int i=0;i<BACKLIGHT_SAMPLES;i++){
-        if(gpio_get_level(BACKLIGHT_PIN))high++;
-        esp_rom_delay_us(BACKLIGHT_SAMPLE_STEP_US);
-    }
-    return high;
-}
-
 /* What a sleeping panel looks like on this board, and why it is not dark.
  *
  * Three measurements decide it, and each one came off the board:
@@ -163,20 +136,24 @@ static int backlight_high_reads(void)
 
 static void backlight_off(void)
 {
+    /* One call, and nothing that touches the pin.
+     *
+     * The version before this read the pin back to prove what it did, and
+     * to read a pin its input buffer has to be on, so it called
+     * gpio_set_direction. That call routes the pad to the simple GPIO
+     * output and takes it away from LEDC. After one sleep the backlight
+     * was on no PWM at all: the brightness slider moved nothing and the
+     * dimming did nothing, until the next restart put the board support's
+     * channel back.
+     *
+     * The measurement had its use and it is over. It answered which of
+     * ledc_stop, a pad of our own and a full duty holds the pin, and the
+     * answer was all three and none of them dark. Keeping it cost the one
+     * thing on this page that still worked. */
     esp_err_t err=bsp_display_brightness_set(BACKLIGHT_SLEEP_PERCENT);
-    /* The input buffer, so the reads below are reads. ledc_set_pin leaves
-     * the pad output only, and gpio_get_level on such a pad gives 0 for
-     * every state of it. The routing is untouched by this. */
-    gpio_set_direction(BACKLIGHT_PIN,GPIO_MODE_INPUT_OUTPUT);
-    int high=backlight_high_reads();
-    /* Between none and all of the reads is a pin that carries a real PWM,
-     * which is the whole point: a converter with something to regulate is
-     * a converter that holds still. All of them, or none, is the state
-     * that swings. */
-    ESP_LOGW("panel_display",
-             "backlight at %d%%: pin %d high on %d of %d reads, set=%s",
-             BACKLIGHT_SLEEP_PERCENT,(int)BACKLIGHT_PIN,high,
-             BACKLIGHT_SAMPLES,esp_err_to_name(err));
+    if(err!=ESP_OK)
+        ESP_LOGW("panel_display","backlight to %d%% refused: %s",
+                 BACKLIGHT_SLEEP_PERCENT,esp_err_to_name(err));
 }
 
 static esp_err_t backlight_on(int brightness)

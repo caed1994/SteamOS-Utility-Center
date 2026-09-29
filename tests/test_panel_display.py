@@ -34,6 +34,27 @@ WORKFLOW = os.path.join(REPO, ".github", "workflows",
                         "companion-firmware.yml")
 
 
+def without_comments(text):
+    """The C with its comments taken out.
+
+    Every rule below reads calls. This file explains itself at length, and
+    three checks in this project gave their answer from a word in a comment
+    rather than from the code beside it.
+    """
+    out, i, n = [], 0, len(text)
+    while i < n:
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
 class BacklightTest(unittest.TestCase):
     def source(self, name=None):
         with open(name or os.path.join(FIRMWARE, "panel_display.c")) as handle:
@@ -50,32 +71,30 @@ class BacklightTest(unittest.TestCase):
         self.assertTrue(found, name)
         return int(found.group(1))
 
-    def test_the_pin_is_read_more_than_one_time(self):
-        """A single read lands at one point of a 200 us period. A duty of
-        1023 of 1024 reads high on all but one try in a thousand, which is
-        the fault here and looks exactly like a pin that is held."""
-        self.assertGreaterEqual(self.constant("BACKLIGHT_SAMPLES"), 100)
-        self.assertIn("backlight_high_reads", self.source())
+    def test_nothing_here_touches_the_backlight_pin(self):
+        """The fault this rule exists for.
 
-    def test_the_step_does_not_divide_the_period(self):
-        """Or every sample lands at the same point of it and the walk across
-        the phase never happens. The period is 1/5000 s, which is 200 us."""
-        step = self.constant("BACKLIGHT_SAMPLE_STEP_US")
-        self.assertNotEqual(200 % step, 0, "the step divides the period")
-        self.assertLess(step, 200, "a step past the period reads one point")
+        A read of the pin needs its input buffer on, so the version that
+        measured it called gpio_set_direction. That call routes the pad to
+        the simple GPIO output and takes it away from LEDC, and after one
+        sleep the backlight was on no PWM at all: the brightness slider
+        moved nothing and the dimming did nothing.
 
-    def test_the_samples_cover_more_than_one_period(self):
-        samples = self.constant("BACKLIGHT_SAMPLES")
-        step = self.constant("BACKLIGHT_SAMPLE_STEP_US")
-        self.assertGreater(samples * step, 200 * 5, "fewer than five periods")
+        The board support owns that pin. This file asks it for a
+        brightness and touches nothing else.
+        """
+        code = without_comments(self.source())
+        found = sorted(set(re.findall(r"\b(gpio_\w+|esp_rom_gpio_\w+|"
+                                      r"ledc_\w+)\s*\(", code)))
+        self.assertEqual(found, [], "these take the pin away from the board "
+                                    "support that owns it")
 
-    def test_the_reads_come_from_a_pin_whose_input_is_on(self):
-        """GPIO_MODE_OUTPUT switches the input buffer off, so gpio_get_level
-        gave 0 for every state of the pad. The log then said the pin was not
-        held, and no read of it took place."""
-        text = self.source()
-        self.assertIn("GPIO_MODE_INPUT_OUTPUT", text)
-        self.assertNotIn("GPIO_MODE_OUTPUT", text)
+    def test_the_rule_above_reads_calls_and_not_comments(self):
+        """This file explains itself at length, and a rule a comment can
+        break is not a rule."""
+        self.assertIn("gpio_set_direction", self.source())
+        self.assertNotIn("gpio_set_direction",
+                         without_comments(self.source()))
 
     def test_sleep_dims_and_does_not_try_to_switch_off(self):
         """Measured on the board: the pin held low is full brightness, the
@@ -106,19 +125,12 @@ class BacklightTest(unittest.TestCase):
         body = self.part("static void backlight_off")
         self.assertIn("BACKLIGHT_SLEEP_PERCENT", body)
         self.assertIn("esp_err_to_name(err)", body)
-        self.assertIn("backlight_high_reads", body)
 
     def test_the_window_says_the_screen_dims_rather_than_goes_dark(self):
         """A wall that glows with no explanation is a fault report waiting
         to happen."""
         body = self.part("esp_err_t panel_display_standby")
         self.assertIn("as dark", body)
-
-    def test_the_measurement_stays(self):
-        """It is seven milliseconds once per sleep, and it is the one thing
-        in this file that the board agrees with."""
-        self.assertIn("backlight_high_reads", self.part(
-            "static void backlight_off"))
 
     def test_waking_needs_nothing_given_back(self):
         """The pin never leaves LEDC, so there is no pad to hand over and no
