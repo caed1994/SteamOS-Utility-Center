@@ -7,6 +7,7 @@
 #include "ui.h"
 #include "icons.h"
 #include "panel_text.h"
+#include "panel_ui_sleep.h"
 
 #define BG 0x0C1721
 #define CARD 0x111F2B
@@ -192,6 +193,9 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     // the language changes. Without it the new words are drawn over the old
     // ones. The pointers below are the ones that outlive a clean.
     lv_obj_clean(s);overlay=NULL;setup_screen=NULL;setup_text=NULL;
+    /* The black cover of a sleeping panel is a child of this screen,
+     * so the clean above took it. See panel_ui_sleep_reset. */
+    panel_ui_sleep_reset();
     lv_obj_remove_style_all(s);lv_obj_remove_flag(s,LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(s,lv_color_hex(BG),0);lv_obj_set_style_bg_opa(s,LV_OPA_COVER,0);
     lv_obj_set_style_text_color(s,lv_color_hex(TEXT),0);

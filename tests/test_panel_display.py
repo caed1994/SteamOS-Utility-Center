@@ -163,6 +163,93 @@ class BacklightTest(unittest.TestCase):
         self.assertIn("brightness_set", text)
 
 
+class SleepingScreenTest(unittest.TestCase):
+    """What a sleeping panel shows, since it cannot go dark.
+
+    Stopping the drawing keeps the last frame, and a dimmed page of buttons
+    at five percent is a panel that looks switched on. A black object over
+    the whole screen, painted before the drawing stops, is one that looks
+    switched off.
+    """
+
+    def source(self, name):
+        with open(os.path.join(FIRMWARE, name)) as handle:
+            return handle.read()
+
+    def sleeping(self):
+        text = without_comments(self.source("panel_ui_sleep.c"))
+        start = text.index("void panel_ui_sleep(")
+        body = text[start:]
+        return body[body.index("if(sleep){"):body.index("}else{")]
+
+    def test_the_cover_goes_on_before_the_drawing_stops(self):
+        """After the pause, nothing reaches the screen."""
+        body = self.sleeping()
+        self.assertLess(body.index("lv_refr_now"),
+                        body.index("lv_display_enable_invalidation"))
+
+    def test_the_cover_is_black_and_covers_everything(self):
+        text = without_comments(self.source("panel_ui_sleep.c"))
+        self.assertIn("lv_color_black()", text)
+        self.assertIn("LV_OPA_COVER", text)
+        self.assertIn("lv_display_get_horizontal_resolution", text)
+        self.assertIn("lv_display_get_vertical_resolution", text)
+
+    def test_it_is_made_one_time_and_kept(self):
+        """An allocation at each sleep is one on a path that has to work
+        when memory is short.
+
+        The guard and not the count of the calls. Counting "lv_obj_create("
+        passed a version with the guard taken out, because taking it out
+        changes how often the one call runs and not how often it is
+        written.
+        """
+        text = without_comments(self.source("panel_ui_sleep.c"))
+        start = text.index("cover_for")
+        body = text[start:text.index("\n}", start)]
+        guard = re.search(r"if\s*\(\s*cover\s*\)\s*return\s+cover\s*;",
+                          body)
+        self.assertTrue(guard, "nothing stops a second cover being made")
+        self.assertLess(guard.start(), body.index("lv_obj_create("))
+        self.assertIn("LV_OBJ_FLAG_HIDDEN", text)
+
+    def test_a_cleaned_screen_forgets_the_cover(self):
+        """A change of language cleans the screen, and the cover is a child
+        of it. Keeping the pointer is a use of a deleted object."""
+        self.assertIn("panel_ui_sleep_reset",
+                      without_comments(self.source("panel_ui_sleep.c")))
+        ui = without_comments(self.source("ui.c"))
+        self.assertIn("panel_ui_sleep_reset()", ui)
+        self.assertLess(ui.index("lv_obj_clean(s)"),
+                        ui.index("panel_ui_sleep_reset()"))
+
+    def test_the_check_that_runs_it_asks_about_the_cover(self):
+        with open(os.path.join(REPO, "firmware", "companion", "preview",
+                               "check_power.c")) as handle:
+            check = without_comments(handle.read())
+        self.assertIn("covered(screen)", check)
+        self.assertIn("assert(!covered(screen))", check)
+        self.assertIn("panel_ui_sleep_reset()", check)
+
+    def test_the_build_runs_those_checks(self):
+        """They link against the LVGL the firmware build downloads, so CI
+        is the one place that can build them. Nothing ran them before, and
+        two of them did not link."""
+        with open(WORKFLOW) as handle:
+            flow = handle.read()
+        for one in ("check_power", "check_idle", "check_navigation"):
+            self.assertIn("./preview-build/" + one, flow, one)
+
+    def test_the_preview_build_knows_what_ui_needs(self):
+        """ui.c calls into panel_text.c and panel_ui_sleep.c. A target that
+        links ui.c without them does not link at all."""
+        with open(os.path.join(REPO, "firmware", "companion", "preview",
+                               "CMakeLists.txt")) as handle:
+            cmake = handle.read()
+        for one in ("panel_text.c", "panel_ui_sleep.c"):
+            self.assertIn(one, cmake, one)
+
+
 class StandbyOrderTest(unittest.TestCase):
     """What a failed wake leaves behind.
 

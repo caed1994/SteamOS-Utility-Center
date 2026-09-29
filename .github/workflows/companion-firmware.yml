@@ -99,6 +99,27 @@ jobs:
           grep -rnE '#define +BSP_[A-Z0-9_]+ +\(?GPIO_NUM' \
             "$bsp" --include='*.h' 2>/dev/null || true
 
+      - name: Build and run the checks that need LVGL
+        # firmware/companion/preview holds three checks of the screen half,
+        # and nothing ran them. They link against the LVGL that the build
+        # above downloaded, so this is the one place that can.
+        #
+        # They were unbuildable when this step was written: ui.c had grown a
+        # call into panel_text.c and another into panel_ui_sleep.c, and
+        # neither was in the CMakeLists. Nothing noticed, because nothing
+        # built them.
+        shell: bash
+        run: |
+          set -euo pipefail
+          . "$IDF_PATH/export.sh"
+          cmake -S firmware/companion/preview -B preview-build \
+                -DCMAKE_BUILD_TYPE=Debug
+          cmake --build preview-build --target check_power check_idle \
+                check_navigation -j"$(nproc)"
+          ./preview-build/check_power
+          ./preview-build/check_idle
+          ./preview-build/check_navigation
+
       - name: Put the image where the panel looks for it
         shell: bash
         run: |

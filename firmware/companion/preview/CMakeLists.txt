@@ -7,18 +7,28 @@ set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
 add_subdirectory(../managed_components/lvgl__lvgl lvgl)
-add_executable(panel_preview preview.c ../main/ui.c ../main/icons.c)
+
+# What ui.c needs beside itself. It draws its words out of panel_text.c and
+# clears the sleeping cover through panel_ui_sleep.c, and a target that
+# links ui.c without them does not link at all. Both arrived after this
+# file was written and neither was added, which nothing noticed because
+# nothing built these. The job in
+# .github/workflows/companion-firmware.yml builds and runs them now.
+set(PANEL_UI_SOURCES ../main/ui.c ../main/icons.c ../main/panel_text.c
+                     ../main/panel_ui_sleep.c)
+add_executable(panel_preview preview.c ${PANEL_UI_SOURCES})
 target_include_directories(panel_preview PRIVATE ../main)
 target_link_libraries(panel_preview PRIVATE lvgl m)
-add_executable(check_navigation check_navigation.c ../main/ui.c ../main/icons.c)
+add_executable(check_navigation check_navigation.c ${PANEL_UI_SOURCES})
 target_include_directories(check_navigation PRIVATE ../main)
 target_link_libraries(check_navigation PRIVATE lvgl m)
 target_compile_options(check_navigation PRIVATE -UNDEBUG)
-add_executable(check_idle check_idle.c ../main/ui.c ../main/icons.c)
+add_executable(check_idle check_idle.c ${PANEL_UI_SOURCES})
 target_include_directories(check_idle PRIVATE ../main)
 target_link_libraries(check_idle PRIVATE lvgl m)
 target_compile_options(check_idle PRIVATE -UNDEBUG)
-add_executable(check_power check_power.c ../main/panel_key.c ../main/panel_ui_sleep.c)
+add_executable(check_power check_power.c ../main/panel_key.c
+                           ../main/panel_ui_sleep.c)
 target_include_directories(check_power PRIVATE ../main)
 target_link_libraries(check_power PRIVATE lvgl m)
 target_compile_options(check_power PRIVATE -UNDEBUG)
