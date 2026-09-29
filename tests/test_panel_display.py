@@ -39,71 +39,84 @@ class BacklightTest(unittest.TestCase):
         with open(name or os.path.join(FIRMWARE, "panel_display.c")) as handle:
             return handle.read()
 
-    def standby(self):
-        """The body of panel_display_standby, and nothing around it."""
+    def part(self, name):
+        """The body of one function of that file."""
         text = self.source()
-        start = text.index("esp_err_t panel_display_standby")
+        start = text.index(name)
         return text[start:text.index("\n}", start)]
 
-    def test_off_means_the_full_scale_and_not_one_below_it(self):
-        """The whole fault. The board support writes 1023 for off and full
-        scale at ten bits is 1024, so one LOW slot stays in every period."""
-        text = self.source()
-        self.assertIn("#define BACKLIGHT_DUTY_BITS 10", text)
-        self.assertIn("#define BACKLIGHT_FULL_DUTY (1 << BACKLIGHT_DUTY_BITS)",
-                      text)
-        start = text.index("static void backlight_off")
-        body = text[start:text.index("\n}", start)]
-        self.assertIn("ledc_set_duty", body)
-        self.assertIn("BACKLIGHT_FULL_DUTY", body)
-        self.assertIn("ledc_update_duty", body)
+    def constant(self, name):
+        found = re.search(r"#define %s (\d+)" % name, self.source())
+        self.assertTrue(found, name)
+        return int(found.group(1))
 
-    def test_the_duty_is_one_more_than_the_board_support_ever_writes(self):
-        """Arithmetic, so the two numbers cannot drift apart in a comment."""
-        text = self.source()
-        bits = int(re.search(r"#define BACKLIGHT_DUTY_BITS (\d+)",
-                             text).group(1))
-        self.assertEqual(1 << bits, 1024)
-        self.assertEqual((1 << bits) - 1, 1023)
+    def test_the_pin_is_read_more_than_one_time(self):
+        """A single read lands at one point of a 200 us period. A duty of
+        1023 of 1024 reads high on all but one try in a thousand, which is
+        the fault here and looks exactly like a pin that is held."""
+        self.assertGreaterEqual(self.constant("BACKLIGHT_SAMPLES"), 100)
+        self.assertIn("backlight_high_reads", self.source())
 
-    def test_the_pin_stays_with_the_driver_that_owns_it(self):
-        """Taking the pad away was tried on the board. It left the swinging,
-        and the next wake logged "GPIO 4 is not usable, maybe conflict with
-        others", because a pad a driver reserved does not come back
-        quietly."""
-        text = self.source()
-        self.assertNotIn("esp_rom_gpio_pad_select_gpio", text)
-        self.assertNotIn("gpio_config(", text)
+    def test_the_step_does_not_divide_the_period(self):
+        """Or every sample lands at the same point of it and the walk across
+        the phase never happens. The period is 1/5000 s, which is 200 us."""
+        step = self.constant("BACKLIGHT_SAMPLE_STEP_US")
+        self.assertNotEqual(200 % step, 0, "the step divides the period")
+        self.assertLess(step, 200, "a step past the period reads one point")
 
-    def test_the_read_back_comes_from_a_pin_whose_input_is_on(self):
+    def test_the_samples_cover_more_than_one_period(self):
+        samples = self.constant("BACKLIGHT_SAMPLES")
+        step = self.constant("BACKLIGHT_SAMPLE_STEP_US")
+        self.assertGreater(samples * step, 200 * 5, "fewer than five periods")
+
+    def test_the_reads_come_from_a_pin_whose_input_is_on(self):
         """GPIO_MODE_OUTPUT switches the input buffer off, so gpio_get_level
         gave 0 for every state of the pad. The log then said the pin was not
         held, and no read of it took place."""
         text = self.source()
         self.assertIn("GPIO_MODE_INPUT_OUTPUT", text)
-        self.assertNotIn("GPIO_MODE_OUTPUT,", text)
-        self.assertIn("gpio_get_level(BACKLIGHT_PIN)", text)
+        self.assertNotIn("GPIO_MODE_OUTPUT", text)
 
-    def test_the_log_says_what_it_set_and_whether_it_worked(self):
-        """A report of "it still flickers" has to arrive with the duty, the
-        result of setting it, and the level the pin reads."""
-        text = self.source()
-        start = text.index("static void backlight_off")
-        body = text[start:text.index("\n}", start)]
-        self.assertIn("esp_err_to_name(err)", body)
-        self.assertIn("gpio_get_level", body)
+    def test_the_two_ways_left_are_both_tried_and_both_measured(self):
+        """Full scale is out: 1024 wraps to 0 and the board reads a constant
+        low, which on an inverted input is full brightness."""
+        body = self.part("static void backlight_off")
+        self.assertIn("ledc_stop", body)
+        self.assertIn("gpio_reset_pin", body)
+        self.assertEqual(body.count("backlight_high_reads()"), 2)
+        self.assertLess(body.index("ledc_stop"), body.index("gpio_reset_pin"))
 
-    def test_waking_needs_nothing_given_back(self):
-        text = self.source()
-        start = text.index("static esp_err_t backlight_on")
-        body = text[start:text.index("\n}", start)]
-        self.assertIn("bsp_display_brightness_set(brightness)", body)
-        self.assertNotIn("ledc_channel_config", body)
+    def test_the_log_names_both_results_and_the_dark_level(self):
+        body = self.part("static void backlight_off")
+        self.assertIn("after_stop", body)
+        self.assertIn("after_gpio", body)
+        self.assertIn("BACKLIGHT_OFF_LEVEL", body)
+
+    def test_a_reset_pad_gets_its_direction_back(self):
+        """gpio_reset_pin leaves the pin an input, and an input drives
+        nothing."""
+        body = self.part("static void backlight_off")
+        after = body[body.index("gpio_reset_pin"):]
+        self.assertIn("gpio_set_direction", after)
+        self.assertLess(after.index("gpio_set_direction"),
+                        after.index("gpio_set_level"))
+
+    def test_waking_gives_the_pin_back_before_the_brightness_is_set(self):
+        """brightness_set writes a duty, and a duty reaches nothing while
+        the pad belongs to the GPIO matrix.
+
+        The call and not the name: "ledc_channel_config" is also the first
+        half of the type in the declaration above the call, so an earlier
+        version of this passed whichever order the two were in.
+        """
+        body = self.part("static esp_err_t backlight_on")
+        self.assertLess(body.index("ledc_channel_config(&channel)"),
+                        body.index("bsp_display_brightness_set(brightness)"))
 
     def test_the_drawing_stops_before_the_light_does(self):
         """The backlight fades over some milliseconds, and a half-drawn
         frame during that fade is visible."""
-        body = self.standby()
+        body = self.part("esp_err_t panel_display_standby")
         sleeping = body[body.index("if(sleep){"):body.index("}else{")]
         self.assertLess(sleeping.index("panel_ui_sleep"),
                         sleeping.index("backlight_off"))

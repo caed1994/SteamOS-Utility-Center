@@ -12,6 +12,7 @@
 #include "esp_memory_utils.h"
 #include "driver/ledc.h"
 #include "driver/gpio.h"
+#include "esp_rom_sys.h"
 
 static lv_display_t *panel_screen;
 static lv_indev_t *panel_input;
@@ -105,45 +106,86 @@ lv_display_t *panel_display_start(void)
 #define BACKLIGHT_DUTY_BITS 10
 #define BACKLIGHT_FULL_DUTY (1 << BACKLIGHT_DUTY_BITS)
 
+/* How the pin is measured, and why a single read is not a measurement.
+ *
+ * The backlight runs at 5 kHz, so one read of the pin lands at one point of
+ * a 200 us period and says nothing about the rest of it. A duty of 1023 of
+ * 1024 reads high on 1023 tries out of 1024, which is indistinguishable
+ * from a pin that is held high, and that one slot in a thousand is the
+ * whole fault here.
+ *
+ * So the pin is read many times at a step that does not divide the period,
+ * which walks the phase across it. Constant high gives every sample, a
+ * constant low gives none, and anything between the two is a pin that
+ * still moves. Approximately seven milliseconds in total, once per sleep. */
+#define BACKLIGHT_SAMPLES 240
+#define BACKLIGHT_SAMPLE_STEP_US 37
+
+static int backlight_high_reads(void)
+{
+    int high=0;
+    for(int i=0;i<BACKLIGHT_SAMPLES;i++){
+        if(gpio_get_level(BACKLIGHT_PIN))high++;
+        esp_rom_delay_us(BACKLIGHT_SAMPLE_STEP_US);
+    }
+    return high;
+}
+
 static void backlight_off(void)
 {
-    /* Full scale, and not ledc_stop and not a pad of our own.
+    /* Three ways of holding this pin have been tried on the board and the
+     * screen stayed lit for all three. Each time the reasoning was sound
+     * and the result was not measured, so this measures instead.
      *
-     * The board support writes 1023 for "off", and full scale at ten bits
-     * is 1024. That one count is the whole fault: it leaves one LOW slot in
-     * every period, which is an enable pulse of about 200 ns at five
-     * thousand a second, and the boost converter behind the LEDs takes it
-     * as a request to start. LEDC takes 2^resolution as a duty and holds
-     * the output steady at it, which is the pulse gone.
+     * What is already known, from the board and not from a guess:
      *
-     * Two other ways were tried on the board and neither worked. ledc_stop
-     * at an idle HIGH left the swinging. Taking the pad away from LEDC left
-     * it too, and the log then said "GPIO 4 is not usable, maybe conflict
-     * with others" when LEDC wanted the pin back on the next wake, because
-     * a pad that a driver reserved does not come back quietly. This way
-     * uses the driver as it is meant to be used and touches no routing. */
-    esp_err_t err=ledc_set_duty(LEDC_LOW_SPEED_MODE,BACKLIGHT_CHANNEL,
-                                BACKLIGHT_FULL_DUTY);
-    if(err==ESP_OK)err=ledc_update_duty(LEDC_LOW_SPEED_MODE,BACKLIGHT_CHANNEL);
-    /* GPIO_MODE_INPUT_OUTPUT on the read below, and this is why.
+     *   duty 1023 of 1024  one low slot per period; the converter behind
+     *                      the LEDs hiccups on it and the screen swings
+     *   duty 1024          wraps to 0, so the output is a constant low,
+     *                      which on an inverted input is full brightness
      *
-     * The version before this configured the pad as GPIO_MODE_OUTPUT and
-     * then read it with gpio_get_level. That mode switches the input buffer
-     * off, so the read gave 0 whatever the pad was doing, and the log said
-     * the pin was not held when nothing had measured it. The reading has to
-     * come from a pin whose input stays on. */
+     * The two that are left are the driver's own stop at an idle high, and
+     * a plain output held high. Both are applied in turn and the pin is
+     * measured after each, so the next log says which of them holds. The
+     * plain output is applied last and is what the panel sleeps under. */
     gpio_set_direction(BACKLIGHT_PIN,GPIO_MODE_INPUT_OUTPUT);
+
+    ledc_stop(LEDC_LOW_SPEED_MODE,BACKLIGHT_CHANNEL,BACKLIGHT_OFF_LEVEL);
+    int after_stop=backlight_high_reads();
+
+    /* gpio_reset_pin and not gpio_config: it is the call that gives the pad
+     * back to the GPIO matrix, and gpio_config leaves the routing alone.
+     * It also enables a pull-up, which on an inverted input pulls towards
+     * dark. The direction is set again after it, because the reset leaves
+     * the pin an input. */
+    gpio_reset_pin(BACKLIGHT_PIN);
+    gpio_set_direction(BACKLIGHT_PIN,GPIO_MODE_INPUT_OUTPUT);
+    gpio_set_level(BACKLIGHT_PIN,BACKLIGHT_OFF_LEVEL);
+    int after_gpio=backlight_high_reads();
+
     ESP_LOGW("panel_display",
-             "backlight duty %d of %d, set=%s, pin %d reads %d, wanted %d",
-             (int)BACKLIGHT_FULL_DUTY,(int)BACKLIGHT_FULL_DUTY,
-             esp_err_to_name(err),(int)BACKLIGHT_PIN,
-             gpio_get_level(BACKLIGHT_PIN),BACKLIGHT_OFF_LEVEL);
+             "backlight pin %d high on %d of %d reads after ledc_stop, "
+             "%d of %d as a plain output; %d is dark",
+             (int)BACKLIGHT_PIN,after_stop,BACKLIGHT_SAMPLES,
+             after_gpio,BACKLIGHT_SAMPLES,BACKLIGHT_OFF_LEVEL);
 }
 
 static esp_err_t backlight_on(int brightness)
 {
-    /* Nothing to give back: the pin never left LEDC. The board support
-     * writes the duty and calls ledc_update_duty, which is all this needs. */
+    /* The pad went to the GPIO matrix, so LEDC needs the pin back. The
+     * channel as the board support made it, with the timer and the
+     * resolution it gave. */
+    const ledc_channel_config_t channel={
+        .gpio_num=BACKLIGHT_PIN,
+        .speed_mode=LEDC_LOW_SPEED_MODE,
+        .channel=BACKLIGHT_CHANNEL,
+        .intr_type=LEDC_INTR_DISABLE,
+        .timer_sel=BACKLIGHT_TIMER,
+        .duty=0,
+        .hpoint=0,
+    };
+    esp_err_t err=ledc_channel_config(&channel);
+    if(err!=ESP_OK)return err;
     return bsp_display_brightness_set(brightness);
 }
 
