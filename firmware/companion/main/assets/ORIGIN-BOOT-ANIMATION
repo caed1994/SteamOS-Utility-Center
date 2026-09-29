@@ -17,13 +17,23 @@ What was done to it
   The source was a 1920x1080 VP9 clip at 30 frames each second, 3.117
   seconds long. All of its content sits in a 600x600 square in the middle of
   the frame and the rest is black, so that square was cut out, put on
-  320x320, and written as a GIF of 64 colours at 30 frames each second. The
+  320x320, and written as a GIF of 64 colours at 24 frames each second. The
   sound was dropped. Nothing else was changed.
+
+  24 and not the 30 of the source. The panel drew small tears through the
+  animation, which is what one draw buffer of 48 rows copied into a frame
+  buffer that the display is scanning out at the same time looks like. Fewer
+  frames is fewer chances to land in the middle of a scan, and it costs 19
+  of the 94 frames and a fifth of the file.
+
+  It does not divide into the refresh of this panel, which is 33 ms. A frame
+  therefore holds for one period or two, and if that reads as a stutter the
+  next number to try is 15, which is exactly two.
 
   The steps, for anybody who wants to make it again:
 
     ffmpeg -i <source> -vf "crop=600:600:660:240,scale=320:320:flags=lanczos,\
-    fps=30,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=\
+    fps=24,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=\
     dither=none" -gifflags -transdiff -loop 0 boot-steam.gif
 
   -gifflags -transdiff is not decoration, and the first image shipped
@@ -31,8 +41,8 @@ What was done to it
   meet to make that:
 
     ffmpeg writes each frame as only the pixels that changed and marks the
-    rest transparent, which is the ordinary way to keep a GIF small. All 94
-    frames of the first image were written that way.
+    rest transparent, which is the ordinary way to keep a GIF small. Every
+    frame of the first image was written that way.
 
     ffmpeg pads the palette of 64 colours out to 256, sets the background
     colour of the image to index 255, and entry 255 is #00FF00.
