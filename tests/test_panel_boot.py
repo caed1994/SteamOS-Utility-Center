@@ -108,6 +108,19 @@ class DecoderTest(unittest.TestCase):
         self.assertIn("#define LV_USE_GIF 1",
                       read(os.path.join(COMPANION, "preview", "lv_conf.h")))
 
+    def test_the_checks_run_at_the_depth_the_panel_does(self):
+        """The preview was at 32 bits and the panel is at 16.
+
+        That one difference hid the green: at 32 bits there is an alpha
+        channel to hold transparency and at 16 there is not, so the checks
+        saw a correct screen that the board never showed.
+        """
+        self.assertIn("#define LV_COLOR_DEPTH 16",
+                      read(os.path.join(COMPANION, "preview", "lv_conf.h")))
+        sdkconfig = read(os.path.join(COMPANION, "sdkconfig.defaults"))
+        self.assertNotIn("CONFIG_LV_COLOR_DEPTH_32", sdkconfig,
+                         "the firmware moved and the preview did not")
+
     def test_the_image_header_carries_the_magic(self):
         """Because the descriptor is one, not because lv_gif looks.
 

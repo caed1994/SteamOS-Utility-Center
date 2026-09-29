@@ -24,7 +24,30 @@ What was done to it
 
     ffmpeg -i <source> -vf "crop=600:600:660:240,scale=320:320:flags=lanczos,\
     fps=30,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=\
-    dither=none" -loop 0 boot-steam.gif
+    dither=none" -gifflags -transdiff -loop 0 boot-steam.gif
+
+  -gifflags -transdiff is not decoration, and the first image shipped
+  without it played on the board as a square of solid green. Three things
+  meet to make that:
+
+    ffmpeg writes each frame as only the pixels that changed and marks the
+    rest transparent, which is the ordinary way to keep a GIF small. All 94
+    frames of the first image were written that way.
+
+    ffmpeg pads the palette of 64 colours out to 256, sets the background
+    colour of the image to index 255, and entry 255 is #00FF00.
+
+    LVGL, in gif_blend_to_rgb565, writes that background colour over every
+    transparent pixel instead of leaving the pixel of the frame before. Its
+    own comment says "to maintain position". The path for ARGB8888 does not
+    do this, which is why a preview at 32 bits showed a correct screen.
+
+  With the flag every frame is whole and nothing is transparent, so the
+  background colour is never written anywhere. The file is 2 KB smaller
+  either way, because the picture is mostly flat black.
+
+  check_boot renders this image at sixteen bits and fails on a green pixel,
+  so a later re-encode cannot bring the fault back in silence.
 
 How to take it out
   Delete this file and boot-steam.gif. The panel then starts without an

@@ -2,7 +2,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #define LV_CONF_H
-#define LV_COLOR_DEPTH 32
+// The depth the firmware runs at, and not a comfortable 32.
+//
+// It was 32 here, and that hid a fault the board showed at once: the panel
+// played its startup animation as a square of solid green. The reason is in
+// lv_gif.c, in gif_blend_to_rgb565, which writes the background colour of
+// the image over every transparent pixel rather than leaving the pixel of
+// the frame before. The path for ARGB8888 does not, so at 32 bits these
+// checks saw a correct screen that the board never showed.
+//
+// A check environment that differs from the target is a check that answers
+// about a machine nobody has.
+#define LV_COLOR_DEPTH 16
 #define LV_USE_OS LV_OS_NONE
 #define LV_USE_STDLIB_MALLOC LV_STDLIB_CLIB
 #define LV_USE_STDLIB_STRING LV_STDLIB_CLIB

@@ -28,6 +28,41 @@ static void flushed(lv_display_t *display,const lv_area_t *area,uint8_t *pixels)
 {
     (void)area;(void)pixels;lv_display_flush_ready(display);
 }
+/* What the screen really holds, which is the question this check did not
+ * ask and the board answered instead.
+ *
+ * The first image shipped played as a square of solid green. Everything
+ * here was passing at the time: the cover went up, the animation ended, the
+ * cover went away. Nothing looked at a pixel.
+ *
+ * Green is the one colour this clip has none of. It is black, white and one
+ * blue, so a single green pixel means the decoder wrote the background
+ * colour of the image over a transparent one. See
+ * firmware/companion/main/assets/ORIGIN-BOOT-ANIMATION. */
+static void nothing_is_green(lv_display_t *screen,const uint8_t *pixels)
+{
+    lv_refr_now(screen);
+    unsigned green=0,lit=0;
+    for(int i=0;i<SCREEN*SCREEN;i++){
+        uint16_t px=(uint16_t)(pixels[i*2]|(pixels[i*2+1]<<8));
+        unsigned r=(px>>11)&0x1F,g=(px>>5)&0x3F,b=px&0x1F;
+        /* Far more green than anything else, which nothing in this clip is. */
+        if(g>=48 && r<12 && b<12)green++;
+        if(r+g+b>24)lit++;
+    }
+    if(green){
+        fprintf(stderr,"check_boot: %u green pixels, and this clip has no "
+                       "green in it\n",green);
+        assert(0);
+    }
+    /* And it drew something. A screen of pure black passes the rule above
+     * without the animation ever appearing. */
+    if(lit<2000){
+        fprintf(stderr,"check_boot: only %u pixels are lit, so nothing was "
+                       "drawn\n",lit);
+        assert(0);
+    }
+}
 static uint8_t *slurp(const char *path,size_t *size)
 {
     FILE *file=fopen(path,"rb");
@@ -71,6 +106,9 @@ int main(int argc,char **argv)
     lv_tick_set_cb(tick_get);
     static uint8_t pixels[SCREEN*SCREEN*4];
     lv_display_t *screen=lv_display_create(SCREEN,SCREEN);
+    /* The format the panel draws in. nothing_is_green reads these bytes as
+     * two to a pixel. */
+    lv_display_set_color_format(screen,LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(screen,pixels,NULL,sizeof pixels,
                            LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(screen,flushed);
@@ -92,8 +130,16 @@ int main(int argc,char **argv)
     panel_boot_show(image,size);
     assert(lv_obj_get_child_count(lv_screen_active())==children);
 
+    /* Part way in, where the animation is at its largest. The clock starts
+     * here, because the whole play is what the length below is about. */
+    double began=now_ms();
+    while(now_ms()-began<1100){lv_timer_handler();usleep(1000);}
+    assert(panel_boot_playing());
+    nothing_is_green(screen,pixels);
+
     /* It plays and then it goes, on its own, and it does not come back. */
-    double spent=run_until_done(20000);
+    run_until_done(20000);
+    double spent=now_ms()-began;
     assert(!panel_boot_playing());
     assert(!covered());
     /* The clip is about three seconds. A cover that goes at once played
