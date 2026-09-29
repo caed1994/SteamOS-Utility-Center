@@ -100,7 +100,7 @@ jobs:
             "$bsp" --include='*.h' 2>/dev/null || true
 
       - name: Build and run the checks that need LVGL
-        # firmware/companion/preview holds three checks of the screen half,
+        # firmware/companion/preview holds the checks of the screen half,
         # and nothing ran them. They link against LVGL, which the build above
         # already downloaded, so here they cost nothing to build.
         #
@@ -119,10 +119,13 @@ jobs:
           cmake -S firmware/companion/preview -B preview-build \
                 -DCMAKE_BUILD_TYPE=Debug
           cmake --build preview-build --target check_power check_idle \
-                check_navigation -j"$(nproc)"
+                check_navigation check_boot -j"$(nproc)"
           ./preview-build/check_power
           ./preview-build/check_idle
           ./preview-build/check_navigation
+          # check_boot plays the real animation, so it takes the clip's own
+          # three seconds and a little more.
+          ./preview-build/check_boot
 
       - name: Put the image where the panel looks for it
         shell: bash

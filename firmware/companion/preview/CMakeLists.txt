@@ -47,3 +47,7 @@ add_executable(check_power check_power.c ../main/panel_key.c
 target_include_directories(check_power PRIVATE ../main)
 target_link_libraries(check_power PRIVATE lvgl m)
 target_compile_options(check_power PRIVATE -UNDEBUG)
+add_executable(check_boot check_boot.c ../main/panel_boot.c)
+target_include_directories(check_boot PRIVATE ../main)
+target_link_libraries(check_boot PRIVATE lvgl m)
+target_compile_options(check_boot PRIVATE -UNDEBUG)

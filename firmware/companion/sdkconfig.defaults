@@ -37,6 +37,9 @@ CONFIG_LV_TXT_BREAK_CHARS=" ,.;:-_"
 CONFIG_LV_USE_SYSMON=y
 CONFIG_LV_USE_PERF_MONITOR=n
 CONFIG_LV_USE_IMGFONT=y
+# The startup animation. lv_gif.c is in the LVGL this project pins and is
+# off by default. See firmware/companion/main/panel_boot.c.
+CONFIG_LV_USE_GIF=y
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_LV_FONT_MONTSERRAT_32=y
 CONFIG_LV_FONT_DEFAULT_MONTSERRAT_16=y

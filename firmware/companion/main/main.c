@@ -32,6 +32,14 @@
 #include "config.h"
 #include "panel_auth.h"
 #include "panel_text.h"
+#include "panel_boot.h"
+
+/* The startup animation, put in the image by main/CMakeLists.txt. It
+ * belongs to Valve and not to this project; assets/ORIGIN-BOOT-ANIMATION
+ * says what it is and how to take it out. Deleting the file leaves these
+ * two the same, and panel_boot_show does nothing when they are. */
+extern const uint8_t boot_animation_start[] asm("_binary_boot_steam_gif_start");
+extern const uint8_t boot_animation_end[] asm("_binary_boot_steam_gif_end");
 
 static atomic_uint ui_heartbeat_ms;
 static atomic_bool display_asleep;
@@ -400,6 +408,13 @@ void app_main(void)
     panel_ui_create(action_send,setting_set,sound_send,&settings);
     lv_timer_create(ui_tick,200,NULL);
     ui_tick(NULL);
+    /* Over the finished screen, not in front of building it. Everything
+     * below this joins the network and waits for the PC, and the panel
+     * spent those seconds showing a page with no numbers in it. Now it
+     * shows the animation instead, and the page is ready underneath when
+     * the animation ends. */
+    panel_boot_show(boot_animation_start,
+                    (size_t)(boot_animation_end-boot_animation_start));
     bsp_display_unlock();
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());

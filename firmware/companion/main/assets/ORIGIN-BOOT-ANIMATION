@@ -1,0 +1,32 @@
+boot-steam.gif
+
+What it is
+  The startup animation of the Steam Machine, which the panel plays once
+  while it joins the network.
+
+Where it came from
+  Valve Corporation. It is their work and their marks, and this project
+  holds no licence to it. It is here because the owner of this repository
+  put it here for their own Steam Machine and decided to carry it.
+
+  It is NOT under the GPL-3.0-or-later of this project, and no part of this
+  repository grants anybody a right to it. Anybody who forks this repository
+  and wants this file has the same question to answer that we did.
+
+What was done to it
+  The source was a 1920x1080 VP9 clip at 30 frames each second, 3.117
+  seconds long. All of its content sits in a 600x600 square in the middle of
+  the frame and the rest is black, so that square was cut out, put on
+  320x320, and written as a GIF of 64 colours at 30 frames each second. The
+  sound was dropped. Nothing else was changed.
+
+  The steps, for anybody who wants to make it again:
+
+    ffmpeg -i <source> -vf "crop=600:600:660:240,scale=320:320:flags=lanczos,\
+    fps=30,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=\
+    dither=none" -loop 0 boot-steam.gif
+
+How to take it out
+  Delete this file and boot-steam.gif. The panel then starts without an
+  animation. See firmware/companion/main/panel_boot.c, which does nothing
+  at all when it gets no image.

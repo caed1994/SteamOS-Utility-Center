@@ -18,3 +18,5 @@
 #define LV_BUILD_EXAMPLES 0
 #define LV_BUILD_DEMOS 0
 #define LV_USE_LOG 0
+// panel_boot.c plays the startup animation, and check_boot runs it.
+#define LV_USE_GIF 1
