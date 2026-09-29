@@ -502,7 +502,6 @@ void app_main(void)
     esp_err_t key_err=panel_power_init();
     if(key_err!=ESP_OK)ESP_LOGW("panel_power","PWRKEY unavailable: %s",esp_err_to_name(key_err));
     panel_settings_t settings=settings_load();
-    setting_set(PANEL_BRIGHTNESS,settings.brightness,false);
     sounds=xQueueCreate(1,sizeof(int));
     assert(sounds);
     BaseType_t sound_created=xTaskCreate(sound_task,"panel_sound",6144,NULL,3,NULL);
@@ -518,7 +517,18 @@ void app_main(void)
      * the animation ends. */
     panel_boot_show(boot_animation_start,
                     (size_t)(boot_animation_end-boot_animation_start));
+    /* Draw it here, in this task, before the light comes up.
+     *
+     * The screen has been at the lowest brightness since the display
+     * started, because the board support lights the panel at full over a
+     * frame buffer that nothing has written, and the board showed that as a
+     * flash of white. This is the first frame that is worth seeing, so the
+     * light goes up after it and not before. Without lv_refr_now the frame
+     * is drawn by the LVGL task at some later moment, and the brightness
+     * below would beat it there. */
+    lv_refr_now(NULL);
     bsp_display_unlock();
+    setting_set(PANEL_BRIGHTNESS,settings.brightness,false);
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();

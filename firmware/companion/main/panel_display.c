@@ -16,6 +16,14 @@ static lv_display_t *panel_screen;
 static lv_indev_t *panel_input;
 static bool is_asleep;
 
+/* The lowest brightness this board holds steady, in percent.
+ *
+ * It has two readers. A sleeping panel goes here because it cannot go dark,
+ * and the start of the display goes here because the board support lights
+ * the panel at full before anything has been drawn. The long note above
+ * backlight_off says why nought is not an option. */
+#define BACKLIGHT_SLEEP_PERCENT 5
+
 /* Keep RGB DMA interrupts and LVGL on core 1. The main task is pinned there
  * by sdkconfig; esp_lcd allocates its interrupts on the calling core.
  * Wi-Fi uses core 0. Board pins and ST7701 commands remain owned by the BSP. */
@@ -31,6 +39,23 @@ lv_display_t *panel_display_start(void)
     esp_lcd_panel_io_handle_t io=NULL;
     bsp_display_config_t board={0};
     ESP_ERROR_CHECK(bsp_display_new(&board,&panel,&io));
+    /* Down, at once, before anything else runs.
+     *
+     * Reported from the board: the screen flashes white before the startup
+     * animation. That flash is this line's absence. bsp_display_new sets up
+     * the LEDC channel with a duty of 0, the input of this backlight is
+     * inverted, and a duty of 0 is therefore full brightness. From that
+     * instant the panel is lit at its maximum and showing a frame buffer
+     * that nothing has written yet.
+     *
+     * Five percent and not nought: nought writes a duty of 1023, which
+     * leaves one LOW slot in every period and makes the converter behind
+     * the LEDs hiccup. Five percent is the lowest this board holds steady,
+     * and it is the same number a sleeping panel uses. See
+     * BACKLIGHT_SLEEP_PERCENT.
+     *
+     * app_main raises it once the first frame is on the screen. */
+    bsp_display_brightness_set(BACKLIGHT_SLEEP_PERCENT);
     /* Board default is 16 MHz (~60 Hz). 12 MHz requests ~45 Hz and reduces
      * continuous pixel traffic by 25%; actual divider may round downward. */
     ESP_ERROR_CHECK(esp_lcd_rgb_panel_set_pclk(panel,12000000));
@@ -52,6 +77,22 @@ lv_display_t *panel_display_start(void)
     lvgl_port_lock(0);
     lv_draw_buf_t *draw=lv_display_get_buf_active(screen);
     bool internal=draw && esp_ptr_internal(draw->data);
+    /* Black on the panel at the first moment there is a way to put it
+     * there. The frame buffer holds whatever the memory held, and the board
+     * showed that as white. The brightness above keeps it dim; this makes
+     * it black, and between the two there is nothing to see until app_main
+     * has a screen worth showing.
+     *
+     * One window is left and it is not ours to close. bsp_display_new sets
+     * the LEDC duty to 0, which is full brightness on this inverted input,
+     * and it does that inside itself before returning. Everything after it
+     * is as early as this code can be. */
+    lv_obj_t *blank=lv_screen_active();
+    if(blank){
+        lv_obj_set_style_bg_color(blank,lv_color_black(),0);
+        lv_obj_set_style_bg_opa(blank,LV_OPA_COVER,0);
+        lv_refr_now(screen);
+    }
     lvgl_port_unlock();
     ESP_RETURN_ON_FALSE(internal,NULL,tag,"Draw buffer must reside in internal SRAM");
 
@@ -131,8 +172,10 @@ lv_display_t *panel_display_start(void)
  * switches off, and the window says so rather than leaving somebody to
  * wonder why the wall glows.
  *
- * Five is the floor the settings page already offers on its slider. */
-#define BACKLIGHT_SLEEP_PERCENT 5
+ * Five is the floor the settings page already offers on its slider. It is
+ * defined at the top of this file, because the start of the display uses it
+ * too: the panel comes up at that brightness and stays there until the
+ * first frame is drawn. */
 
 static void backlight_off(void)
 {

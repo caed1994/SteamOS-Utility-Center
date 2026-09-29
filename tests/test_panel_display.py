@@ -250,6 +250,70 @@ class SleepingScreenTest(unittest.TestCase):
             self.assertIn(one, cmake, one)
 
 
+class WhiteFlashTest(unittest.TestCase):
+    """The flash of white the board showed before the startup animation.
+
+    bsp_display_new sets up the LEDC channel with a duty of 0. The input of
+    this backlight is inverted, so a duty of 0 is full brightness, and from
+    that moment the panel is lit at its maximum over a frame buffer that
+    holds whatever the memory held.
+
+    Two lines answer it and the order of both is the whole of the fix: the
+    light goes down as early as the code can reach, and it comes back up
+    only once a frame worth seeing is on the screen.
+    """
+
+    def read(self, name):
+        with open(os.path.join(FIRMWARE, name)) as handle:
+            return handle.read()
+
+    def test_the_light_goes_down_the_moment_the_panel_exists(self):
+        """The next statement, and not a few lines later. Everything
+        between the two is time the board spends showing white."""
+        code = without_comments(self.read("panel_display.c"))
+        found = re.search(r"bsp_display_new\([^;]*\);\s*"
+                          r"bsp_display_brightness_set\(", code)
+        self.assertTrue(found,
+                        "something runs between the panel coming up and the "
+                        "light going down")
+
+    def test_it_goes_down_to_a_brightness_this_board_holds_steady(self):
+        """Nought writes a duty of 1023, which leaves one LOW slot in every
+        period and makes the converter hiccup. See backlight_off."""
+        code = without_comments(self.read("panel_display.c"))
+        self.assertIn("bsp_display_brightness_set(BACKLIGHT_SLEEP_PERCENT)",
+                      code)
+
+    def test_the_screen_is_painted_black_before_anything_else(self):
+        """The brightness makes the white dim. This makes it black."""
+        code = without_comments(self.read("panel_display.c"))
+        start = code.index("panel_display_start")
+        body = code[start:code.index("\n}", start)]
+        self.assertIn("lv_color_black()", body)
+        self.assertIn("lv_refr_now", body)
+
+    def test_the_light_comes_up_after_the_first_frame_and_not_before(self):
+        """Without the draw, the LVGL task gets to the frame at some later
+        moment and the brightness beats it there, which is the flash
+        again."""
+        code = without_comments(self.read("main.c"))
+        shown = code.index("panel_boot_show(")
+        drawn = code.index("lv_refr_now", shown)
+        lit = code.index("setting_set(PANEL_BRIGHTNESS", shown)
+        self.assertLess(drawn, lit,
+                        "the light comes up before the frame is drawn")
+
+    def test_nothing_sets_the_brightness_before_the_screen_is_built(self):
+        """It was on the line after the settings were read, which is before
+        the screen exists at all."""
+        code = without_comments(self.read("main.c"))
+        built = code.index("panel_ui_create(action_send")
+        first = code.index("setting_set(PANEL_BRIGHTNESS")
+        self.assertGreater(first, built,
+                           "the brightness is set before there is anything "
+                           "to show")
+
+
 class StandbyOrderTest(unittest.TestCase):
     """What a failed wake leaves behind.
 
