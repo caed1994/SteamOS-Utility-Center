@@ -5836,6 +5836,35 @@ class CompanionPageTest(unittest.TestCase):
             self._with_image(state)
             self.assertTrue(panel._companion_build_state().strip(), state)
 
+    def test_the_log_button_reads_the_port_in_the_field(self):
+        """Reported: "idf.py: Kommando nicht gefunden". Asking somebody to
+        install ESP-IDF to read one line undoes the reason the image is in
+        this repository at all."""
+        panel = self._panel()
+        panel.companion_port.delete(0, "end")
+        panel.companion_port.insert(0, "/dev/ttyACM3")
+        panel._read_companion_log()
+        self.assertEqual(len(self.ran), 1)
+        self.assertTrue(self.ran[0][0].endswith("scripts/panel-log.sh"),
+                        self.ran[0])
+        self.assertIn("/dev/ttyACM3", self.ran[0])
+
+    def test_reading_the_log_asks_nothing_and_needs_no_password(self):
+        """It reads a port. Nothing about that is a question, and a password
+        for it would be a password for looking."""
+        panel = self._panel()
+        panel._read_companion_log()
+        self.assertNotIn("pkexec", self.ran[0])
+        self.assertNotIn("sudo", self.ran[0])
+
+    def test_the_reading_has_an_end(self):
+        """The panel talks for as long as it is powered, and the runner waits
+        for a command to finish."""
+        panel = self._panel()
+        panel._read_companion_log()
+        self.assertEqual(self.ran[0][-1],
+                         str(ledpanel.COMPANION_LOG_SECONDS))
+
     def test_the_secret_stays_hidden_until_somebody_asks(self):
         panel = self._panel()
         was = ledpanel.companion_token

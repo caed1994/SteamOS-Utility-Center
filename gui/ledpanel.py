@@ -1839,6 +1839,23 @@ def flash_companion_command(source_dir, port, image_dir):
             image_dir]
 
 
+# How long the log button reads for. The panel talks for as long as it is
+# powered, so the reading needs an end: a button on a page waits for a
+# command to finish, and a command that never finishes holds the runner.
+COMPANION_LOG_SECONDS = 20
+
+
+def panel_log_command(source_dir, port, seconds=COMPANION_LOG_SECONDS):
+    """Returns the command that reads what the panel says over USB.
+
+    No pkexec and no toolchain. idf.py monitor is the usual way to read
+    this and it needs the whole build environment, which this project
+    deliberately keeps off the machine. See scripts/panel-log.sh.
+    """
+    return [os.path.join(source_dir, "scripts", "panel-log.sh"), port,
+            str(seconds)]
+
+
 def companion_running():
     """Whether the panel's service answers in this session."""
     return Probe().unit_active(COMPANION_SERVICE, user=True)

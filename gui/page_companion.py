@@ -223,6 +223,26 @@ class CompanionPage:
         ttk.Button(row, text="Flash the panel", style="Filled.TButton",
                    command=self._flash_companion).pack(side="left",
                                                        padx=(ROW_GAP, 0))
+        ttk.Button(row, text="Read its log", style="Text.TButton",
+                   command=self._read_companion_log).pack(side="left",
+                                                          padx=(ROW_GAP, 0))
+        self._companion_line(
+            inner,
+            "\"Read its log\" listens on the same cable for %d seconds and "
+            "puts what the panel says below. Press the button on the panel "
+            "while it runs. It needs no build tools."
+            % ledpanel.COMPANION_LOG_SECONDS)
+
+    def _read_companion_log(self):
+        """Reads the panel's own words, for somebody who has to report them.
+
+        The alternative is idf.py monitor, which needs the build environment
+        that this project keeps off the machine. A person who installs
+        ESP-IDF to read one line undoes the reason the image is in this
+        repository at all.
+        """
+        port = self.companion_port.get().strip() or DEFAULT_BOARD_PORT
+        self.runner.start(ledpanel.panel_log_command(SOURCE_DIR, port))
 
     def _flash_companion(self):
         """Writes the firmware, after one question.
