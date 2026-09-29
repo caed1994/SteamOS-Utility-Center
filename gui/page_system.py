@@ -27,6 +27,7 @@ import ledpanel
 from steamos_utility_center import ctl
 from steamos_utility_center import mounts
 from steamos_utility_center import wake
+from steamos_utility_center import wakeonlan
 
 from panelbase import (CARD_WRAP, CEC_INDENT, GROUP_GAP, ROW_GAP,
                        SENSOR_WIDTH, SOURCE_DIR)
@@ -68,6 +69,7 @@ class SystemPage:
         present = ttk.Frame(outer, style="Page.TFrame")
         self._build_module_line(present, "system")
         self._build_wake(present)
+        self._build_wol(present)
         self._build_drives(present)
         self._build_decky(present)
         self._module_halves["system"] = (
@@ -176,6 +178,81 @@ class SystemPage:
         self.wake_radios.configure(text=text)
         self.wake_radios.pack(anchor="w", pady=(ROW_GAP, 0))
         self.runner.sink("\n%s\n" % text)
+
+    def _build_wol(self, parent):
+        """Whether a magic packet on the network can wake this machine.
+
+        Not the same thing as the switch above, which is a controller on the
+        USB bus. This one is the card on the cable, and the wall panel is
+        what sends the packet: the panel talks to this machine through the
+        service on it, and when the machine is off there is no service, so a
+        packet is all that is left. See
+        server/steamos_utility_center/wakeonlan.py.
+
+        One switch that acts at its click, for the reason the one above
+        gives. The line under it is the state of the machine and not of the
+        switch, because the connection holds the wish and the card holds
+        whether it was told, and a person who cannot wake the machine is
+        looking for the difference.
+        """
+        box = self._section(parent, "Wake over the network", card=True)
+        row = ttk.Frame(box, style="OnCard.TFrame")
+        row.pack(fill="x")
+        row.columnconfigure(1, weight=1)
+        self._wol_on = tk.BooleanVar(value=False)
+        self.wol_switch = ttk.Checkbutton(row, variable=self._wol_on,
+                                          command=self._wol_toggled)
+        self.wol_switch.grid(row=0, column=0, sticky="w")
+        named = ttk.Label(row, text="Let a magic packet wake the machine")
+        named.grid(row=0, column=1, sticky="w", padx=(ROW_GAP, 0))
+        explain = ttk.Label(
+            row,
+            text="Tells the wired card to listen while this machine is off, "
+                 "so the wall panel can wake it. It needs a cable: waking "
+                 "over radio is not something these cards do.",
+            style="Muted.TLabel", justify="left",
+            wraplength=CARD_WRAP - CEC_INDENT)
+        explain.grid(row=1, column=1, sticky="w", padx=(ROW_GAP, 0),
+                     pady=(2, 0))
+        self._wrapped.append(explain)
+        self._wrap_insets[str(explain)] = named
+
+        self.wol_said = ttk.Label(box, style="Muted.TLabel", justify="left",
+                                  wraplength=CARD_WRAP)
+        self.wol_said.pack(anchor="w", pady=(ROW_GAP, 0))
+        self._wrapped.append(self.wol_said)
+        self._show_wol()
+        return box
+
+    def _show_wol(self):
+        """Puts the state of the machine on the page, read from the machine."""
+        answer = ledpanel.wol_state()
+        self._wol_on.set(bool(answer.get("on")))
+        # Nothing to switch without the module, and nothing to switch on a
+        # machine with no cable. A switch a person can move with no effect
+        # says the opposite of the sentence under it.
+        self.wol_switch.state(
+            ["!disabled"] if answer.get("on") is not None else ["disabled"])
+        self.wol_said.configure(text=wakeonlan.says(answer))
+
+    def _wol_toggled(self):
+        """Turns it on or off at the click, then reads the machine again.
+
+        Read again and not trusted. The switch writes a NetworkManager
+        property and brings the connection up so the card is told, and
+        either half can fail on a machine this was never run on.
+        """
+        state = "on" if self._wol_on.get() else "off"
+
+        def finished(_code):
+            self._show_wol()
+            self.refresh_status()
+
+        if not self.runner.start(ledpanel.wol_switch_command(state),
+                                 finished):
+            # The Runner is busy, so nothing ran. Put the switch back, or it
+            # says something the machine does not.
+            self._show_wol()
 
     def _build_decky(self, parent):
         """The Game Mode plugin, and one button that installs it.

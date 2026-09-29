@@ -106,6 +106,12 @@ MOUNTS_APPLIER_PATH="$INSTALL_DIR/$NAME-mounts-apply"
 WAKE_UNIT_PATH="$UNIT_DIR/$NAME-wake.service"
 WAKE_APPLIER_PATH="$INSTALL_DIR/$NAME-wake-apply"
 WAKE_STATE_PATH="$INSTALL_DIR/wake-state"
+# Waking over the network, which is a different thing from the line above:
+# that one is a controller on the USB bus, and this one is a magic packet on
+# the cable, sent by the panel on the wall. It needs no unit and no record:
+# NetworkManager keeps the setting in the connection file, and the state is
+# read back from there. See scripts/wol-apply.sh.
+WOL_APPLIER_PATH="$INSTALL_DIR/$NAME-wol-apply"
 KEEP_LIST_PATH="$ROOT/etc/atomic-update.conf.d/$NAME.conf"
 # What tells the strip about a suspend, in the same shape as the board above.
 # See scripts/sleep-led.sh.

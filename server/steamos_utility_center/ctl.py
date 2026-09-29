@@ -72,6 +72,10 @@ RESUME_WAKE = os.path.join(INSTALL_DIR, "steamos-utility-center-resume-wake")
 # enables a unit of root, so it needs a rule of the same shape as the one
 # above. It arrives with the System module. See scripts/wake-apply.sh.
 APPLY_WAKE = os.path.join(INSTALL_DIR, "steamos-utility-center-wake-apply")
+# The switch for waking over the network, which is a different thing from
+# APPLY_WAKE above: that one is a controller on the USB bus, and this one
+# is a magic packet on the cable. See wakeonlan.py.
+APPLY_WOL = os.path.join(INSTALL_DIR, "steamos-utility-center-wol-apply")
 
 # Which applier belongs to which area. The panel reads this to build the same
 # command that this file runs, so the two never name different programs.
@@ -850,6 +854,17 @@ def permits(present=None):
     # can read, and asks systemd a question that needs no rights.
     if present(APPLY_WAKE):
         permitted.extend((APPLY_WAKE, state) for state in ("on", "off"))
+    # The switch for waking over the network, the same two words again.
+    #
+    # The connection is not an argument. NetworkManager names it, the name
+    # holds spaces on an ordinary machine ("Wired connection 1"), and a rule
+    # that took one would need a wildcard. The program finds it itself, so
+    # the rule stays two exact words.
+    #
+    # "status" needs no line either: it reads a NetworkManager property and
+    # a file in sysfs, and both are questions that anybody can ask.
+    if present(APPLY_WOL):
+        permitted.extend((APPLY_WOL, state) for state in ("on", "off"))
     return permitted
 
 

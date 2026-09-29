@@ -477,7 +477,10 @@ class SudoersTest(unittest.TestCase):
         shape of the rule.
         """
         rules = self._rules()
-        switches = (ctl.RESUME_WAKE, ctl.APPLY_WAKE)
+        # The switches, which are the appliers whose argument is one of
+        # two words rather than a staged file. APPLY_WOL is the third:
+        # it lets a magic packet wake the machine. See wakeonlan.py.
+        switches = (ctl.RESUME_WAKE, ctl.APPLY_WAKE, ctl.APPLY_WOL)
         self.assertEqual(len(rules), len(ctl.APPLIER) + 2 * len(switches))
         for line in rules:
             after = line.split("NOPASSWD:")[1].split()

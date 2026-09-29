@@ -120,15 +120,19 @@ SAYS = {
                  "with the firmware in firmware/companion.",
     },
     SYSTEM: {
-        "title": "Drives, controller wake and Game Mode",
+        "title": "Drives, waking and Game Mode",
         "does": "Mounts the drives you choose at each boot, lets a controller "
-                "wake this machine from sleep, and puts the plugin for Game "
-                "Mode into Decky Loader. The keyboard layout above works "
-                "without this module.",
+                "wake this machine from sleep, lets a magic packet on the "
+                "network wake it while it is off, and puts the plugin for "
+                "Game Mode into Decky Loader. The keyboard layout above "
+                "works without this module.",
         "brings": "a program that writes the mount units, a program that "
                   "lets a controller wake the machine, a unit for each of "
-                  "them that runs again at each boot, and the Decky plugin.",
-        "needs": "Decky Loader, for the Game Mode plugin only.",
+                  "them that runs again at each boot, a program that tells "
+                  "the wired card to listen for a magic packet, and the "
+                  "Decky plugin.",
+        "needs": "Decky Loader, for the Game Mode plugin only. Waking over "
+                 "the network needs a cable.",
     },
 }
 

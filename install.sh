@@ -1045,6 +1045,12 @@ install_system() {
     # machine that sleeps. There is no CEC in the work, so it is here now and
     # a person with no television can have it. See scripts/wake-apply.sh.
     install -m 0755 "$SOURCE_DIR/scripts/wake-apply.sh" "$WAKE_APPLIER_PATH"
+
+    # Waking over the network. The panel on the wall sends the packet, and
+    # this tells the card to listen for it. No unit: NetworkManager keeps
+    # the setting in the connection file and applies it when the connection
+    # comes up. See scripts/wol-apply.sh.
+    install -m 0755 "$SOURCE_DIR/scripts/wol-apply.sh" "$WOL_APPLIER_PATH"
     say "Installing systemd unit to $WAKE_UNIT_PATH"
     sed "s|@INSTALL_DIR@|$INSTALL_DIR|g" \
         "$SOURCE_DIR/server/steamos-utility-center-wake.service" \
@@ -1108,6 +1114,13 @@ remove_system() {
     # clean. The removal above took the file and left the link.
     systemctl disable "$NAME-wake.service" >/dev/null 2>&1 || true
     rm -f "$WAKE_UNIT_PATH" "$WAKE_APPLIER_PATH" "$WAKE_STATE_PATH"
+    # And the card back to what it was, for the same reason: a machine that
+    # could not be woken over the network before this module arrived must
+    # not stay wakeable after it leaves.
+    if [[ -x "$WOL_APPLIER_PATH" ]]; then
+        "$WOL_APPLIER_PATH" off >/dev/null 2>&1 || true
+    fi
+    rm -f "$WOL_APPLIER_PATH"
     # The drives themselves. Without this they stay mounted until the machine
     # restarts, and nothing on the machine can unmount them any more.
     remove_mount_units

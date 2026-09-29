@@ -29,6 +29,7 @@ from steamos_utility_center import pegboard as pegboard_module
 from steamos_utility_center import power as power_module
 from steamos_utility_center import temperature
 from steamos_utility_center import wake as wake_module
+from steamos_utility_center import wakeonlan
 
 INSTALL_DIR = "/var/lib/steamos-utility-center"
 BINARY = os.path.join(INSTALL_DIR, "steamos-utility-center")
@@ -1929,6 +1930,28 @@ def wake_state(run=None):
     if said is None:
         return None, []
     return wake_module.state(said)
+
+
+def wol_switch_command(state):
+    """Returns the command that turns waking over the network on or off."""
+    return wakeonlan.switch_command(state)
+
+
+def wol_state(run=None):
+    """What the wired connection and the card say about waking.
+
+    A dictionary with found false where there is no System module or no
+    cable, which is what the page needs to know before it offers a switch.
+    See wakeonlan.state.
+    """
+    empty = {"found": False, "on": None, "connection": "", "device": "",
+             "card": ""}
+    if not wakeonlan.installed():
+        return empty
+    said = (run or _run_quietly)(wakeonlan.status_command())
+    if said is None:
+        return empty
+    return wakeonlan.state(said)
 
 
 def cec_status(home=None, run=None):
