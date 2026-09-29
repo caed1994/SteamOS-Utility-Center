@@ -77,22 +77,42 @@ class BacklightTest(unittest.TestCase):
         self.assertIn("GPIO_MODE_INPUT_OUTPUT", text)
         self.assertNotIn("GPIO_MODE_OUTPUT", text)
 
-    def test_it_holds_the_pin_the_way_the_board_said_works(self):
-        """240 of 240 after ledc_stop, and 240 of 240 as a plain output. The
-        two are the same at the pin, so the pad never needed taking away and
-        the takeover only made LEDC warn on the next wake."""
+    def test_sleep_dims_and_does_not_try_to_switch_off(self):
+        """Measured on the board: the pin held low is full brightness, the
+        pin held high swings, and the board support names no rail and no
+        backlight enable. A level is not a request this driver answers."""
         body = self.part("static void backlight_off")
-        self.assertIn("ledc_stop", body)
-        self.assertEqual(body.count("backlight_high_reads()"), 1)
+        self.assertIn("BACKLIGHT_SLEEP_PERCENT", body)
+        self.assertIn("bsp_display_brightness_set", body)
+        # The names it found, and not the file it found them in. An
+        # assertion that puts the whole of panel_display.c into a failure
+        # hides the one word that matters.
         text = self.source()
-        self.assertNotIn("gpio_reset_pin", text)
-        self.assertNotIn("esp_rom_gpio_pad_select_gpio", text)
+        found = [gone for gone in ("ledc_stop(", "ledc_set_duty(",
+                                   "gpio_reset_pin(",
+                                   "esp_rom_gpio_pad_select_gpio(")
+                 if gone in text]
+        self.assertEqual(found, [], "these were tried and measured, and the "
+                                    "board said no")
 
-    def test_the_log_names_the_reading_and_the_dark_level(self):
+    def test_the_sleeping_brightness_is_above_zero_and_low(self):
+        """Zero is the state that swings. The slider on the settings page
+        already stops at five, so five is the floor this shares."""
+        percent = self.constant("BACKLIGHT_SLEEP_PERCENT")
+        self.assertGreater(percent, 0)
+        self.assertLessEqual(percent, 20)
+
+    def test_the_log_names_the_reading_and_what_was_asked_for(self):
         body = self.part("static void backlight_off")
-        self.assertIn("held", body)
+        self.assertIn("BACKLIGHT_SLEEP_PERCENT", body)
         self.assertIn("esp_err_to_name(err)", body)
-        self.assertIn("BACKLIGHT_OFF_LEVEL", body)
+        self.assertIn("backlight_high_reads", body)
+
+    def test_the_window_says_the_screen_dims_rather_than_goes_dark(self):
+        """A wall that glows with no explanation is a fault report waiting
+        to happen."""
+        body = self.part("esp_err_t panel_display_standby")
+        self.assertIn("as dark", body)
 
     def test_the_measurement_stays(self):
         """It is seven milliseconds once per sleep, and it is the one thing
@@ -101,8 +121,8 @@ class BacklightTest(unittest.TestCase):
             "static void backlight_off"))
 
     def test_waking_needs_nothing_given_back(self):
-        """The pin never leaves LEDC now, so there is no pad to hand over
-        and no warning that LEDC cannot have it."""
+        """The pin never leaves LEDC, so there is no pad to hand over and no
+        warning that LEDC cannot have it."""
         body = self.part("static esp_err_t backlight_on")
         self.assertIn("bsp_display_brightness_set(brightness)", body)
         self.assertNotIn("ledc_channel_config", body)
@@ -116,10 +136,12 @@ class BacklightTest(unittest.TestCase):
                         sleeping.index("backlight_off"))
 
     def test_the_note_gives_the_numbers_it_reasons_from(self):
-        """They came out of the board support, which is in no repository.
-        Somebody reading this file has to see them without a build."""
+        """They came out of the board support and off the board, and neither
+        is in this repository. Somebody reading this file has to see them
+        without a build and without the hardware."""
         text = self.source()
-        for number in ("GPIO_NUM_4", "LEDC_TIMER_10_BIT", "5000", "1023"):
+        for number in ("GPIO_NUM_4", "LEDC_TIMER_10_BIT", "5000", "1023",
+                       "1024"):
             self.assertIn(number, text, number)
 
     def test_the_build_still_prints_what_it_reasons_from(self):

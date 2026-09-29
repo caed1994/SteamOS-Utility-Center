@@ -68,11 +68,11 @@ lv_display_t *panel_display_start(void)
     return screen;
 }
 
-/* The backlight of this board, and why turning it off needs more than the
- * board support offers.
+/* The backlight of this board, and why a sleeping panel is not dark.
  *
- * Read out of the board support by the build, and printed by the step in
- * .github/workflows/companion-firmware.yml that says what it does:
+ * The numbers come out of the board support, which the build prints in
+ * .github/workflows/companion-firmware.yml, and none of it is in any
+ * repository:
  *
  *     .gpio_num        = GPIO_NUM_4
  *     .duty_resolution = LEDC_TIMER_10_BIT     full scale is 1024
@@ -80,31 +80,34 @@ lv_display_t *panel_display_start(void)
  *     bsp_display_brightness_set(p):
  *         duty = 1023 * (100 - p) / 100
  *
- * The input is inverted, so a LOW is light. At p=0 the duty is 1023 of
- * 1024, which leaves one LOW slot in every period: an enable pulse of
- * about 200 ns, five thousand times a second. The boost converter behind
- * the LEDs takes that as a request to start, cannot reach regulation on
- * it, shuts down and tries again. On the board that reads as a display
- * that swings between dark and dim for as long as it is asleep.
- *
+ * The input is inverted, so a low is light. brightness_set(0) writes 1023
+ * of 1024, which leaves one low slot in every period.
  * bsp_display_backlight_off() is brightness_set(0), so the board support
- * has no way to stop this. The version before this one called ledc_stop at
- * an idle HIGH, and on the board the swinging stayed.
+ * has no way to go further than that.
  *
- * So the pin leaves the LEDC matrix altogether while the panel sleeps, and
- * is held HIGH as a plain output. Whatever the reason ledc_stop was not
- * enough, the LEDC hardware is no longer connected to the pin and can put
- * no pulse on it. Waking gives the pin back to LEDC and sets the
- * brightness again. */
+ * Three ways of going further were tried on the board and measured:
+ *
+ *     ledc_stop at an idle high   the pin reads high on 240 of 240 samples,
+ *                                 and the screen swung between dark and dim
+ *     a pad of our own, held high 240 of 240 as well, and the same swinging
+ *     a duty of 1024              wraps to 0 in a ten bit register, so the
+ *                                 pin went low and the screen came up at
+ *                                 full brightness
+ *
+ * And the supply is out of reach: the board support names no power chip,
+ * and its expander pins are the LCD's SPI, the audio amplifier and the
+ * panel reset. There is no backlight enable to switch.
+ *
+ * So a level is not a request this driver answers. A pin held high is a
+ * PWM of zero on-time, and a boost converter that carries no energy in a
+ * period never reaches regulation: it starts, gives up, starts again. The
+ * swinging is the hardware doing what it does when it is asked for
+ * nothing, and a pin held low is the other end of the same thing.
+ *
+ * What is left is the lowest brightness the converter still regulates,
+ * which is steady. See BACKLIGHT_SLEEP_PERCENT. */
 #define BACKLIGHT_PIN BSP_LCD_BACKLIGHT
-#define BACKLIGHT_OFF_LEVEL 1       /* inverted: HIGH is dark */
 #define BACKLIGHT_CHANNEL CONFIG_BSP_DISPLAY_BRIGHTNESS_LEDC_CH
-#define BACKLIGHT_TIMER LEDC_TIMER_1
-/* Ten bits, from the board support. Full scale is one more than
- * the largest value it ever writes, and that one count is the
- * pulse this removes. */
-#define BACKLIGHT_DUTY_BITS 10
-#define BACKLIGHT_FULL_DUTY (1 << BACKLIGHT_DUTY_BITS)
 
 /* How the pin is measured, and why a single read is not a measurement.
  *
@@ -131,41 +134,53 @@ static int backlight_high_reads(void)
     return high;
 }
 
+/* What a sleeping panel looks like on this board, and why it is not dark.
+ *
+ * Three measurements decide it, and each one came off the board:
+ *
+ *   pin held low      full brightness. A duty of 1024 wraps to 0 in a ten
+ *                     bit register, and the screen came up bright.
+ *   pin held high     240 of 240 reads, and the screen swung between dark
+ *                     and dim for as long as it slept.
+ *   the rails         the board support names no power chip and no
+ *                     backlight enable. Its expander pins are the LCD's
+ *                     SPI, the audio amplifier and the panel reset.
+ *
+ * A level is not a request this driver can answer. Holding the pin high is
+ * a PWM of zero on-time, and a boost converter that carries no energy in a
+ * period never reaches regulation: it starts, gives up and starts again.
+ * That is the swinging, and it is what the hardware does when it is asked
+ * for nothing. Holding the pin low is the other end, which is everything.
+ *
+ * Nothing in software reaches the supply behind those LEDs, so the screen
+ * cannot go dark. What it can do is go to the lowest brightness the
+ * converter still regulates, which is steady. So sleep dims rather than
+ * switches off, and the window says so rather than leaving somebody to
+ * wonder why the wall glows.
+ *
+ * Five is the floor the settings page already offers on its slider. */
+#define BACKLIGHT_SLEEP_PERCENT 5
+
 static void backlight_off(void)
 {
-    /* ledc_stop, and nothing else. This is what the board said.
-     *
-     *   backlight pin 4 high on 240 of 240 reads after ledc_stop,
-     *   240 of 240 as a plain output; 1 is dark
-     *
-     * Both ways hold the pin at the dark level, solidly, across the whole
-     * period. So the pad never needed taking away from LEDC: the two are
-     * the same at the pin, and the takeover only made LEDC warn that it
-     * could not have the pin back on the next wake.
-     *
-     * It says more than that. ledc_stop at an idle high is what this
-     * firmware did before any of this, so the pin was held at the dark
-     * level from the start. Whatever lights those LEDs while the panel
-     * sleeps was never reached by this file, and three changes here were
-     * three answers to a question that was not the one being asked.
-     *
-     * The measurement stays. It is seven milliseconds once per sleep, and
-     * it is the one thing in this file that the board agrees with. */
+    esp_err_t err=bsp_display_brightness_set(BACKLIGHT_SLEEP_PERCENT);
+    /* The input buffer, so the reads below are reads. ledc_set_pin leaves
+     * the pad output only, and gpio_get_level on such a pad gives 0 for
+     * every state of it. The routing is untouched by this. */
     gpio_set_direction(BACKLIGHT_PIN,GPIO_MODE_INPUT_OUTPUT);
-    esp_err_t err=ledc_stop(LEDC_LOW_SPEED_MODE,BACKLIGHT_CHANNEL,
-                            BACKLIGHT_OFF_LEVEL);
-    int held=backlight_high_reads();
+    int high=backlight_high_reads();
+    /* Between none and all of the reads is a pin that carries a real PWM,
+     * which is the whole point: a converter with something to regulate is
+     * a converter that holds still. All of them, or none, is the state
+     * that swings. */
     ESP_LOGW("panel_display",
-             "backlight pin %d high on %d of %d reads, stop=%s; %d is dark",
-             (int)BACKLIGHT_PIN,held,BACKLIGHT_SAMPLES,esp_err_to_name(err),
-             BACKLIGHT_OFF_LEVEL);
+             "backlight at %d%%: pin %d high on %d of %d reads, set=%s",
+             BACKLIGHT_SLEEP_PERCENT,(int)BACKLIGHT_PIN,high,
+             BACKLIGHT_SAMPLES,esp_err_to_name(err));
 }
 
 static esp_err_t backlight_on(int brightness)
 {
-    /* The pin never leaves LEDC, so there is nothing to give back.
-     * bsp_display_brightness_set writes the duty and calls
-     * ledc_update_duty, which enables the output again. */
     return bsp_display_brightness_set(brightness);
 }
 
@@ -179,8 +194,9 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
          * visible. */
         panel_ui_sleep(panel_screen,panel_input,true);
         backlight_off();
-        ESP_LOGI("panel_display","Backlight OFF: pin %d held high, off the LEDC matrix",
-                 (int)BACKLIGHT_PIN);
+        ESP_LOGI("panel_display",
+                 "Display asleep: backlight down to %d%%, which is as dark "
+                 "as this board goes",BACKLIGHT_SLEEP_PERCENT);
     }else{
         panel_ui_sleep(panel_screen,panel_input,false);
         esp_err_t err=backlight_on(brightness);
