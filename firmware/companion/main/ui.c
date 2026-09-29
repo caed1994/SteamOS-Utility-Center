@@ -17,7 +17,7 @@
 #define BLUE 0x49A8F7
 #define RED 0xF06B79
 
-static lv_obj_t *connection,*dot,*battery,*audio_status,*audio_toggle,*audio_knob,*volume,*small_volume,*brightness_label,*message;
+static lv_obj_t *connection,*dot,*battery,*audio_status,*audio_toggle,*audio_knob,*volume,*brightness_label,*message;
 static lv_obj_t *controls[6],*overlay,*setup_screen,*setup_text,*cpu_value,*gpu_value,*power_value;
 static panel_action_cb_t send_action;
 static panel_setting_cb_t save_setting;
@@ -223,9 +223,15 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     line(left,16,112,190,1);
     center_text(text_at(left,panel_text(TXT_PC_VOLUME),12,135,196,&lv_font_montserrat_14,MUTED));
     volume=text_at(left,"-- %",12,166,196,&lv_font_montserrat_32,TEXT);center_text(volume);
-    controls[PANEL_VOLUME_DOWN]=button(left,LV_SYMBOL_MINUS,12,232,48,48,clicked,PANEL_VOLUME_DOWN);
-    lv_obj_t *v=panel(left,66,232,88,48,0x18314A,true);small_volume=text_at(v,"-- %",0,15,86,&lv_font_montserrat_16,TEXT);center_text(small_volume);
-    controls[PANEL_VOLUME_UP]=button(left,LV_SYMBOL_PLUS,160,232,48,48,clicked,PANEL_VOLUME_UP);
+    /* Two buttons over the width of the card, and nothing between them.
+     * The number was there twice: once in the big label above, and once
+     * again in a box between these two, which said the same thing in a
+     * smaller font. The room it took is theirs now, and the sign on each
+     * one grew with it. */
+    controls[PANEL_VOLUME_DOWN]=button(left,LV_SYMBOL_MINUS,12,232,92,56,clicked,PANEL_VOLUME_DOWN);
+    controls[PANEL_VOLUME_UP]=button(left,LV_SYMBOL_PLUS,116,232,92,56,clicked,PANEL_VOLUME_UP);
+    lv_obj_set_style_text_font(controls[PANEL_VOLUME_DOWN],&lv_font_montserrat_24,0);
+    lv_obj_set_style_text_font(controls[PANEL_VOLUME_UP],&lv_font_montserrat_24,0);
     icon(right,&icon_monitor,22,23,MUTED);
     text_at(right,panel_text(TXT_PC_CONTROL),60,27,160,&lv_font_montserrat_14,MUTED);
     line(right,14,68,196,1);
@@ -268,7 +274,7 @@ void panel_ui_update(const panel_state_t *s)
     bool audio=s->online&&s->volume>=0;
     lv_label_set_text(audio_status,!audio?"--":s->muted?panel_text(TXT_MUTED):panel_text(TXT_ACTIVE));
     lv_obj_t *track=lv_obj_get_user_data(audio_toggle);lv_obj_set_style_bg_color(track,lv_color_hex(audio&&!s->muted?BLUE:EDGE),0);lv_obj_set_x(audio_knob,audio&&!s->muted?27:3);
-    if(audio){lv_label_set_text_fmt(volume,"%d %%",s->volume);lv_label_set_text_fmt(small_volume,"%d %%",s->volume);}else{lv_label_set_text(volume,"-- %");lv_label_set_text(small_volume,"-- %");}
+    if(audio)lv_label_set_text_fmt(volume,"%d %%",s->volume);else lv_label_set_text(volume,"-- %");
     for(int i=0;i<6;i++){bool enabled=s->online&&(i>=3||audio);if(enabled)lv_obj_remove_state(controls[i],LV_STATE_DISABLED);else lv_obj_add_state(controls[i],LV_STATE_DISABLED);}
     if(s->online&&s->cpu_temp>=0)lv_label_set_text_fmt(cpu_value,"%d °C",s->cpu_temp);else lv_label_set_text(cpu_value,"-- °C");
     if(s->online&&s->gpu_temp>=0)lv_label_set_text_fmt(gpu_value,"%d °C",s->gpu_temp);else lv_label_set_text(gpu_value,"-- °C");

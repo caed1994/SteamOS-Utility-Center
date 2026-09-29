@@ -119,13 +119,19 @@ jobs:
           cmake -S firmware/companion/preview -B preview-build \
                 -DCMAKE_BUILD_TYPE=Debug
           cmake --build preview-build --target check_power check_idle \
-                check_navigation check_boot -j"$(nproc)"
+                check_navigation check_boot panel_preview -j"$(nproc)"
           ./preview-build/check_power
           ./preview-build/check_idle
           ./preview-build/check_navigation
           # check_boot plays the real animation, so it takes the clip's own
           # three seconds and a little more.
           ./preview-build/check_boot
+          # panel_preview draws the screen into a file. It answers nothing,
+          # and building and running it is the point: it went stale twice
+          # while nothing built it. tests/test_preview_checks.py holds that
+          # every target under preview/ is named on the line above.
+          ./preview-build/panel_preview "$RUNNER_TEMP/panel.ppm"
+          ls -l "$RUNNER_TEMP/panel.ppm"
 
       - name: Put the image where the panel looks for it
         shell: bash

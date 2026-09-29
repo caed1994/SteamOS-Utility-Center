@@ -16,8 +16,13 @@ int main(int argc,char **argv)
     panel_settings_t settings={.brightness=70,.sound_volume=30,.touch_tones=false};
     panel_ui_create(NULL,NULL,NULL,&settings);
     panel_state_t s={.wifi=true,.online=true,.battery=85,.volume=42,.cpu_temp=49,.gpu_temp=56,.gpu_watts=78};
-    strcpy(s.host,"FractalMachine");strcpy(s.controller,"PlayStation Controller");strcpy(s.charging,"Akkubetrieb");strcpy(s.message,"Status aktuell");
-    if(argc>2&&strcmp(argv[2],"offline")==0){s.online=false;s.wifi=false;strcpy(s.message,"WLAN-Verbindung wird aufgebaut");}
+    /* charging is a flag and not a word any more, and this still wrote a
+     * word into it. Nothing built this file, so nothing said so. The job in
+     * .github/workflows/companion-firmware.yml builds and runs it now. */
+    s.charging=false;
+    strcpy(s.host,"FractalMachine");strcpy(s.controller,"PlayStation Controller");
+    strcpy(s.message,"Up to date");
+    if(argc>2&&strcmp(argv[2],"offline")==0){s.online=false;s.wifi=false;strcpy(s.message,"Joining the network");}
     if(argc>2&&strcmp(argv[2],"setup")==0){s.setup=true;strcpy(s.setup_ssid,"SteamOS-Panel-3A12");strcpy(s.setup_password,"ABCD2345EFGH");}
     panel_ui_update(&s);
     if(argc>2&&strcmp(argv[2],"confirm")==0)panel_ui_confirm(PANEL_POWEROFF);
