@@ -193,6 +193,11 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     // the language changes. Without it the new words are drawn over the old
     // ones. The pointers below are the ones that outlive a clean.
     lv_obj_clean(s);overlay=NULL;setup_screen=NULL;setup_text=NULL;
+    /* The settings page is a child of this screen too, so the clean
+     * above took it. Kept, its pointer is the reason that
+     * panel_ui_settings_open returns at once and the page never opens
+     * again. check_navigation builds the screens with that page open. */
+    settings_screen=NULL;brightness_label=NULL;sound_value=NULL;sound_status=NULL;
     /* The black cover of a sleeping panel is a child of this screen,
      * so the clean above took it. See panel_ui_sleep_reset. */
     panel_ui_sleep_reset();

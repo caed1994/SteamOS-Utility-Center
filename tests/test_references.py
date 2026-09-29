@@ -60,8 +60,12 @@ def names(text):
 # Where to read the names from. A binary file holds none.
 SUFFIXES = (".py", ".sh", ".service", ".md", ".conf")
 
+# managed_components holds other people's projects, which the firmware build
+# downloads and no repository here keeps. LVGL has a docs, a tests and a
+# scripts directory of its own, and its README names files in them. Those
+# names are right where they are written and wrong when read from here.
 SKIP = {".git", "node_modules", "__pycache__", ".pytest_cache", "dist",
-        ".venv", "build"}
+        ".venv", "build", "managed_components"}
 
 
 def _files():

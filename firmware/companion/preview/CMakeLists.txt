@@ -1,6 +1,21 @@
 # SPDX-FileCopyrightText: 2026 caed1994
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.16)
+
+# These run on a normal machine, with cmake and a C compiler and no Espressif
+# tools. They need the LVGL that the firmware pins, which the firmware build
+# downloads into a directory that no repository holds. Get it directly:
+#
+#   cd firmware/companion
+#   git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git \
+#             managed_components/lvgl__lvgl
+#   cmake -S preview -B /tmp/preview -DCMAKE_BUILD_TYPE=Debug
+#   cmake --build /tmp/preview --target check_power check_idle check_navigation
+#   /tmp/preview/check_power && /tmp/preview/check_idle && \
+#   /tmp/preview/check_navigation
+#
+# The version is the one in main/idf_component.yml. The job in
+# .github/workflows/companion-firmware.yml runs the same three at each push.
 project(panel_preview C CXX)
 set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lv_conf.h" CACHE PATH "")
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)

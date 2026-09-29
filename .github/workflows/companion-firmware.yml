@@ -101,13 +101,17 @@ jobs:
 
       - name: Build and run the checks that need LVGL
         # firmware/companion/preview holds three checks of the screen half,
-        # and nothing ran them. They link against the LVGL that the build
-        # above downloaded, so this is the one place that can.
+        # and nothing ran them. They link against LVGL, which the build above
+        # already downloaded, so here they cost nothing to build.
         #
         # They were unbuildable when this step was written: ui.c had grown a
         # call into panel_text.c and another into panel_ui_sleep.c, and
         # neither was in the CMakeLists. Nothing noticed, because nothing
-        # built them.
+        # built them. The first run of check_navigation then failed, because
+        # it clicked on the German words of a panel that answers in English.
+        #
+        # firmware/companion/preview/CMakeLists.txt says how to run these on
+        # your own machine, which takes one clone and no Espressif tools.
         shell: bash
         run: |
           set -euo pipefail
