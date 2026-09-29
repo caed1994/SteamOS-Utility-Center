@@ -43,6 +43,35 @@ say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 [[ $EUID -ne 0 ]] || die "run this as yourself, not with sudo. See the note above."
 [[ -e "$PORT" ]] || die "$PORT is not there. Use a data cable, not a charging one."
 
+# Whose board is on that port.
+#
+# This writes a whole flash, and the port it writes to used to be a guess in
+# a text field on a page. An ESP32-S3 has the vendor of Espressif, and a
+# Steam Controller dongle, an FTDI board and a printer do not. Reading the
+# vendor disturbs nothing: it is a file that udev already filled in.
+#
+# esptool refuses a wrong chip as well, with --chip above, but it resets the
+# board before it looks. A reset of somebody else's device is a small thing
+# and it is not nothing, so the question is asked before that.
+#
+# A machine with no udevadm gets no check and a line saying so, rather than
+# a refusal to flash a board that is probably right.
+ESPRESSIF="303a"
+if command -v udevadm >/dev/null 2>&1; then
+    VENDOR="$(udevadm info --query=property --name="$PORT" 2>/dev/null \
+              | sed -n 's/^ID_VENDOR_ID=//p' | head -1)"
+    MODEL="$(udevadm info --query=property --name="$PORT" 2>/dev/null \
+             | sed -n 's/^ID_MODEL=//p' | head -1)"
+    if [[ -n "$VENDOR" && "${VENDOR,,}" != "$ESPRESSIF" ]]; then
+        die "$PORT is not an Espressif board. It reports ${MODEL:-vendor $VENDOR}.
+The panel is an ESP32-S3 and shows up as an Espressif device. Look at
+  ls -l /dev/serial/by-id/
+and use the one whose name holds Espressif."
+    fi
+else
+    say "No udevadm here, so nothing checked which board is on $PORT."
+fi
+
 # The three parts of an image, at the offsets the partition table gives.
 BOOTLOADER="$BUILD/bootloader/bootloader.bin"
 PARTITIONS="$BUILD/partition_table/partition-table.bin"

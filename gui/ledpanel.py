@@ -29,6 +29,7 @@ from steamos_utility_center import pegboard as pegboard_module
 from steamos_utility_center import power as power_module
 from steamos_utility_center import temperature
 from steamos_utility_center import wake as wake_module
+from steamos_utility_center import serialport
 from steamos_utility_center import wakeonlan
 
 INSTALL_DIR = "/var/lib/steamos-utility-center"
@@ -1930,6 +1931,20 @@ def wake_state(run=None):
     if said is None:
         return None, []
     return wake_module.state(said)
+
+
+def serial_ports():
+    """Every USB serial port, with a word about what is on it.
+
+    A list of dictionaries with "device" and "said". The panel page offers
+    these rather than a typed path: the port of a board is a guess when one
+    is plugged in and a coin toss when two are.
+    """
+    found = []
+    for port in serialport.list_ports():
+        found.append({"device": port["device"],
+                      "said": serialport.describe(port["device"])})
+    return found
 
 
 def wol_switch_command(state):

@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "server"))
@@ -188,6 +189,84 @@ class SerialLoopbackTest(unittest.TestCase):
         self.assertEqual(int.from_bytes(received[:2], "little"), 17)
         self.assertEqual(received[2:], payload)
         self.assertEqual(received[2:5], bytes((10, 20, 30)))
+
+    def test_it_asks_every_port_and_takes_the_one_that_answers(self):
+        """The fault that took the LED strip down when a panel arrived.
+
+        The port was whichever sorted highest, and both an Espressif panel
+        and an FTDI board count as known adapters, so the alphabet decided:
+        /dev/ttyACM0 beat /dev/ttyUSB0. The service then streamed frames at
+        a wall panel, which ignored them, and said nothing at all.
+
+        Two ports here. The silent one is listed first, the way the panel
+        was, and the answering one has to win anyway.
+        """
+        silent_master, silent_slave = pty.openpty()
+        self.addCleanup(os.close, silent_master)
+        self.addCleanup(os.close, silent_slave)
+        silent = os.ttyname(silent_slave)
+        esp = self.start_esp()
+
+        with mock.patch.object(link, "list_ports",
+                               return_value=[{"device": silent},
+                                             {"device": self.device}]):
+            bridge = link.EspLink(port="auto", baudrate=BAUD, led_count=17)
+            bridge.BOOT_DELAY = 0.05
+            self.addCleanup(bridge.disconnect)
+            self.assertTrue(bridge.connect())
+
+        self.assertEqual(bridge.serial.device, self.device,
+                         "it settled for the port that never answered")
+        self.assertIsNotNone(bridge.info)
+        self.assertIsNotNone(esp.wait_for(link.MSG_HELLO))
+
+    def test_one_silent_port_still_gets_the_frames(self):
+        """A firmware older than the handshake answers nothing and is still
+        the right board. One port and no answer keeps working."""
+        with mock.patch.object(link, "list_ports",
+                               return_value=[{"device": self.device}]):
+            bridge = link.EspLink(port="auto", baudrate=BAUD, led_count=17)
+            bridge.BOOT_DELAY = 0.05
+            bridge.HELLO_ATTEMPTS = 1
+            bridge.HELLO_TIMEOUT = 0.05
+            self.addCleanup(bridge.disconnect)
+            self.assertTrue(bridge.connect(), "an old board was turned away")
+        self.assertIsNone(bridge.info)
+
+    def test_several_silent_ports_are_left_alone(self):
+        """Nothing tells them apart, and picking one writes into a device
+        that belongs to somebody else. It says which it saw instead."""
+        other_master, other_slave = pty.openpty()
+        self.addCleanup(os.close, other_master)
+        self.addCleanup(os.close, other_slave)
+        other = os.ttyname(other_slave)
+
+        with mock.patch.object(link, "list_ports",
+                               return_value=[{"device": other},
+                                             {"device": self.device}]):
+            bridge = link.EspLink(port="auto", baudrate=BAUD, led_count=17)
+            bridge.BOOT_DELAY = 0.05
+            bridge.HELLO_ATTEMPTS = 1
+            bridge.HELLO_TIMEOUT = 0.05
+            self.addCleanup(bridge.disconnect)
+            self.assertFalse(bridge.connect(),
+                             "it picked one of two silent ports")
+
+    def test_a_named_port_is_used_and_not_searched(self):
+        """Somebody named it. An old firmware on it has to keep working,
+        and nothing else is opened to look for a better answer."""
+        def refuse():
+            raise AssertionError("it looked for ports it was not asked about")
+
+        with mock.patch.object(link, "list_ports", side_effect=refuse):
+            bridge = link.EspLink(port=self.device, baudrate=BAUD,
+                                  led_count=17)
+            bridge.BOOT_DELAY = 0.05
+            bridge.HELLO_ATTEMPTS = 1
+            bridge.HELLO_TIMEOUT = 0.05
+            self.addCleanup(bridge.disconnect)
+            self.assertTrue(bridge.connect())
+        self.assertEqual(bridge.serial.device, self.device)
 
     def test_a_board_from_before_caps_reports_none(self):
         """Every board flashed before that message. Silence is the answer,

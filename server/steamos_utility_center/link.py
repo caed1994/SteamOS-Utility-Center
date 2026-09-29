@@ -19,7 +19,7 @@ import struct
 import time
 
 from .serialport import (BAUD_CONSTANTS, SerialError, SerialPort, describe,
-                         find_port)
+                         find_port, list_ports)
 
 LOG = logging.getLogger(__name__)
 
@@ -194,6 +194,7 @@ class EspLink:
         self._warned_missing = False
         self._known_good = {}   # device -> baud rate that answered before
         self._scanned = set()   # devices where a full scan already came up empty
+        self._warned_silent = False  # said once that nothing answered
 
     @property
     def connected(self):
@@ -208,8 +209,8 @@ class EspLink:
             return False
         self._next_attempt = now + self.reconnect_delay
 
-        device = find_port(self.configured_port)
-        if device is None:
+        devices = self._device_candidates()
+        if not devices:
             if not self._warned_missing:
                 LOG.warning("no ESP serial device found (configured: %s)",
                             self.configured_port)
@@ -217,6 +218,51 @@ class EspLink:
             return False
         self._warned_missing = False
 
+        # Ask every one of them before settling for any.
+        #
+        # This used to take the first port that sorted highest and stream at
+        # it whatever came back. A machine with one ESP has one port and
+        # never noticed. A machine with two has two, the wall panel sorts
+        # above an FTDI board on the alphabet alone, and the strip went dark
+        # the moment somebody plugged the panel in. Nothing said so: the
+        # frames went out and the panel ignored them.
+        for device in devices:
+            if self._try_device(device, blind=False):
+                return True
+
+        # Nothing answered anywhere. The firmware can be older than the
+        # handshake, so one port and no answer still gets the frames.
+        #
+        # Several ports and no answer is a different thing: there is nothing
+        # to tell them apart by, and picking one writes to a device that
+        # belongs to somebody else. It says which ports it saw instead.
+        if len(devices) == 1:
+            return self._try_device(devices[0], blind=True)
+        if not self._warned_silent:
+            LOG.warning("none of these answered a HELLO, so none was chosen: "
+                        "%s. Set SERIAL_PORT to the one with the strip on it.",
+                        ", ".join(describe(one) for one in devices))
+            self._warned_silent = True
+        return False
+
+    def _device_candidates(self):
+        """The ports to ask, best first, or the one that was configured.
+
+        A configured port is the answer and not a candidate: somebody named
+        it, and a firmware too old to answer a HELLO has to keep working.
+        """
+        if self.configured_port and self.configured_port != "auto":
+            device = find_port(self.configured_port)
+            return [device] if device else []
+        return [port["device"] for port in list_ports()]
+
+    def _try_device(self, device, blind):
+        """One port, at each baud rate that it possibly runs at.
+
+        `blind` is what happens when no rate answers: True adopts it anyway,
+        for a firmware older than the handshake, and False leaves it alone so
+        the caller can ask the next port.
+        """
         candidates = self._baud_candidates(device)
         if not candidates:
             LOG.error("no usable baud rate for %s (configured: %s)",
@@ -242,7 +288,7 @@ class EspLink:
                 self._adopt(port, device, rate, info, caps)
                 return True
 
-            if index == 0:
+            if index == 0 and blind:
                 preferred = port    # keep it open for blind mode below
             else:
                 port.close()
@@ -251,8 +297,6 @@ class EspLink:
             # Remember the miss so later reconnects do not repeat the scan.
             self._scanned.add(device)
 
-        # Nothing answered. The firmware can be older than the handshake, so
-        # send frames at the configured rate and do not stop.
         if preferred is not None:
             self._adopt(preferred, device, candidates[0], None, 0)
             LOG.warning("no HELLO reply from %s; streaming at %d baud anyway",

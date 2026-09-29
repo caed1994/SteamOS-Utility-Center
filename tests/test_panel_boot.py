@@ -19,6 +19,9 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
+import subprocess
+import shutil
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -297,6 +300,72 @@ class TheJobRunsItTest(unittest.TestCase):
         build = read(os.path.join(COMPANION, "preview", "CMakeLists.txt"))
         self.assertIn("add_executable(check_boot check_boot.c "
                       "../main/panel_boot.c)", build)
+
+
+class FlashGuardTest(unittest.TestCase):
+    """What scripts/flash-companion.sh refuses to write to.
+
+    The port was a guess in a text field. On the machine this was found on,
+    /dev/ttyACM0 was the panel, /dev/ttyACM1 was a Steam Controller dongle,
+    and unplugging the panel moved the dongle to ACM0. The button would then
+    have reset a Valve device and handed it to esptool.
+
+    esptool refuses a wrong chip on its own, but only after resetting the
+    board to ask. The vendor is a file udev already filled in, so it is read
+    first and nothing is disturbed.
+    """
+
+    SCRIPT = os.path.join(REPO, "scripts", "flash-companion.sh")
+
+    def run_it(self, vendor, model="Some Device"):
+        """The script, as a person and not as root, with a made-up udevadm."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        # mkdtemp gives 0700, and the script is run as somebody else below,
+        # who then cannot even reach the port it is asked about.
+        os.chmod(root, 0o755)
+        fake = os.path.join(root, "udevadm")
+        with open(fake, "w") as handle:
+            handle.write("#!/usr/bin/env bash\n"
+                         "echo ID_VENDOR_ID=%s\n"
+                         "echo ID_MODEL=%s\n" % (vendor, model.replace(" ", "_")))
+        os.chmod(fake, 0o755)
+        port = os.path.join(root, "ttyFake")
+        open(port, "w").close()
+        place = dict(os.environ, PATH="%s:%s" % (root, os.environ["PATH"]),
+                     HOME=root)
+        # Not as root: the script refuses that before it looks at anything.
+        return subprocess.run(
+            ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups",
+             "bash", self.SCRIPT, port, root],
+            capture_output=True, text=True, env=place, timeout=60)
+
+    def test_it_refuses_a_board_that_is_not_espressif(self):
+        done = self.run_it("28de", "Steam Controller")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("not an Espressif board", done.stderr)
+
+    def test_it_says_what_it_found_instead(self):
+        """A refusal that names nothing leaves a person guessing which of
+        their three ports it was."""
+        done = self.run_it("0403", "FTDI USB Serial")
+        self.assertIn("FTDI", done.stderr)
+        self.assertIn("/dev/serial/by-id/", done.stderr)
+
+    def test_an_espressif_board_gets_past_the_guard(self):
+        """It stops later for want of an image, which is the next check and
+        not this one."""
+        done = self.run_it("303a", "USB JTAG serial debug unit")
+        self.assertNotIn("not an Espressif board", done.stderr)
+        self.assertIn("no firmware in", done.stderr)
+
+    def test_the_vendor_is_read_before_esptool_runs(self):
+        """esptool resets the board to ask which chip it is. A reset of
+        somebody else's device is small and it is not nothing."""
+        with open(self.SCRIPT, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertLess(text.index("not an Espressif board"),
+                        text.index("-m esptool"))
 
 
 if __name__ == "__main__":

@@ -5776,8 +5776,12 @@ class CompanionPageTest(unittest.TestCase):
         panel = self._panel()
         self._with_image()
         self._answer(True)
-        panel.companion_port.delete(0, "end")
-        panel.companion_port.insert(0, "/dev/ttyUSB7")
+        # The field is a drop-down of what is plugged in, so a port is
+        # chosen by its label. _label_for takes one the list does not offer
+        # and adds it, which is what a machine with no board plugged in
+        # needs anyway.
+        panel.companion_port.set(panel._label_for("companion-port",
+                                                  "/dev/ttyUSB7"))
         panel._flash_companion()
         self.assertEqual(len(self.ran), 1)
         self.assertTrue(self.ran[0][0].endswith("scripts/flash-companion.sh"),
@@ -5799,7 +5803,7 @@ class CompanionPageTest(unittest.TestCase):
         panel = self._panel()
         self._with_image()
         self._answer(True)
-        panel.companion_port.delete(0, "end")
+        panel.companion_port.set("")
         panel._flash_companion()
         self.assertIn(self.panel_module.page_companion.DEFAULT_BOARD_PORT,
                       self.ran[0])
@@ -5841,8 +5845,8 @@ class CompanionPageTest(unittest.TestCase):
         install ESP-IDF to read one line undoes the reason the image is in
         this repository at all."""
         panel = self._panel()
-        panel.companion_port.delete(0, "end")
-        panel.companion_port.insert(0, "/dev/ttyACM3")
+        panel.companion_port.set(panel._label_for("companion-port",
+                                                  "/dev/ttyACM3"))
         panel._read_companion_log()
         self.assertEqual(len(self.ran), 1)
         self.assertTrue(self.ran[0][0].endswith("scripts/panel-log.sh"),

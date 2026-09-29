@@ -19,6 +19,7 @@ here is a method of Panel and `self` is the window.
 
 from __future__ import annotations
 
+import tkinter as tk
 from tkinter import ttk
 
 import dialogs
@@ -205,6 +206,50 @@ class CompanionPage:
         _where, state = ledpanel.companion_image(SOURCE_DIR)
         return self.IMAGE_SAYS[state]
 
+    def _load_companion_ports(self):
+        """Puts what is plugged in on the list, keeping the choice if it is
+        still there.
+
+        The label of each entry names the board and the value is the port,
+        so a person reads "Espressif USB JTAG" and not a path that means
+        nothing until something goes wrong.
+
+        A machine with nothing plugged in keeps the old guess as the only
+        entry, so the field is never empty and the line under it says what
+        is missing.
+        """
+        if not hasattr(self, "companion_port"):
+            return
+        ports = ledpanel.serial_ports()
+        choices = [(one["said"], one["device"]) for one in ports]
+        if not choices:
+            choices = [("Nothing is plugged in", DEFAULT_BOARD_PORT)]
+        self._menus["companion-port"] = choices
+        chosen = self._companion_port_value()
+        if chosen not in [value for _label, value in choices]:
+            chosen = choices[0][1]
+        self.companion_port.set(self._label_for("companion-port", chosen))
+        self._say_companion_port()
+
+    def _companion_port_value(self):
+        """The port itself, from the label on the field."""
+        return self._value_for("companion-port", self.companion_port.get())
+
+    def _say_companion_port(self):
+        """Names what the flash would write to, under the row."""
+        if not hasattr(self, "companion_port_said"):
+            return
+        chosen = self._companion_port_value()
+        known = any(chosen == value
+                    for _label, value in self._menus.get("companion-port", ()))
+        if known and ledpanel.serial_ports():
+            self.companion_port_said.configure(
+                text="The panel is written at %s." % chosen)
+        else:
+            self.companion_port_said.configure(
+                text="Nothing is plugged in at %s. Use a data cable, at the "
+                     "programming socket." % chosen)
+
     def _build_companion_board(self, parent):
         inner = self._companion_card(parent, "The board")
         self.companion_build = self._companion_line(
@@ -217,9 +262,22 @@ class CompanionPage:
         row = ttk.Frame(inner, style="OnCard.TFrame")
         row.pack(anchor="w", pady=(GROUP_GAP, 0))
         ttk.Label(row, text="Port", style="Muted.TLabel").pack(side="left")
-        self.companion_port = ttk.Entry(row, width=ROW_FIELD_WIDTH)
-        self.companion_port.insert(0, DEFAULT_BOARD_PORT)
-        self.companion_port.pack(side="left", padx=(ROW_GAP, 0))
+        # A list of what is plugged in, and not a typed path.
+        #
+        # It was a text field holding a guess. A machine with one board has
+        # one port and the guess was right; a machine with two has two, and
+        # on the one this was found on the guess pointed at a Steam
+        # Controller dongle whenever the panel was unplugged.
+        #
+        # _field and not a combobox, for the reason _field gives: Tk posts
+        # its own list under a grab it does not release, and it stays above
+        # the next window. tests/test_panel_live.py walks the window for
+        # them, and it found this one.
+        self.companion_port = tk.StringVar()
+        self._field(row, "companion-port", self.companion_port, [],
+                    DEFAULT_BOARD_PORT,
+                    width=ROW_FIELD_WIDTH).pack(side="left",
+                                                padx=(ROW_GAP, 0))
         ttk.Button(row, text="Flash the panel", style="Filled.TButton",
                    command=self._flash_companion).pack(side="left",
                                                        padx=(ROW_GAP, 0))
@@ -232,6 +290,10 @@ class CompanionPage:
             "puts what the panel says below. Press the button on the panel "
             "while it runs. It needs no build tools."
             % ledpanel.COMPANION_LOG_SECONDS)
+        # What is on the port that is chosen. Built here and filled by
+        # _load_companion_ports, which runs now and at every refresh.
+        self.companion_port_said = self._companion_line(inner, "")
+        self._load_companion_ports()
 
     def _read_companion_log(self):
         """Reads the panel's own words, for somebody who has to report them.
@@ -241,7 +303,7 @@ class CompanionPage:
         ESP-IDF to read one line undoes the reason the image is in this
         repository at all.
         """
-        port = self.companion_port.get().strip() or DEFAULT_BOARD_PORT
+        port = self._companion_port_value() or DEFAULT_BOARD_PORT
         self.runner.start(ledpanel.panel_log_command(SOURCE_DIR, port))
 
     def _flash_companion(self):
@@ -256,7 +318,7 @@ class CompanionPage:
         service it does not match, and what a person sees then is "no PC" on
         a wall with nothing to say why.
         """
-        port = self.companion_port.get().strip() or DEFAULT_BOARD_PORT
+        port = self._companion_port_value() or DEFAULT_BOARD_PORT
         where, state = ledpanel.companion_image(SOURCE_DIR)
         if state in (ledpanel.IMAGE_NONE, ledpanel.IMAGE_STALE):
             self._say("Flash the panel", self.IMAGE_SAYS[state])
