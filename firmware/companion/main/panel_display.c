@@ -133,59 +133,39 @@ static int backlight_high_reads(void)
 
 static void backlight_off(void)
 {
-    /* Three ways of holding this pin have been tried on the board and the
-     * screen stayed lit for all three. Each time the reasoning was sound
-     * and the result was not measured, so this measures instead.
+    /* ledc_stop, and nothing else. This is what the board said.
      *
-     * What is already known, from the board and not from a guess:
+     *   backlight pin 4 high on 240 of 240 reads after ledc_stop,
+     *   240 of 240 as a plain output; 1 is dark
      *
-     *   duty 1023 of 1024  one low slot per period; the converter behind
-     *                      the LEDs hiccups on it and the screen swings
-     *   duty 1024          wraps to 0, so the output is a constant low,
-     *                      which on an inverted input is full brightness
+     * Both ways hold the pin at the dark level, solidly, across the whole
+     * period. So the pad never needed taking away from LEDC: the two are
+     * the same at the pin, and the takeover only made LEDC warn that it
+     * could not have the pin back on the next wake.
      *
-     * The two that are left are the driver's own stop at an idle high, and
-     * a plain output held high. Both are applied in turn and the pin is
-     * measured after each, so the next log says which of them holds. The
-     * plain output is applied last and is what the panel sleeps under. */
+     * It says more than that. ledc_stop at an idle high is what this
+     * firmware did before any of this, so the pin was held at the dark
+     * level from the start. Whatever lights those LEDs while the panel
+     * sleeps was never reached by this file, and three changes here were
+     * three answers to a question that was not the one being asked.
+     *
+     * The measurement stays. It is seven milliseconds once per sleep, and
+     * it is the one thing in this file that the board agrees with. */
     gpio_set_direction(BACKLIGHT_PIN,GPIO_MODE_INPUT_OUTPUT);
-
-    ledc_stop(LEDC_LOW_SPEED_MODE,BACKLIGHT_CHANNEL,BACKLIGHT_OFF_LEVEL);
-    int after_stop=backlight_high_reads();
-
-    /* gpio_reset_pin and not gpio_config: it is the call that gives the pad
-     * back to the GPIO matrix, and gpio_config leaves the routing alone.
-     * It also enables a pull-up, which on an inverted input pulls towards
-     * dark. The direction is set again after it, because the reset leaves
-     * the pin an input. */
-    gpio_reset_pin(BACKLIGHT_PIN);
-    gpio_set_direction(BACKLIGHT_PIN,GPIO_MODE_INPUT_OUTPUT);
-    gpio_set_level(BACKLIGHT_PIN,BACKLIGHT_OFF_LEVEL);
-    int after_gpio=backlight_high_reads();
-
+    esp_err_t err=ledc_stop(LEDC_LOW_SPEED_MODE,BACKLIGHT_CHANNEL,
+                            BACKLIGHT_OFF_LEVEL);
+    int held=backlight_high_reads();
     ESP_LOGW("panel_display",
-             "backlight pin %d high on %d of %d reads after ledc_stop, "
-             "%d of %d as a plain output; %d is dark",
-             (int)BACKLIGHT_PIN,after_stop,BACKLIGHT_SAMPLES,
-             after_gpio,BACKLIGHT_SAMPLES,BACKLIGHT_OFF_LEVEL);
+             "backlight pin %d high on %d of %d reads, stop=%s; %d is dark",
+             (int)BACKLIGHT_PIN,held,BACKLIGHT_SAMPLES,esp_err_to_name(err),
+             BACKLIGHT_OFF_LEVEL);
 }
 
 static esp_err_t backlight_on(int brightness)
 {
-    /* The pad went to the GPIO matrix, so LEDC needs the pin back. The
-     * channel as the board support made it, with the timer and the
-     * resolution it gave. */
-    const ledc_channel_config_t channel={
-        .gpio_num=BACKLIGHT_PIN,
-        .speed_mode=LEDC_LOW_SPEED_MODE,
-        .channel=BACKLIGHT_CHANNEL,
-        .intr_type=LEDC_INTR_DISABLE,
-        .timer_sel=BACKLIGHT_TIMER,
-        .duty=0,
-        .hpoint=0,
-    };
-    esp_err_t err=ledc_channel_config(&channel);
-    if(err!=ESP_OK)return err;
+    /* The pin never leaves LEDC, so there is nothing to give back.
+     * bsp_display_brightness_set writes the duty and calls
+     * ledc_update_duty, which enables the output again. */
     return bsp_display_brightness_set(brightness);
 }
 

@@ -77,41 +77,35 @@ class BacklightTest(unittest.TestCase):
         self.assertIn("GPIO_MODE_INPUT_OUTPUT", text)
         self.assertNotIn("GPIO_MODE_OUTPUT", text)
 
-    def test_the_two_ways_left_are_both_tried_and_both_measured(self):
-        """Full scale is out: 1024 wraps to 0 and the board reads a constant
-        low, which on an inverted input is full brightness."""
+    def test_it_holds_the_pin_the_way_the_board_said_works(self):
+        """240 of 240 after ledc_stop, and 240 of 240 as a plain output. The
+        two are the same at the pin, so the pad never needed taking away and
+        the takeover only made LEDC warn on the next wake."""
         body = self.part("static void backlight_off")
         self.assertIn("ledc_stop", body)
-        self.assertIn("gpio_reset_pin", body)
-        self.assertEqual(body.count("backlight_high_reads()"), 2)
-        self.assertLess(body.index("ledc_stop"), body.index("gpio_reset_pin"))
+        self.assertEqual(body.count("backlight_high_reads()"), 1)
+        text = self.source()
+        self.assertNotIn("gpio_reset_pin", text)
+        self.assertNotIn("esp_rom_gpio_pad_select_gpio", text)
 
-    def test_the_log_names_both_results_and_the_dark_level(self):
+    def test_the_log_names_the_reading_and_the_dark_level(self):
         body = self.part("static void backlight_off")
-        self.assertIn("after_stop", body)
-        self.assertIn("after_gpio", body)
+        self.assertIn("held", body)
+        self.assertIn("esp_err_to_name(err)", body)
         self.assertIn("BACKLIGHT_OFF_LEVEL", body)
 
-    def test_a_reset_pad_gets_its_direction_back(self):
-        """gpio_reset_pin leaves the pin an input, and an input drives
-        nothing."""
-        body = self.part("static void backlight_off")
-        after = body[body.index("gpio_reset_pin"):]
-        self.assertIn("gpio_set_direction", after)
-        self.assertLess(after.index("gpio_set_direction"),
-                        after.index("gpio_set_level"))
+    def test_the_measurement_stays(self):
+        """It is seven milliseconds once per sleep, and it is the one thing
+        in this file that the board agrees with."""
+        self.assertIn("backlight_high_reads", self.part(
+            "static void backlight_off"))
 
-    def test_waking_gives_the_pin_back_before_the_brightness_is_set(self):
-        """brightness_set writes a duty, and a duty reaches nothing while
-        the pad belongs to the GPIO matrix.
-
-        The call and not the name: "ledc_channel_config" is also the first
-        half of the type in the declaration above the call, so an earlier
-        version of this passed whichever order the two were in.
-        """
+    def test_waking_needs_nothing_given_back(self):
+        """The pin never leaves LEDC now, so there is no pad to hand over
+        and no warning that LEDC cannot have it."""
         body = self.part("static esp_err_t backlight_on")
-        self.assertLess(body.index("ledc_channel_config(&channel)"),
-                        body.index("bsp_display_brightness_set(brightness)"))
+        self.assertIn("bsp_display_brightness_set(brightness)", body)
+        self.assertNotIn("ledc_channel_config", body)
 
     def test_the_drawing_stops_before_the_light_does(self):
         """The backlight fades over some milliseconds, and a half-drawn
