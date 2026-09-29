@@ -119,8 +119,11 @@ jobs:
           cmake -S firmware/companion/preview -B preview-build \
                 -DCMAKE_BUILD_TYPE=Debug
           cmake --build preview-build --target check_power check_idle \
-                check_navigation check_boot panel_preview -j"$(nproc)"
+                check_navigation check_boot check_wol panel_preview -j"$(nproc)"
           ./preview-build/check_power
+          # check_wol needs no LVGL. It is here because this is where the
+          # checks of the firmware run.
+          ./preview-build/check_wol
           ./preview-build/check_idle
           ./preview-build/check_navigation
           # check_boot plays the real animation, so it takes the clip's own

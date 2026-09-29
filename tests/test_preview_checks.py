@@ -82,9 +82,13 @@ class PreviewTargetTest(unittest.TestCase):
         first line.
         """
         text = read(WORKFLOW)
-        for name in targets():
-            self.assertRegex(text, r"\./preview-build/%s\b" % name,
-                             "%s is built and never run" % name)
+        # Named one at a time and not with assertRegex, which puts the whole
+        # workflow in the failure. A rule that answers with 200 lines of
+        # somebody else's file is a rule people stop reading.
+        never_run = [name for name in targets()
+                     if not re.search(r"\./preview-build/%s\b" % name, text)]
+        self.assertEqual(never_run, [],
+                         "these are built and never run")
 
 
 if __name__ == "__main__":

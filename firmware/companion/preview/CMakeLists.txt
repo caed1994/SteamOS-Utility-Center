@@ -47,6 +47,11 @@ add_executable(check_power check_power.c ../main/panel_key.c
 target_include_directories(check_power PRIVATE ../main)
 target_link_libraries(check_power PRIVATE lvgl m)
 target_compile_options(check_power PRIVATE -UNDEBUG)
+# check_wol needs no LVGL at all. It is here because this is where the
+# checks of the firmware live and where the job already builds them.
+add_executable(check_wol check_wol.c ../main/panel_wol.c)
+target_include_directories(check_wol PRIVATE ../main)
+target_compile_options(check_wol PRIVATE -UNDEBUG)
 add_executable(check_boot check_boot.c ../main/panel_boot.c)
 target_include_directories(check_boot PRIVATE ../main)
 target_link_libraries(check_boot PRIVATE lvgl m)

@@ -50,6 +50,12 @@
     X(TXT_PC_AUDIO,        "PC AUDIO",              "PC-TON") \
     X(TXT_PC_VOLUME,       "PC VOLUME",             "PC-LAUTSTAERKE") \
     X(TXT_PC_CONTROL,      "PC CONTROL",            "PC-STEUERUNG") \
+    X(TXT_WAKE,            "Wake",                  "Aufwecken") \
+    X(TXT_WAKE_WHAT,       "Send a wake signal over the network", \
+                           "Weckruf ueber das Netzwerk senden") \
+    X(TXT_WAKE_SENT,       "Wake signal sent",      "Weckruf gesendet") \
+    X(TXT_WAKE_FAILED,     "The wake signal did not go out", \
+                           "Weckruf konnte nicht gesendet werden") \
     X(TXT_SUSPEND,         "Suspend",               "Standby") \
     X(TXT_REBOOT,          "Restart",               "Neustart") \
     X(TXT_POWEROFF,        "Power off",             "Ausschalten") \

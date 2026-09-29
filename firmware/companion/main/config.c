@@ -35,8 +35,27 @@ bool panel_config_load(panel_config_t *config)
     len=sizeof(config->password); ok |= nvs_get_str(handle, "password", config->password, &len);
     len=sizeof(config->server); ok |= nvs_get_str(handle, "server", config->server, &len);
     len=sizeof(config->token); ok |= nvs_get_str(handle, "token", config->token, &len);
+    /* On its own, and its result thrown away. A panel that has never met a
+     * PC with a wired card has no address stored, and that is a panel that
+     * works. Folded into ok above, a missing key would read as a panel that
+     * is not set up at all. */
+    len=sizeof(config->wol_mac);
+    if (nvs_get_str(handle, "wol_mac", config->wol_mac, &len) != ESP_OK)
+        config->wol_mac[0]='\0';
     nvs_close(handle);
     return ok == ESP_OK && strlen(config->ssid)>0 && strlen(config->token)>=32;
+}
+
+esp_err_t panel_config_save_wol(const char *mac)
+{
+    nvs_handle_t handle;
+    if (!mac) return ESP_ERR_INVALID_ARG;
+    esp_err_t err=nvs_open("panel", NVS_READWRITE, &handle);
+    if (err!=ESP_OK) return err;
+    err=nvs_set_str(handle,"wol_mac",mac);
+    if (err==ESP_OK) err=nvs_commit(handle);
+    nvs_close(handle);
+    return err;
 }
 
 static esp_err_t index_get(httpd_req_t *req)

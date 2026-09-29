@@ -19,6 +19,9 @@
 
 static lv_obj_t *connection,*dot,*battery,*audio_status,*audio_toggle,*audio_knob,*volume,*brightness_label,*message;
 static lv_obj_t *controls[6],*overlay,*setup_screen,*setup_text,*cpu_value,*gpu_value,*power_value;
+/* Not in controls[]: that table is indexed by the action, it holds the
+ * six the service performs, and PANEL_WAKE is done by the panel. */
+static lv_obj_t *wake_button,*wake_what;
 static panel_action_cb_t send_action;
 static panel_setting_cb_t save_setting;
 static panel_sound_cb_t play_sound;
@@ -87,7 +90,10 @@ static void clicked(lv_event_t *e)
 {
     feedback();
     panel_action_t action=(panel_action_t)(intptr_t)lv_event_get_user_data(e);
-    if(action>=PANEL_SUSPEND)panel_ui_confirm(action);else if(send_action)send_action(action);
+    /* The four that interrupt what somebody is doing ask first. Waking a
+     * machine that is off interrupts nothing, so it is one press. */
+    if(action>=PANEL_SUSPEND&&action<=PANEL_SETUP)panel_ui_confirm(action);
+    else if(send_action)send_action(action);
 }
 static void setting_slider(lv_event_t *e)
 {
@@ -238,6 +244,15 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     controls[PANEL_SUSPEND]=power_button(right,panel_text(TXT_SUSPEND),&icon_moon,86,PANEL_SUSPEND);
     controls[PANEL_REBOOT]=power_button(right,panel_text(TXT_REBOOT),&icon_rotate_cw,160,PANEL_REBOOT);
     controls[PANEL_POWEROFF]=power_button(right,panel_text(TXT_POWEROFF),&icon_power,234,PANEL_POWEROFF);
+    /* In the place of the first of them, and hidden while the PC answers.
+     * Standby, restart and switch off mean nothing to a machine that is
+     * already off, so the card shows this instead of three buttons that
+     * cannot do anything. */
+    wake_button=power_button(right,panel_text(TXT_WAKE),&icon_power,86,PANEL_WAKE);
+    wake_what=text_at(right,panel_text(TXT_WAKE_WHAT),16,156,192,&lv_font_montserrat_12,MUTED);
+    lv_label_set_long_mode(wake_what,LV_LABEL_LONG_WRAP);
+    lv_obj_add_flag(wake_button,LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(wake_what,LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *foot=panel(s,10,386,460,48,CARD,true);
     icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&lv_font_montserrat_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&lv_font_montserrat_18,BLUE);
     line(foot,151,9,1,30);icon(foot,&icon_circuit_board,165,12,MUTED);text_at(foot,"GPU",198,6,99,&lv_font_montserrat_12,MUTED);gpu_value=text_at(foot,"-- C",198,22,99,&lv_font_montserrat_18,BLUE);
@@ -276,6 +291,18 @@ void panel_ui_update(const panel_state_t *s)
     lv_obj_t *track=lv_obj_get_user_data(audio_toggle);lv_obj_set_style_bg_color(track,lv_color_hex(audio&&!s->muted?BLUE:EDGE),0);lv_obj_set_x(audio_knob,audio&&!s->muted?27:3);
     if(audio)lv_label_set_text_fmt(volume,"%d %%",s->volume);else lv_label_set_text(volume,"-- %");
     for(int i=0;i<6;i++){bool enabled=s->online&&(i>=3||audio);if(enabled)lv_obj_remove_state(controls[i],LV_STATE_DISABLED);else lv_obj_add_state(controls[i],LV_STATE_DISABLED);}
+    /* One card, two faces. Offline with an address to wake at shows the
+     * wake button; anything else shows the three, greyed where they cannot
+     * be used. A panel that never met a PC with a wired card has no address
+     * and keeps the three, because a wake button with nothing to name is
+     * worse than none. */
+    bool offer_wake=!s->online&&s->can_wake;
+    for(int i=PANEL_SUSPEND;i<=PANEL_POWEROFF;i++){
+        if(offer_wake)lv_obj_add_flag(controls[i],LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_remove_flag(controls[i],LV_OBJ_FLAG_HIDDEN);
+    }
+    if(offer_wake){lv_obj_remove_flag(wake_button,LV_OBJ_FLAG_HIDDEN);lv_obj_remove_flag(wake_what,LV_OBJ_FLAG_HIDDEN);}
+    else{lv_obj_add_flag(wake_button,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(wake_what,LV_OBJ_FLAG_HIDDEN);}
     if(s->online&&s->cpu_temp>=0)lv_label_set_text_fmt(cpu_value,"%d °C",s->cpu_temp);else lv_label_set_text(cpu_value,"-- °C");
     if(s->online&&s->gpu_temp>=0)lv_label_set_text_fmt(gpu_value,"%d °C",s->gpu_temp);else lv_label_set_text(gpu_value,"-- °C");
     if(s->online&&s->gpu_watts>=0)lv_label_set_text_fmt(power_value,"%d W",s->gpu_watts);else lv_label_set_text(power_value,"-- W");

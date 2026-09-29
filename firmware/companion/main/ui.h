@@ -7,7 +7,11 @@
 
 typedef enum {
     PANEL_VOLUME_DOWN, PANEL_MUTE, PANEL_VOLUME_UP,
-    PANEL_SUSPEND, PANEL_REBOOT, PANEL_POWEROFF, PANEL_SETUP
+    PANEL_SUSPEND, PANEL_REBOOT, PANEL_POWEROFF, PANEL_SETUP,
+    /* After PANEL_SETUP on purpose. Everything below it is a name that
+     * main.c sends to the service, and the dispatch there reads that table
+     * by this number. These last two are done by the panel itself. */
+    PANEL_WAKE
 } panel_action_t;
 
 typedef struct {
@@ -16,6 +20,10 @@ typedef struct {
     // screen compared it against that German to pick the charge symbol. A
     // second language would have made that comparison fail in silence.
     bool wifi, online, muted, setup, sound_error, charging;
+    /* Whether the panel knows an address to wake the PC at. The screen
+     * offers the button only then, because a button that cannot work is
+     * worse than no button. */
+    bool can_wake;
     int battery, volume, cpu_temp, gpu_temp, gpu_watts;
     char host[48], controller[64], message[80];
     char setup_ssid[32], setup_password[32];

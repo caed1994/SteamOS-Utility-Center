@@ -22,6 +22,9 @@
 #include "esp_http_client.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "cJSON.h"
@@ -33,6 +36,7 @@
 #include "panel_auth.h"
 #include "panel_text.h"
 #include "panel_boot.h"
+#include "panel_wol.h"
 
 /* The startup animation, put in the image by main/CMakeLists.txt. It
  * belongs to Valve and not to this project; assets/ORIGIN-BOOT-ANIMATION
@@ -159,6 +163,84 @@ static void ui_tick(lv_timer_t *timer)
     panel_state_t copy;
     xSemaphoreTake(lock,portMAX_DELAY); copy=state; xSemaphoreGive(lock);
     panel_ui_update(&copy);
+}
+
+/* The address of the wired card of the PC, taken from a status answer.
+ *
+ * It is learnt and not typed in. The panel needs it when the PC is off,
+ * which is the one moment it cannot ask, so it reads it while the PC is up
+ * and keeps it. Written only when it differs: this runs at every poll, and
+ * flash that is rewritten every three seconds is flash that wears out.
+ *
+ * A service with no wired card sends null here and the stored address stays
+ * as it was. Somebody who changes the card of their PC gets the new one at
+ * the next poll. */
+static void learn_wake_address(const cJSON *wake)
+{
+    if (!cJSON_IsObject(wake)) return;
+    const cJSON *mac=cJSON_GetObjectItemCaseSensitive(wake,"mac");
+    if (!cJSON_IsString(mac) || !mac->valuestring) return;
+    uint8_t unused[PANEL_WOL_MAC_BYTES];
+    if (!panel_wol_parse(mac->valuestring,unused)) {
+        ESP_LOGW("panel_wol","the PC sent an address this cannot read");
+        return;
+    }
+    if (strcmp(config.wol_mac,mac->valuestring)==0) return;
+    snprintf(config.wol_mac,sizeof(config.wol_mac),"%s",mac->valuestring);
+    esp_err_t err=panel_config_save_wol(config.wol_mac);
+    if (err!=ESP_OK)
+        ESP_LOGW("panel_wol","could not keep the address: %s",esp_err_to_name(err));
+    else
+        ESP_LOGI("panel_wol","the PC wakes at %s",config.wol_mac);
+    xSemaphoreTake(lock,portMAX_DELAY);
+    state.can_wake=true;
+    xSemaphoreGive(lock);
+}
+
+/* The magic packet, sent by the panel and not by the PC.
+ *
+ * This is the one thing the panel does without the service, because the
+ * service is not there when it is wanted. Nothing signs it and nothing can:
+ * a magic packet is six bytes of 0xFF and an address sixteen times over,
+ * and anybody on this network can send one. That is Wake on LAN, and not a
+ * hole of ours. See panel_wol.c.
+ *
+ * Twice, to two addresses. The all-ones broadcast is what everybody writes
+ * and some access points drop. The broadcast of this subnet, which the
+ * panel works out from its own address and mask, goes through where that
+ * one does not. */
+static bool wake_the_pc(void)
+{
+    uint8_t address[PANEL_WOL_MAC_BYTES];
+    uint8_t packet[PANEL_WOL_PACKET_BYTES];
+    if (!panel_wol_parse(config.wol_mac,address)) return false;
+    if (panel_wol_packet(address,packet,sizeof(packet))!=sizeof(packet)) return false;
+
+    int sock=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
+    if (sock<0) return false;
+    int yes=1;
+    setsockopt(sock,SOL_SOCKET,SO_BROADCAST,&yes,sizeof(yes));
+
+    uint32_t targets[2]={0xFFFFFFFFu,0xFFFFFFFFu};
+    esp_netif_ip_info_t info;
+    esp_netif_t *netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif && esp_netif_get_ip_info(netif,&info)==ESP_OK && info.ip.addr)
+        targets[1]=info.ip.addr | ~info.netmask.addr;
+
+    bool sent=false;
+    for (int i=0;i<2;i++) {
+        if (i==1 && targets[1]==targets[0]) break;
+        struct sockaddr_in where={0};
+        where.sin_family=AF_INET;
+        where.sin_port=htons(PANEL_WOL_PORT);
+        where.sin_addr.s_addr=targets[i];
+        if (sendto(sock,packet,sizeof(packet),0,
+                   (struct sockaddr *)&where,sizeof(where))==(int)sizeof(packet))
+            sent=true;
+    }
+    close(sock);
+    ESP_LOGI("panel_wol","wake for %s: %s",config.wol_mac,sent?"sent":"refused");
+    return sent;
 }
 
 static void action_send(panel_action_t action)
@@ -294,6 +376,7 @@ static int request(const char *path, const char *action)
     snprintf(state.host,sizeof(state.host),"%s",host->valuestring);
     state.charging=charge;
     xSemaphoreGive(lock);
+    learn_wake_address(cJSON_GetObjectItemCaseSensitive(root,"wake"));
     cJSON_Delete(root);
     return 200;
 }
@@ -359,6 +442,19 @@ static void network_task(void *arg)
         panel_action_t action;
         if (xQueueReceive(actions,&action,pdMS_TO_TICKS(100))==pdTRUE) {
             if (action==PANEL_SETUP) { portal_start(); continue; }
+            if (action==PANEL_WAKE) {
+                bool sent=wake_the_pc();
+                xSemaphoreTake(lock,portMAX_DELAY);
+                snprintf(state.message,sizeof(state.message),"%s",
+                         sent?panel_text(TXT_WAKE_SENT):panel_text(TXT_WAKE_FAILED));
+                xSemaphoreGive(lock);
+                feedback_until=xTaskGetTickCount()+pdMS_TO_TICKS(5000);
+                /* Ask again soon. A machine that woke answers in seconds,
+                 * and waiting the full three for the next poll reads as a
+                 * button that did nothing. */
+                last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(2000);
+                continue;
+            }
             xSemaphoreTake(lock,portMAX_DELAY); bool online=state.online; xSemaphoreGive(lock);
             if (online && connected() && action>=0 && action<PANEL_SETUP) {
                 int code=request("/v1/action",names[action]);
@@ -395,6 +491,13 @@ void app_main(void)
     assert(lock && actions);
     state.battery=-1; state.volume=-1; state.cpu_temp=-1; state.gpu_temp=-1; state.gpu_watts=-1;
     state.setup=config.ssid[0]==0;
+    /* An address kept from an earlier run. Without this the button appears
+     * only after the PC has answered once, which is the case where it is
+     * needed least. */
+    {
+        uint8_t kept[PANEL_WOL_MAC_BYTES];
+        state.can_wake=panel_wol_parse(config.wol_mac,kept);
+    }
     if (!panel_display_start()) ESP_ERROR_CHECK(ESP_FAIL);
     esp_err_t key_err=panel_power_init();
     if(key_err!=ESP_OK)ESP_LOGW("panel_power","PWRKEY unavailable: %s",esp_err_to_name(key_err));

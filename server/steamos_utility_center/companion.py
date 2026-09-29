@@ -120,6 +120,21 @@ MICROWATTS = 1000000
 SANE_CELSIUS = 150
 SANE_WATTS = 2000
 
+# The card a magic packet has to name, and where to read it.
+#
+# Wake on LAN is a thing wired cards do. A radio that sleeps hears nothing,
+# and the few cards that claim otherwise are not worth the panel showing a
+# button that does nothing. So the default route is not the answer on its
+# own: a machine with a cable and a radio routes over whichever it prefers,
+# and that is often the radio.
+#
+# This reads sysfs and /proc and runs nothing. A virtual card (a bridge, a
+# veth, a tunnel) has no device link. A radio has a wireless directory or a
+# phy80211 link. ARPHRD_ETHER is 1, and the loopback is 772.
+NET_ROOT = "/sys/class/net"
+ROUTE_TABLE = "/proc/net/route"
+ARPHRD_ETHER = "1"
+
 
 def token_path(home=None):
     """Where the shared secret of this machine and its panel is."""
@@ -345,6 +360,74 @@ def telemetry(root=temperature.HWMON_ROOT):
     }
 
 
+def _is_wired(name, root=NET_ROOT):
+    """Whether that card is one a magic packet can reach."""
+    path = os.path.join(root, name)
+    if not os.path.exists(os.path.join(path, "device")):
+        return False
+    if os.path.isdir(os.path.join(path, "wireless")):
+        return False
+    if os.path.exists(os.path.join(path, "phy80211")):
+        return False
+    return _read_text(os.path.join(path, "type")) == ARPHRD_ETHER
+
+
+def _routing_interface(path=ROUTE_TABLE):
+    """The card the default route leaves by, or nothing.
+
+    The lowest metric wins, which is the rule the kernel uses. A machine
+    with two ways out lists both.
+    """
+    best = None
+    lowest = None
+    for line in (_read_text(path) or "").splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 7 or parts[1] != "00000000":
+            continue
+        try:
+            metric = int(parts[6])
+        except ValueError:
+            metric = 0
+        if lowest is None or metric < lowest:
+            best, lowest = parts[0], metric
+    return best
+
+
+def wake_target(root=NET_ROOT, route=ROUTE_TABLE):
+    """The wired card the panel sends a magic packet to, or nothing.
+
+    The panel keeps this and uses it when this machine is off, which is the
+    one moment it cannot ask. So it is read while the machine is up and sent
+    with every status.
+
+    Of several wired cards, the one the default route leaves by. Of the
+    rest, one that has a cable in it. A card with no cable is still an
+    answer, because a machine that is off has no carrier either and the card
+    somebody unplugged is not the one they will plug back in.
+    """
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return None
+    wired = [name for name in names if _is_wired(name, root)]
+    if not wired:
+        return None
+    routing = _routing_interface(route)
+    ordered = sorted(wired, key=lambda name: (
+        name != routing,
+        _read_text(os.path.join(root, name, "carrier")) != "1",
+    ))
+    name = ordered[0]
+    mac = (_read_text(os.path.join(root, name, "address")) or "").lower()
+    # A card with no address, or the all-zero one a device reports before it
+    # is ready, names nothing.
+    if not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac):
+        return None
+    if mac == "00:00:00:00:00:00":
+        return None
+    return {"interface": name, "mac": mac}
+
+
 def status():
     """Everything one GET answers with."""
     return {
@@ -352,6 +435,9 @@ def status():
         "controllers": controllers(),
         "audio": audio(),
         "telemetry": telemetry(),
+        # For the Wake button. None where this machine has no wired card,
+        # and the panel then shows no such button. See wake_target.
+        "wake": wake_target(),
     }
 
 

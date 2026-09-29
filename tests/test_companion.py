@@ -293,6 +293,120 @@ class ServiceTest(unittest.TestCase):
             self.assertTrue(all(isinstance(one, str) for one in command), name)
 
 
+def _net(self, cards, routes=()):
+    """A /sys/class/net holding the cards given, and a /proc/net/route.
+
+    Each card is (name, kind, mac, carrier). kind is "wired", "wireless" or
+    "virtual", and it decides which files are there rather than being read
+    anywhere: that is the whole point of the reader.
+    """
+    root = tempfile.mkdtemp()
+    self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+    for name, kind, mac, carrier in cards:
+        where = os.path.join(root, name)
+        os.makedirs(where)
+        with open(os.path.join(where, "address"), "w") as handle:
+            handle.write(mac + "\n")
+        with open(os.path.join(where, "carrier"), "w") as handle:
+            handle.write("%d\n" % carrier)
+        with open(os.path.join(where, "type"), "w") as handle:
+            handle.write("772\n" if name == "lo" else "1\n")
+        if kind != "virtual":
+            os.makedirs(os.path.join(where, "device"))
+        if kind == "wireless":
+            os.makedirs(os.path.join(where, "wireless"))
+    table = os.path.join(root, "route")
+    with open(table, "w") as handle:
+        handle.write("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\t"
+                     "Metric\tMask\n")
+        for name, metric in routes:
+            handle.write("%s\t00000000\t0102000A\t0003\t0\t0\t%d\t"
+                         "00000000\n" % (name, metric))
+    return root, table
+
+
+class WakeTargetTest(unittest.TestCase):
+    """The card a magic packet has to name.
+
+    Wake on LAN is a thing wired cards do. Everything here is about not
+    naming the wrong one, because a packet sent to a radio that sleeps wakes
+    nothing and leaves no trace of why.
+    """
+
+    def test_it_finds_the_one_wired_card(self):
+        root, table = _net(self, [("eth0", "wired", "a4:bb:6d:1f:0e:27", 1)])
+        self.assertEqual(companion.wake_target(root, table),
+                         {"interface": "eth0", "mac": "a4:bb:6d:1f:0e:27"})
+
+    def test_a_radio_is_not_a_wake_target(self):
+        root, table = _net(self, [("wlan0", "wireless", "aa:bb:cc:dd:ee:ff", 1)])
+        self.assertIsNone(companion.wake_target(root, table))
+
+    def test_a_virtual_card_is_not_one_either(self):
+        """A bridge, a veth or a tunnel has no hardware behind it."""
+        root, table = _net(self, [("docker0", "virtual", "02:42:aa:bb:cc:dd", 1),
+                                  ("lo", "virtual", "00:00:00:00:00:00", 1)])
+        self.assertIsNone(companion.wake_target(root, table))
+
+    def test_the_radio_carrying_the_route_does_not_win(self):
+        """The case this exists for.
+
+        A machine with a cable and a radio routes over whichever it prefers,
+        and that is often the radio. Reading the default route on its own
+        gives the wrong card, and the packet goes nowhere.
+        """
+        root, table = _net(self,
+                           [("eth0", "wired", "a4:bb:6d:1f:0e:27", 1),
+                            ("wlan0", "wireless", "aa:bb:cc:dd:ee:ff", 1)],
+                           routes=[("wlan0", 600)])
+        found = companion.wake_target(root, table)
+        self.assertEqual(found["interface"], "eth0")
+
+    def test_of_two_wired_cards_the_routing_one_wins(self):
+        root, table = _net(self,
+                           [("eth0", "wired", "a4:bb:6d:1f:0e:27", 1),
+                            ("eth1", "wired", "b8:27:eb:00:11:22", 1)],
+                           routes=[("eth1", 100)])
+        self.assertEqual(companion.wake_target(root, table)["interface"], "eth1")
+
+    def test_a_cable_beats_an_empty_socket_when_neither_routes(self):
+        root, table = _net(self,
+                           [("eth0", "wired", "a4:bb:6d:1f:0e:27", 0),
+                            ("eth1", "wired", "b8:27:eb:00:11:22", 1)])
+        self.assertEqual(companion.wake_target(root, table)["interface"], "eth1")
+
+    def test_the_lowest_metric_is_the_default_route(self):
+        root, table = _net(self,
+                           [("eth0", "wired", "a4:bb:6d:1f:0e:27", 1),
+                            ("eth1", "wired", "b8:27:eb:00:11:22", 1)],
+                           routes=[("eth0", 900), ("eth1", 50)])
+        self.assertEqual(companion.wake_target(root, table)["interface"], "eth1")
+
+    def test_an_address_of_nothing_is_no_answer(self):
+        """What a card reports before it is ready. A packet naming it wakes
+        nothing, and an empty field on the panel is the honest answer."""
+        root, table = _net(self, [("eth0", "wired", "00:00:00:00:00:00", 1)])
+        self.assertIsNone(companion.wake_target(root, table))
+
+    def test_a_scrambled_address_is_no_answer(self):
+        root, table = _net(self, [("eth0", "wired", "not an address", 1)])
+        self.assertIsNone(companion.wake_target(root, table))
+
+    def test_a_machine_with_no_cards_answers_nothing(self):
+        root, table = _net(self, [])
+        self.assertIsNone(companion.wake_target(root, table))
+
+    def test_a_missing_directory_is_not_an_error(self):
+        """This fills a field on a screen. It does not stop the service."""
+        self.assertIsNone(companion.wake_target("/no/such/place",
+                                                "/no/such/route"))
+
+    def test_the_status_carries_it(self):
+        """The panel learns the address from an ordinary status answer, so
+        it has one when the PC is off and cannot be asked."""
+        self.assertIn("wake", companion.status())
+
+
 class NonceTest(unittest.TestCase):
     def test_one_spend_for_each(self):
         room = companion.Nonces()
