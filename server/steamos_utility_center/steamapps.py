@@ -53,6 +53,32 @@ LAUNCH = re.compile(r"SteamLaunch\s+AppId=(\d+)")
 # A line of a VDF file: a quoted key, then a quoted value.
 VDF_PAIR = re.compile(r'"([^"]+)"\s+"([^"]*)"')
 
+# Where Steam keeps the pictures it downloads, and which of them the
+# panel draws.
+#
+# One directory for each game, read off the machine:
+#
+#     librarycache/1840/header.jpg              460 x 215
+#     librarycache/1840/library_hero.jpg       1920 x 620
+#     librarycache/1840/library_600x900.jpg     a portrait
+#     librarycache/1840/logo.png
+#     librarycache/1840/<a long hash>.jpg
+#
+# header.jpg is 460 across and the card on the panel is 460 across, so it
+# goes up with nothing scaled. The hero is the same shape and far larger,
+# and it is here as the answer for a game that has no header.
+#
+# Names and not a search. Steam has laid this directory out differently
+# before, and a game with none of these gets no picture at all: a portrait
+# stretched across a wide card looks worse than a card with a name on it.
+ART_DIR = os.path.join("appcache", "librarycache")
+ART_NAMES = ("header.jpg", "library_hero.jpg")
+
+# What the panel carries over the network and decodes. A header is 30 to
+# 60 KB. A hero above this leaves a game with a name and no picture, which
+# is the lesser fault.
+ART_LIMIT = 256 * 1024
+
 # Numbers that are not a game. 0 is what a launch with no app carries, and
 # Steam itself is 7. A panel that reads "Steam" while somebody sits in the
 # library has learnt nothing.
@@ -163,3 +189,34 @@ def now_playing(root=PROC, home=None, where=None):
     # A game whose manifest is gone still runs. The number is worth more
     # than an empty card, and it is what somebody types into a search.
     return name or ("App %d" % appid)
+
+
+def artwork(appid, home=None):
+    """The picture for that number, or "" where there is none.
+
+    A path built from a number and a name of this module's own. Nothing
+    from the network reaches it, so there is no way to ask this for a file
+    somewhere else.
+    """
+    if appid is None:
+        return ""
+    home = os.path.expanduser("~") if home is None else home
+    for root in STEAM_ROOTS:
+        where = os.path.join(home, root, ART_DIR, str(int(appid)))
+        for name in ART_NAMES:
+            path = os.path.join(where, name)
+            try:
+                if os.path.getsize(path) <= ART_LIMIT:
+                    return path
+            except OSError:
+                continue
+    return ""
+
+
+def now_playing_art(root=PROC, home=None):
+    """The picture of the game that runs, or "" for none.
+
+    Two reasons for nothing, and the panel draws both the same way: no
+    game, or a game whose picture Steam never fetched.
+    """
+    return artwork(running_appid(root), home=home)
