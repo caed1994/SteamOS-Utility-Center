@@ -455,3 +455,76 @@ class LogFloodTest(unittest.TestCase):
         # repeats is zeroed on a line that differs, and the write below
         # runs for every line that reaches it.
         self.assertRegex(body, r"repeats=0;")
+
+
+class DrawingStackTest(unittest.TestCase):
+    """The stack of the task that draws.
+
+    The board reported it in one line and then kept restarting:
+
+        ***ERROR*** A stack overflow in task taskLVGL has been detected.
+
+    It fell over at the end of the startup animation and again the moment
+    the screen went to standby, and every restart ran into the next one.
+
+    Two things follow. The size is said here rather than taken from
+    ESP_LVGL_PORT_INIT_CONFIG, which carries a number of its own and
+    Espressif raised that number once before. What is left of it is
+    measured too,
+    because a size nobody checks is a guess.
+    """
+
+    def source(self):
+        with open(os.path.join(FIRMWARE, "panel_display.c"),
+                  encoding="utf-8") as handle:
+            return without_comments(handle.read())
+
+    def main(self):
+        with open(os.path.join(FIRMWARE, "main.c"), encoding="utf-8") as h:
+            return without_comments(h.read())
+
+    def test_the_size_is_said_and_not_taken(self):
+        code = self.source()
+        self.assertRegex(code, r"port\.task_stack\s*=")
+        said = re.search(r"#define PANEL_LVGL_STACK \(?(\d+)\s*\*\s*1024", code)
+        self.assertIsNotNone(said, "the stack has no size of its own here")
+        # The default it used to take was under eight, and that overflowed.
+        self.assertGreaterEqual(int(said.group(1)), 8)
+
+    def test_one_place_holds_the_number(self):
+        """The health line prints the headroom against the whole. Two
+        copies of the whole would drift apart and the reading would then
+        say nothing."""
+        self.assertIn("panel_display_stack_bytes", self.source())
+        self.assertIn("panel_display_stack_bytes", self.main())
+
+    def test_the_reading_is_taken_on_the_task_that_draws(self):
+        """uxTaskGetStackHighWaterMark(NULL) answers about the caller. The
+        health line runs on the network task, so a reading taken there is
+        about the task that did not run out."""
+        code = self.main()
+        watch = re.search(r"static void watch_stack\(void\).*?\n\}", code, re.S)
+        self.assertIsNotNone(watch, "nothing watches the drawing stack")
+        self.assertIn("uxTaskGetStackHighWaterMark(NULL)", watch.group(0))
+        tick = re.search(r"static void ui_tick\(lv_timer_t \*timer\).*?\n\}",
+                         code, re.S)
+        self.assertIsNotNone(tick)
+        self.assertIn("watch_stack()", tick.group(0),
+                      "the reading has to be taken from the LVGL timer, "
+                      "which is the drawing task")
+
+    def test_the_headroom_reaches_the_health_line(self):
+        code = self.main()
+        said = re.search(r'ESP_LOGI\("panel_health"[^;]*;', code, re.S)
+        self.assertIsNotNone(said)
+        self.assertIn("ui_stack=", said.group(0))
+
+    def test_it_says_so_before_it_runs_out(self):
+        """A floor above nought. FreeRTOS reports an overflow once the
+        stack is gone, and by then the panel restarts."""
+        code = self.main()
+        floor = re.search(r"#define PANEL_STACK_FLOOR (\d+)", code)
+        self.assertIsNotNone(floor)
+        self.assertGreater(int(floor.group(1)), 0)
+        self.assertIn("ESP_LOGW", re.search(
+            r"static void watch_stack\(void\).*?\n\}", code, re.S).group(0))

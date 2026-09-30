@@ -168,9 +168,40 @@ static int metric(cJSON *object,const char *key,int limit)
     return cJSON_IsNumber(value)&&value->valuedouble>=0&&value->valuedouble<=limit?value->valueint:-1;
 }
 
+/* How little stack the task that draws has had left.
+ *
+ * The health line already carries this for the network task, and the task
+ * that ran out was the other one:
+ *
+ *     ***ERROR*** A stack overflow in task taskLVGL has been detected.
+ *
+ * This runs from an LVGL timer, which is that task, so NULL asks about it
+ * and not about whoever prints the line. Nothing outside the task can be
+ * asked this without its handle, so the reading is taken here and left in
+ * a number the health line reads.
+ *
+ * A warning goes out only once the headroom passes below the floor. Above
+ * it the number rides along on the health line and says nothing on its
+ * own. */
+#define PANEL_STACK_FLOOR 1024
+static atomic_uint ui_stack_left;
+
+static void watch_stack(void)
+{
+    UBaseType_t left=uxTaskGetStackHighWaterMark(NULL);
+    unsigned was=atomic_load(&ui_stack_left);
+    if (was!=0 && (unsigned)left>=was) return;
+    atomic_store(&ui_stack_left,(unsigned)left);
+    if ((unsigned)left<PANEL_STACK_FLOOR)
+        ESP_LOGW("panel_stack",
+                 "the drawing task is down to %u of %u bytes of stack",
+                 (unsigned)left,(unsigned)panel_display_stack_bytes());
+}
+
 static void ui_tick(lv_timer_t *timer)
 {
     (void)timer;
+    watch_stack();
     if(panel_power_take_toggle()){
         bool sleep=!atomic_load(&display_asleep);
         esp_err_t err=panel_display_standby(sleep,display_brightness);
@@ -617,13 +648,17 @@ static void network_task(void *arg)
             xSemaphoreTake(lock,portMAX_DELAY);
             bool wifi=state.wifi,online=state.online;
             xSemaphoreGive(lock);
-            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u wifi=%d pc=%d standby=%d key_slowest=%ums",
+            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d key_slowest=%ums",
                 now_ms/1000,now_ms-atomic_load(&ui_heartbeat_ms),
                 (unsigned)esp_get_free_heap_size(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
                 (unsigned)esp_get_minimum_free_heap_size(),
-                (unsigned)uxTaskGetStackHighWaterMark(NULL),wifi,online,
+                (unsigned)uxTaskGetStackHighWaterMark(NULL),
+                /* The thinnest the drawing task has been, against what it
+                 * was given. See watch_stack. */
+                atomic_load(&ui_stack_left),
+                (unsigned)panel_display_stack_bytes(),wifi,online,
                 atomic_load(&display_asleep),
                 /* The slowest turn of the key loop since the last line.
                  * The shortest press the panel can see is about twice

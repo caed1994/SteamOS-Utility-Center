@@ -3,7 +3,14 @@
 #pragma once
 #include "lvgl.h"
 #include "esp_err.h"
+#include <stddef.h>
 lv_display_t *panel_display_start(void);
+
+/* How much stack the task that draws was given.
+ *
+ * Read by whatever reports how much of it is left, so the two numbers come
+ * from one place and a reader can see the headroom against the whole. */
+size_t panel_display_stack_bytes(void);
 
 /* Caller must hold the LVGL lock. Network and RGB timing continue running. */
 esp_err_t panel_display_standby(bool sleep, int brightness);

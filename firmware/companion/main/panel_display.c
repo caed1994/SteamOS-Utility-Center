@@ -104,12 +104,36 @@ static void lvgl_log(lv_log_level_t level,const char *text)
         ESP_LOGI("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
 }
 
+/* Twelve kilobytes for the drawing task. See panel_display_start. */
+#define PANEL_LVGL_STACK (12 * 1024)
+
+size_t panel_display_stack_bytes(void){return PANEL_LVGL_STACK;}
+
 lv_display_t *panel_display_start(void)
 {
     const char *tag="panel_display";
     ESP_RETURN_ON_FALSE(xPortGetCoreID()==1,NULL,tag,"Display must initialize on core 1");
     lvgl_port_cfg_t port=ESP_LVGL_PORT_INIT_CONFIG();
     port.task_affinity=1;
+    /* The stack of the task that draws, said here rather than taken.
+     *
+     * Reported from the board, in the one line that named it:
+     *
+     *     ***ERROR*** A stack overflow in task taskLVGL has been detected.
+     *
+     * It took the panel down again and again, at the end of the startup
+     * animation and at the moment the screen went to standby, and each
+     * restart ran into the next one.
+     *
+     * ESP_LVGL_PORT_INIT_CONFIG carries a number of its own and Espressif
+     * has raised it at least once, so a panel that depends on it depends on
+     * something that moves under it. This says the number. Internal memory
+     * is not short here: the log reports 262 KiB free in the largest pool
+     * at startup, and this asks for twelve of them.
+     *
+     * ui_tick measures what is really left, from inside this task, and says
+     * so. A number here without that is a guess that nobody checks. */
+    port.task_stack=PANEL_LVGL_STACK;
     ESP_ERROR_CHECK(lvgl_port_init(&port));
     /* After lvgl_port_init, which is what calls lv_init. */
     lv_log_register_print_cb(lvgl_log);
