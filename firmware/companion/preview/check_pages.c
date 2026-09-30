@@ -129,6 +129,21 @@ int main(void)
     assert(label(lv_screen_active(),wanted));
     assert(!label(lv_screen_active(),panel_text(TXT_NO_DRIVES)));
 
+    // A bar stands the same distance from both borders of its card.
+    // Reported from the board: the first version put the row at nought,
+    // so it touched the left border and stood 24 off the right one. This
+    // measures the drawn object rather than reading the source, because
+    // the fault was in what the numbers add up to and not in any one.
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_t *named=label(lv_screen_active(),"SSD");
+    assert(named);
+    lv_obj_t *row=lv_obj_get_parent(named);
+    lv_obj_t *card=lv_obj_get_parent(row);
+    int32_t on_the_left=lv_obj_get_x(row);
+    int32_t on_the_right=lv_obj_get_width(card)-on_the_left-lv_obj_get_width(row);
+    assert(on_the_left>0);
+    assert(on_the_left==on_the_right);
+
     // A machine that answers with no drive says so rather than showing
     // an empty bar, which reads as room.
     s.drive_count=0;

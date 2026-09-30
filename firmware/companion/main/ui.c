@@ -209,16 +209,28 @@ static void band_scrolled(lv_event_t *e)
     for(int i=0;i<3;i++)
         if(dots[i])lv_obj_set_style_bg_color(dots[i],lv_color_hex(i==page?BLUE:EDGE),0);
 }
+/* How a drive row sits in its card.
+ *
+ * The card is 460 across. The icon and the line above it stand 14 in from
+ * the left, so a row that starts at nought sits against the border on one
+ * side and a long way off it on the other. Reported from the board, and it
+ * is the same 14 on both sides now.
+ *
+ * The width is one name with two readers: this builds the track and
+ * panel_ui_update fills it. Two numbers here drift apart, and a bar that
+ * is full at nine tenths is a bar nobody can read. */
+#define DRIVE_MARGIN 14
+#define DRIVE_BAR_WIDTH (460 - 2 * DRIVE_MARGIN)
 /* One drive, as a name, a bar and what is left of it. */
 static void drive_row(lv_obj_t *parent,int index,int y)
 {
-    drive_rows[index]=panel(parent,0,y,436,44,CARD,false);
+    drive_rows[index]=panel(parent,DRIVE_MARGIN,y,DRIVE_BAR_WIDTH,44,CARD,false);
     lv_obj_set_style_bg_opa(drive_rows[index],LV_OPA_TRANSP,0);
     lv_obj_remove_flag(drive_rows[index],LV_OBJ_FLAG_CLICKABLE);
     drive_names[index]=text_at(drive_rows[index],"",0,0,150,&lv_font_montserrat_16,TEXT);
-    drive_free[index]=text_at(drive_rows[index],"",156,0,280,&lv_font_montserrat_14,MUTED);
+    drive_free[index]=text_at(drive_rows[index],"",152,0,DRIVE_BAR_WIDTH-152,&lv_font_montserrat_14,MUTED);
     lv_obj_set_style_text_align(drive_free[index],LV_TEXT_ALIGN_RIGHT,0);
-    lv_obj_t *track=panel(drive_rows[index],0,26,436,10,EDGE,false);
+    lv_obj_t *track=panel(drive_rows[index],0,26,DRIVE_BAR_WIDTH,10,EDGE,false);
     lv_obj_set_style_radius(track,LV_RADIUS_CIRCLE,0);
     lv_obj_remove_flag(track,LV_OBJ_FLAG_CLICKABLE);
     drive_bars[index]=panel(track,0,0,0,10,BLUE,false);
@@ -361,7 +373,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     text_at(disk_card,panel_text(TXT_DRIVES),52,16,240,&lv_font_montserrat_14,MUTED);
     line(disk_card,14,44,432,1);
     for(int i=0;i<PANEL_DRIVES;i++)drive_row(disk_card,i,58+i*46);
-    no_drives=text_at(disk_card,panel_text(TXT_NO_DRIVES),14,70,432,&lv_font_montserrat_14,MUTED);
+    no_drives=text_at(disk_card,panel_text(TXT_NO_DRIVES),DRIVE_MARGIN,70,DRIVE_BAR_WIDTH,&lv_font_montserrat_14,MUTED);
     lv_obj_add_flag(no_drives,LV_OBJ_FLAG_HIDDEN);
     /* The third page: what is on the machine. One card and one name, and
      * the room under it is deliberate: the picture Steam already keeps for
@@ -469,7 +481,7 @@ void panel_ui_update(const panel_state_t *s)
          * nought, and drives() never sends one. */
         uint64_t total=s->drives[i].total;
         uint64_t used=total>s->drives[i].free?total-s->drives[i].free:0;
-        int width=total?(int)((used*436)/total):0;
+        int width=total?(int)((used*DRIVE_BAR_WIDTH)/total):0;
         lv_obj_set_width(drive_bars[i],width);
         /* Red where a drive is nearly full, which is the one thing about a
          * drive somebody wants to see without reading. */

@@ -112,7 +112,7 @@
                            "Kein Datentraeger hat geantwortet.") \
     X(TXT_FREE,            "free", "frei") \
     X(TXT_PLAYING,         "Now playing", "Laeuft gerade") \
-    X(TXT_NOTHING_PLAYING, "No game runs.", "Es laeuft kein Spiel.")
+    X(TXT_NOTHING_PLAYING, "No game running", "Es laeuft kein Spiel")
 
 typedef enum {
 #define PANEL_TEXT_AS_ENUM(name, english, german) name,
