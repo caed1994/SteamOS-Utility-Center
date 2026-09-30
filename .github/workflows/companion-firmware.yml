@@ -148,7 +148,8 @@ jobs:
           cmake -S firmware/companion/preview -B preview-build \
                 -DCMAKE_BUILD_TYPE=Debug
           cmake --build preview-build --target check_power check_idle \
-                check_navigation check_boot check_wol panel_preview -j"$(nproc)"
+                check_navigation check_boot check_wol check_pages \
+                panel_preview -j"$(nproc)"
           ./preview-build/check_power
           # check_wol needs no LVGL. It is here because this is where the
           # checks of the firmware run.
@@ -158,6 +159,7 @@ jobs:
           # check_boot plays the real animation, so it takes the clip's own
           # three seconds and a little more.
           ./preview-build/check_boot
+          ./preview-build/check_pages
           # panel_preview draws the screen into a file. It answers nothing,
           # and building and running it is the point: it went stale twice
           # while nothing built it. tests/test_preview_checks.py holds that

@@ -1,0 +1,160 @@
+// SPDX-FileCopyrightText: 2026 caed1994
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// The middle band, which scrolls, and the two pages that came with it.
+//
+// Nothing here draws: it builds the screens on a host LVGL and reads the
+// words off them. What it holds is the part a person sees, which is the
+// part a rule in Python cannot reach.
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#include "lvgl.h"
+#include "ui.h"
+static unsigned actions;
+static panel_action_t last_action;
+static void action(panel_action_t a){actions++;last_action=a;}
+static void setting(panel_setting_t k,int v,bool save){(void)k;(void)v;(void)save;}
+static void sound(int volume){(void)volume;}
+// A label somebody can see. The hidden ones are still in the tree, and a
+// search that walks into them answers "there it is" about a card that is
+// not on the screen. Every rule below reads this, so every one of them is
+// about what is drawn.
+static lv_obj_t *label(lv_obj_t *root,const char *text)
+{
+    if(lv_obj_has_flag(root,LV_OBJ_FLAG_HIDDEN))return NULL;
+    if(lv_obj_check_type(root,&lv_label_class)&&strcmp(lv_label_get_text(root),text)==0)return root;
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++){lv_obj_t *f=label(lv_obj_get_child(root,i),text);if(f)return f;}
+    return NULL;
+}
+static void click(const char *text)
+{
+    lv_obj_t *l=label(lv_screen_active(),text);assert(l);
+    lv_obj_t *b=lv_obj_get_parent(l);
+    while(b&&!lv_obj_check_type(b,&lv_button_class))b=lv_obj_get_parent(b);
+    assert(b);
+    lv_obj_send_event(b,LV_EVENT_CLICKED,NULL);
+}
+// The band is the one object on the screen that scrolls sideways.
+static lv_obj_t *find_band(lv_obj_t *root)
+{
+    if(lv_obj_get_scroll_dir(root)==LV_DIR_HOR&&lv_obj_get_child_count(root)==3)return root;
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++){lv_obj_t *f=find_band(lv_obj_get_child(root,i));if(f)return f;}
+    return NULL;
+}
+static panel_state_t base(void)
+{
+    panel_state_t s={.online=true,.wifi=true,.battery=50,.volume=30,
+                     .cpu_temp=40,.gpu_temp=45,.gpu_watts=60};
+    return s;
+}
+int main(void)
+{
+    lv_init();lv_display_create(480,480);
+    panel_settings_t settings={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+    panel_ui_create(action,setting,sound,&settings);
+
+    // Three pages, and the band snaps so there is no place between two.
+    lv_obj_t *band=find_band(lv_screen_active());
+    assert(band);
+    assert(lv_obj_get_child_count(band)==3);
+    assert(lv_obj_has_flag(band,LV_OBJ_FLAG_SCROLL_ONE));
+    // A band that takes a press swallows the one meant for a button on it.
+    assert(!lv_obj_has_flag(band,LV_OBJ_FLAG_CLICKABLE));
+
+    // Nothing playing is the ordinary case, and it says so.
+    panel_state_t s=base();
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),panel_text(TXT_NOTHING_PLAYING)));
+
+    // A game that runs is named.
+    snprintf(s.playing,sizeof(s.playing),"Portal 2");
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),"Portal 2"));
+    assert(!label(lv_screen_active(),panel_text(TXT_NOTHING_PLAYING)));
+
+    // The session, and the button that carries where it goes rather than
+    // "the other one".
+    s.game_mode=true;
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),panel_text(TXT_MODE_GAME)));
+    assert(label(lv_screen_active(),panel_text(TXT_TO_DESKTOP)));
+    actions=0;
+    click(panel_text(TXT_TO_DESKTOP));
+    // It asks first, the way standby and switch off do: a session that
+    // goes takes what is open with it.
+    assert(actions==0);
+    assert(label(lv_screen_active(),panel_text(TXT_CONFIRM_MODE)));
+    click(panel_text(TXT_CONFIRM));
+    assert(actions==1 && last_action==PANEL_DESKTOP_MODE);
+
+    // And the other way around.
+    s.game_mode=false;
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),panel_text(TXT_MODE_DESKTOP)));
+    assert(label(lv_screen_active(),panel_text(TXT_TO_GAME)));
+    actions=0;
+    click(panel_text(TXT_TO_GAME));
+    click(panel_text(TXT_CONFIRM));
+    assert(actions==1 && last_action==PANEL_GAME_MODE);
+
+    // The drives. Two of them, and the bar fills with what is used.
+    s.drive_count=2;
+    snprintf(s.drives[0].name,sizeof(s.drives[0].name),"SSD");
+    s.drives[0].total=1000ULL*1024*1024*1024;
+    s.drives[0].free=250ULL*1024*1024*1024;
+    snprintf(s.drives[1].name,sizeof(s.drives[1].name),"SDCARD");
+    s.drives[1].total=64ULL*1024*1024*1024;
+    s.drives[1].free=8ULL*1024*1024*1024;
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),"SSD"));
+    assert(label(lv_screen_active(),"SDCARD"));
+    // Below a hundred it carries one decimal, above it none. "916.3" is
+    // one character of meaning and three of noise.
+    char wanted[64];
+    snprintf(wanted,sizeof(wanted),"250 GB %s / 1000 GB",panel_text(TXT_FREE));
+    assert(label(lv_screen_active(),wanted));
+    snprintf(wanted,sizeof(wanted),"8.0 GB %s / 64.0 GB",panel_text(TXT_FREE));
+    assert(label(lv_screen_active(),wanted));
+    assert(!label(lv_screen_active(),panel_text(TXT_NO_DRIVES)));
+
+    // A machine that answers with no drive says so rather than showing
+    // an empty bar, which reads as room.
+    s.drive_count=0;
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),panel_text(TXT_NO_DRIVES)));
+
+    // More drives than there is room for take the room there is.
+    s.drive_count=PANEL_DRIVES+2;
+    for(int i=0;i<PANEL_DRIVES;i++){
+        snprintf(s.drives[i].name,sizeof(s.drives[i].name),"D%d",i);
+        s.drives[i].total=100ULL*1024*1024*1024;s.drives[i].free=1;
+    }
+    panel_ui_update(&s);
+    for(int i=0;i<PANEL_DRIVES;i++){
+        char name[8];snprintf(name,sizeof(name),"D%d",i);
+        assert(label(lv_screen_active(),name));
+    }
+
+    // Offline leaves the second page at a dash and the third at its word,
+    // rather than at the last thing the PC said, which reads as current.
+    s.online=false;
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),"--"));
+    assert(label(lv_screen_active(),panel_text(TXT_NOTHING_PLAYING)));
+    assert(label(lv_screen_active(),panel_text(TXT_NO_DRIVES)));
+
+    // The language button rebuilds every screen, and a pointer kept past
+    // that clean is a pointer to freed memory that a touch reaches.
+    s.online=true;s.game_mode=true;
+    panel_ui_update(&s);
+    panel_settings_t german={.brightness=70,.sound_volume=30,.language=PANEL_GERMAN};
+    panel_ui_create(action,setting,sound,&german);
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),panel_text(TXT_MODE_GAME)));
+    assert(label(lv_screen_active(),"Portal 2"));
+
+    puts("OK: three pages that snap, the session and its target button, the "
+         "drives with their bars, and every one of them offline.");
+    return 0;
+}

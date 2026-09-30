@@ -100,7 +100,21 @@
     X(TXT_FORM_SAVED,      "Saved. The panel restarts. Put your phone back " \
                            "on your own network.", \
                            "Gespeichert. Das Panel startet neu. Verbinde " \
-                           "dein Handy wieder mit deinem Heim-WLAN.")
+                           "dein Handy wieder mit deinem Heim-WLAN.") \
+    X(TXT_MODE,            "Session", "Sitzung") \
+    X(TXT_MODE_GAME,       "Game Mode", "Game Mode") \
+    X(TXT_MODE_DESKTOP,    "Desktop", "Desktop") \
+    X(TXT_TO_GAME,         "To Game Mode", "Zu Game Mode") \
+    X(TXT_TO_DESKTOP,      "To Desktop", "Zum Desktop") \
+    X(TXT_CONFIRM_MODE,    "Switch the session?", "Sitzung wechseln?") \
+    X(TXT_MODE_WHAT,       "This closes what is open.", \
+                           "Das schliesst, was offen ist.") \
+    X(TXT_DRIVES,          "Drives", "Datentraeger") \
+    X(TXT_NO_DRIVES,       "No drive answered.", \
+                           "Kein Datentraeger hat geantwortet.") \
+    X(TXT_FREE,            "free", "frei") \
+    X(TXT_PLAYING,         "Now playing", "Laeuft gerade") \
+    X(TXT_NOTHING_PLAYING, "No game runs.", "Es laeuft kein Spiel.")
 
 typedef enum {
 #define PANEL_TEXT_AS_ENUM(name, english, german) name,

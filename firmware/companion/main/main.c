@@ -360,6 +360,12 @@ static int request(const char *path, const char *action)
     cJSON *charging=cJSON_GetObjectItemCaseSensitive(first,"status");
     cJSON *volume=cJSON_GetObjectItemCaseSensitive(audio,"percent");
     cJSON *muted=cJSON_GetObjectItemCaseSensitive(audio,"muted");
+    /* The second and third pages. Each one is optional: a service that is
+     * older than this firmware answers without them, and the panel then
+     * shows those pages empty rather than nothing at all. */
+    cJSON *session=cJSON_GetObjectItemCaseSensitive(root,"session");
+    cJSON *playing=cJSON_GetObjectItemCaseSensitive(root,"playing");
+    cJSON *drives=cJSON_GetObjectItemCaseSensitive(root,"drives");
     // The word the service sends, and not a word of any language on this
     // screen. See panel_state_t.
     bool charge=cJSON_IsString(charging)
@@ -375,6 +381,35 @@ static int request(const char *path, const char *action)
     snprintf(state.controller,sizeof(state.controller),"%s",cJSON_IsString(name) ? name->valuestring : "Controller");
     snprintf(state.host,sizeof(state.host),"%s",host->valuestring);
     state.charging=charge;
+    /* A word the service sends and not a word of any language on the
+     * screen, the same rule the charge flag follows. See panel_state_t. */
+    state.game_mode=cJSON_IsString(session)
+        && strcmp(session->valuestring,"game")==0;
+    snprintf(state.playing,sizeof(state.playing),"%s",
+             cJSON_IsString(playing)?playing->valuestring:"");
+    state.drive_count=0;
+    if(cJSON_IsArray(drives)){
+        cJSON *one=NULL;
+        cJSON_ArrayForEach(one,drives){
+            if(state.drive_count>=PANEL_DRIVES)break;
+            cJSON *name_of=cJSON_GetObjectItemCaseSensitive(one,"name");
+            cJSON *total=cJSON_GetObjectItemCaseSensitive(one,"total");
+            cJSON *room=cJSON_GetObjectItemCaseSensitive(one,"free");
+            /* A drive with no size is not a drive. drives() leaves those
+             * out already, and this is the second reader of the same
+             * rule rather than trust in the first. */
+            if(!cJSON_IsNumber(total)||total->valuedouble<=0)continue;
+            panel_drive_t *into=&state.drives[state.drive_count++];
+            snprintf(into->name,sizeof(into->name),"%s",
+                     cJSON_IsString(name_of)?name_of->valuestring:"?");
+            /* valuedouble and not valueint: a drive passes what an int
+             * holds, and cJSON stores a large number in the double. */
+            into->total=(uint64_t)total->valuedouble;
+            into->free=cJSON_IsNumber(room)&&room->valuedouble>=0
+                ?(uint64_t)room->valuedouble:0;
+            if(into->free>into->total)into->free=into->total;
+        }
+    }
     xSemaphoreGive(lock);
     learn_wake_address(cJSON_GetObjectItemCaseSensitive(root,"wake"));
     cJSON_Delete(root);
@@ -439,7 +474,13 @@ static void network_task(void *arg)
 {
     (void)arg;
     if (!config.ssid[0]) portal_start();
-    const char *names[]={"volume_down","mute","volume_up","suspend","reboot","poweroff"};
+    /* Indexed by panel_action_t, and it has to hold every action below
+     * PANEL_SETUP. The guard further down is that range, so a name added
+     * to the enum and not to this table makes every button under it send
+     * the name of another one. tests/test_panel_pages.py holds the two
+     * lengths equal. */
+    const char *names[]={"volume_down","mute","volume_up","suspend","reboot",
+                         "poweroff","desktop_mode","game_mode"};
     TickType_t last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
     TickType_t feedback_until=0;
     TickType_t last_health=xTaskGetTickCount();

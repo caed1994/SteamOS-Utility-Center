@@ -22,6 +22,12 @@ static lv_obj_t *controls[6],*overlay,*setup_screen,*setup_text,*cpu_value,*gpu_
 /* Not in controls[]: that table is indexed by the action, it holds the
  * six the service performs, and PANEL_WAKE is done by the panel. */
 static lv_obj_t *wake_button,*wake_what;
+/* The second and third pages. Not in controls[] either: that table is
+ * indexed by the action and holds the six on the first page. */
+static lv_obj_t *mode_now,*mode_button,*mode_caption,*playing_name;
+static lv_obj_t *drive_rows[PANEL_DRIVES],*drive_names[PANEL_DRIVES];
+static lv_obj_t *drive_bars[PANEL_DRIVES],*drive_free[PANEL_DRIVES];
+static lv_obj_t *no_drives,*band,*dots[3];
 static panel_action_cb_t send_action;
 static panel_setting_cb_t save_setting;
 static panel_sound_cb_t play_sound;
@@ -78,10 +84,10 @@ void panel_ui_confirm(panel_action_t action)
     if (overlay) return;
     pending=action;
     overlay=panel(lv_screen_active(),0,0,480,480,BG,false);lv_obj_set_style_bg_opa(overlay,LV_OPA_90,0);
-    const char *caption=action==PANEL_SUSPEND?panel_text(TXT_CONFIRM_SUSPEND):action==PANEL_REBOOT?panel_text(TXT_CONFIRM_REBOOT):action==PANEL_POWEROFF?panel_text(TXT_CONFIRM_OFF):panel_text(TXT_CONFIRM_SETUP);
+    const char *caption=action==PANEL_SUSPEND?panel_text(TXT_CONFIRM_SUSPEND):action==PANEL_REBOOT?panel_text(TXT_CONFIRM_REBOOT):action==PANEL_POWEROFF?panel_text(TXT_CONFIRM_OFF):(action==PANEL_DESKTOP_MODE||action==PANEL_GAME_MODE)?panel_text(TXT_CONFIRM_MODE):panel_text(TXT_CONFIRM_SETUP);
     lv_obj_t *box=panel(overlay,20,132,440,216,CARD,true);
     text_at(box,caption,20,26,400,&lv_font_montserrat_20,TEXT);
-    text_at(box,action==PANEL_SETUP?panel_text(TXT_SETUP_WHAT):panel_text(TXT_CONFIRM_HERE),20,66,400,&lv_font_montserrat_16,MUTED);
+    text_at(box,action==PANEL_SETUP?panel_text(TXT_SETUP_WHAT):(action==PANEL_DESKTOP_MODE||action==PANEL_GAME_MODE)?panel_text(TXT_MODE_WHAT):panel_text(TXT_CONFIRM_HERE),20,66,400,&lv_font_montserrat_16,MUTED);
     button(box,panel_text(TXT_CANCEL),20,126,192,62,confirmation,0);
     lv_obj_t *yes=button(box,panel_text(TXT_CONFIRM),228,126,192,62,confirmation,1);lv_obj_set_style_bg_color(yes,lv_color_hex(BLUE),0);
     lv_obj_set_style_text_color(yes,lv_color_hex(BG),0);
@@ -180,6 +186,39 @@ void panel_ui_settings_open(void)
     text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,447,440,&lv_font_montserrat_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
+/* Which of the three marks under the band is lit.
+ *
+ * Read from where the band stopped and not counted from the swipes: a
+ * swipe that does not carry far enough leaves the band where it was, and a
+ * count would then be one ahead of the screen for good. */
+static void band_scrolled(lv_event_t *e)
+{
+    (void)e;
+    if(!band)return;
+    int32_t at=lv_obj_get_scroll_x(band);
+    int page=(at+240)/480;
+    if(page<0)page=0;
+    if(page>2)page=2;
+    for(int i=0;i<3;i++)
+        if(dots[i])lv_obj_set_style_bg_color(dots[i],lv_color_hex(i==page?BLUE:EDGE),0);
+}
+/* One drive, as a name, a bar and what is left of it. */
+static void drive_row(lv_obj_t *parent,int index,int y)
+{
+    drive_rows[index]=panel(parent,0,y,436,44,CARD,false);
+    lv_obj_set_style_bg_opa(drive_rows[index],LV_OPA_TRANSP,0);
+    lv_obj_remove_flag(drive_rows[index],LV_OBJ_FLAG_CLICKABLE);
+    drive_names[index]=text_at(drive_rows[index],"",0,0,150,&lv_font_montserrat_16,TEXT);
+    drive_free[index]=text_at(drive_rows[index],"",156,0,280,&lv_font_montserrat_14,MUTED);
+    lv_obj_set_style_text_align(drive_free[index],LV_TEXT_ALIGN_RIGHT,0);
+    lv_obj_t *track=panel(drive_rows[index],0,26,436,10,EDGE,false);
+    lv_obj_set_style_radius(track,LV_RADIUS_CIRCLE,0);
+    lv_obj_remove_flag(track,LV_OBJ_FLAG_CLICKABLE);
+    drive_bars[index]=panel(track,0,0,0,10,BLUE,false);
+    lv_obj_set_style_radius(drive_bars[index],LV_RADIUS_CIRCLE,0);
+    lv_obj_remove_flag(drive_bars[index],LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(drive_rows[index],LV_OBJ_FLAG_HIDDEN);
+}
 static lv_obj_t *power_button(lv_obj_t *parent,const char *caption,const lv_image_dsc_t *source,int y,panel_action_t action)
 {
     lv_obj_t *b=button(parent,"",14,y,196,56,clicked,action);
@@ -204,6 +243,16 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * panel_ui_settings_open returns at once and the page never opens
      * again. check_navigation builds the screens with that page open. */
     settings_screen=NULL;brightness_label=NULL;sound_value=NULL;sound_status=NULL;
+    /* The band and everything on the second and third pages are children
+     * of this screen too. A pointer kept past the clean above is a pointer
+     * to freed memory, and band_scrolled runs from a touch. */
+    band=NULL;mode_now=NULL;mode_button=NULL;mode_caption=NULL;
+    playing_name=NULL;no_drives=NULL;
+    for(int i=0;i<3;i++)dots[i]=NULL;
+    for(int i=0;i<PANEL_DRIVES;i++){
+        drive_rows[i]=NULL;drive_names[i]=NULL;
+        drive_bars[i]=NULL;drive_free[i]=NULL;
+    }
     /* The black cover of a sleeping panel is a child of this screen,
      * so the clean above took it. See panel_ui_sleep_reset. */
     panel_ui_sleep_reset();
@@ -217,42 +266,105 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     text_at(s,panel_text(TXT_CONTROLLER),282,15,142,&lv_font_montserrat_12,MUTED);
     battery=text_at(s,"-- %",282,31,142,&lv_font_montserrat_16,TEXT);
     line(s,0,57,480,1);
-    lv_obj_t *left=panel(s,10,70,222,304,CARD,true);
-    lv_obj_t *right=panel(s,244,70,226,304,CARD,true);
-    icon(left,&icon_volume_2,12,30,MUTED);text_at(left,panel_text(TXT_PC_AUDIO),70,23,78,&lv_font_montserrat_12,MUTED);
-    audio_status=text_at(left,"--",70,44,82,&lv_font_montserrat_18,TEXT);
-    audio_toggle=button(left,"",154,28,54,48,clicked,PANEL_MUTE);controls[PANEL_MUTE]=audio_toggle;
+    /* The middle band, which scrolls sideways. Three pages of one screen
+     * each, and the head above it and the sensors below it stay where they
+     * are: those are the numbers somebody looks at without touching
+     * anything, and a page that can carry them away is a page that hides
+     * them.
+     *
+     * LV_SCROLL_SNAP_CENTER with SCROLL_ONE is what makes it pages rather
+     * than a strip. A swipe moves exactly one and lands on it, so there is
+     * no place to stop between two.
+     *
+     * The band itself is not clickable, which matters: lv_obj_create makes
+     * a clickable object, and a band that takes a press swallows the one
+     * meant for a button on it. */
+    band=lv_obj_create(s);lv_obj_remove_style_all(band);
+    lv_obj_set_pos(band,0,70);lv_obj_set_size(band,480,302);
+    lv_obj_set_scroll_dir(band,LV_DIR_HOR);
+    lv_obj_set_scroll_snap_x(band,LV_SCROLL_SNAP_CENTER);
+    lv_obj_add_flag(band,LV_OBJ_FLAG_SCROLL_ONE);
+    lv_obj_remove_flag(band,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_pad_all(band,0,0);
+    lv_obj_set_scrollbar_mode(band,LV_SCROLLBAR_MODE_OFF);
+    lv_obj_t *page[3];
+    for(int i=0;i<3;i++){
+        page[i]=panel(band,i*480,0,480,300,BG,false);
+        lv_obj_set_style_bg_opa(page[i],LV_OPA_TRANSP,0);
+        lv_obj_remove_flag(page[i],LV_OBJ_FLAG_CLICKABLE);
+    }
+    /* Which page is on the screen. Three of them and no words: the band
+     * is the only thing that moves, so a row of marks under it is read
+     * without anybody being told what it means. */
+    for(int i=0;i<3;i++){
+        dots[i]=panel(s,222+i*18,376,8,8,EDGE,false);
+        lv_obj_set_style_radius(dots[i],LV_RADIUS_CIRCLE,0);
+        lv_obj_remove_flag(dots[i],LV_OBJ_FLAG_CLICKABLE);
+    }
+    lv_obj_add_event_cb(band,band_scrolled,LV_EVENT_SCROLL_END,NULL);
+    lv_obj_set_style_bg_color(dots[0],lv_color_hex(BLUE),0);
+    lv_obj_t *left=panel(page[0],10,0,222,300,CARD,true);
+    lv_obj_t *right=panel(page[0],244,0,226,300,CARD,true);
+    icon(left,&icon_volume_2,12,26,MUTED);text_at(left,panel_text(TXT_PC_AUDIO),70,19,78,&lv_font_montserrat_12,MUTED);
+    audio_status=text_at(left,"--",70,40,82,&lv_font_montserrat_18,TEXT);
+    audio_toggle=button(left,"",154,24,54,48,clicked,PANEL_MUTE);controls[PANEL_MUTE]=audio_toggle;
     lv_obj_set_style_bg_opa(audio_toggle,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(audio_toggle,0,0);
     lv_obj_t *track=panel(audio_toggle,0,10,52,28,BLUE,false);lv_obj_remove_flag(track,LV_OBJ_FLAG_CLICKABLE);lv_obj_set_style_radius(track,LV_RADIUS_CIRCLE,0);
     audio_knob=panel(track,27,3,22,22,TEXT,false);lv_obj_remove_flag(audio_knob,LV_OBJ_FLAG_CLICKABLE);lv_obj_set_style_radius(audio_knob,LV_RADIUS_CIRCLE,0);
     lv_obj_set_user_data(audio_toggle,track);
-    line(left,16,112,190,1);
-    center_text(text_at(left,panel_text(TXT_PC_VOLUME),12,135,196,&lv_font_montserrat_14,MUTED));
-    volume=text_at(left,"-- %",12,166,196,&lv_font_montserrat_32,TEXT);center_text(volume);
+    line(left,16,108,190,1);
+    center_text(text_at(left,panel_text(TXT_PC_VOLUME),12,131,196,&lv_font_montserrat_14,MUTED));
+    volume=text_at(left,"-- %",12,162,196,&lv_font_montserrat_32,TEXT);center_text(volume);
     /* Two buttons over the width of the card, and nothing between them.
      * The number was there twice: once in the big label above, and once
      * again in a box between these two, which said the same thing in a
      * smaller font. The room it took is theirs now, and the sign on each
      * one grew with it. */
-    controls[PANEL_VOLUME_DOWN]=button(left,LV_SYMBOL_MINUS,12,232,92,56,clicked,PANEL_VOLUME_DOWN);
-    controls[PANEL_VOLUME_UP]=button(left,LV_SYMBOL_PLUS,116,232,92,56,clicked,PANEL_VOLUME_UP);
+    controls[PANEL_VOLUME_DOWN]=button(left,LV_SYMBOL_MINUS,12,228,92,56,clicked,PANEL_VOLUME_DOWN);
+    controls[PANEL_VOLUME_UP]=button(left,LV_SYMBOL_PLUS,116,228,92,56,clicked,PANEL_VOLUME_UP);
     lv_obj_set_style_text_font(controls[PANEL_VOLUME_DOWN],&lv_font_montserrat_24,0);
     lv_obj_set_style_text_font(controls[PANEL_VOLUME_UP],&lv_font_montserrat_24,0);
-    icon(right,&icon_monitor,22,23,MUTED);
-    text_at(right,panel_text(TXT_PC_CONTROL),60,27,160,&lv_font_montserrat_14,MUTED);
-    line(right,14,68,196,1);
-    controls[PANEL_SUSPEND]=power_button(right,panel_text(TXT_SUSPEND),&icon_moon,86,PANEL_SUSPEND);
-    controls[PANEL_REBOOT]=power_button(right,panel_text(TXT_REBOOT),&icon_rotate_cw,160,PANEL_REBOOT);
-    controls[PANEL_POWEROFF]=power_button(right,panel_text(TXT_POWEROFF),&icon_power,234,PANEL_POWEROFF);
+    icon(right,&icon_monitor,22,19,MUTED);
+    text_at(right,panel_text(TXT_PC_CONTROL),60,23,160,&lv_font_montserrat_14,MUTED);
+    line(right,14,64,196,1);
+    controls[PANEL_SUSPEND]=power_button(right,panel_text(TXT_SUSPEND),&icon_moon,82,PANEL_SUSPEND);
+    controls[PANEL_REBOOT]=power_button(right,panel_text(TXT_REBOOT),&icon_rotate_cw,156,PANEL_REBOOT);
+    controls[PANEL_POWEROFF]=power_button(right,panel_text(TXT_POWEROFF),&icon_power,230,PANEL_POWEROFF);
     /* In the place of the first of them, and hidden while the PC answers.
      * Standby, restart and switch off mean nothing to a machine that is
      * already off, so the card shows this instead of three buttons that
      * cannot do anything. */
-    wake_button=power_button(right,panel_text(TXT_WAKE),&icon_power,86,PANEL_WAKE);
-    wake_what=text_at(right,panel_text(TXT_WAKE_WHAT),16,156,192,&lv_font_montserrat_12,MUTED);
+    wake_button=power_button(right,panel_text(TXT_WAKE),&icon_power,82,PANEL_WAKE);
+    wake_what=text_at(right,panel_text(TXT_WAKE_WHAT),16,152,192,&lv_font_montserrat_12,MUTED);
     lv_label_set_long_mode(wake_what,LV_LABEL_LONG_WRAP);
     lv_obj_add_flag(wake_button,LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(wake_what,LV_OBJ_FLAG_HIDDEN);
+    /* The second page: which session runs, and how full each drive is.
+     * Two answers about the machine rather than about what is on it, which
+     * is why they share a page. */
+    lv_obj_t *mode_card=panel(page[1],10,0,460,104,CARD,true);
+    icon(mode_card,&icon_monitor,14,18,MUTED);
+    text_at(mode_card,panel_text(TXT_MODE),52,14,180,&lv_font_montserrat_12,MUTED);
+    mode_now=text_at(mode_card,"--",52,34,180,&lv_font_montserrat_24,TEXT);
+    mode_button=button(mode_card,"",236,20,208,64,clicked,PANEL_DESKTOP_MODE);
+    mode_caption=text_at(mode_button,"",10,22,188,&lv_font_montserrat_16,TEXT);
+    center_text(mode_caption);
+    lv_obj_t *disk_card=panel(page[1],10,116,460,184,CARD,true);
+    icon(disk_card,&icon_circuit_board,14,14,MUTED);
+    text_at(disk_card,panel_text(TXT_DRIVES),52,16,240,&lv_font_montserrat_14,MUTED);
+    line(disk_card,14,44,432,1);
+    for(int i=0;i<PANEL_DRIVES;i++)drive_row(disk_card,i,58+i*46);
+    no_drives=text_at(disk_card,panel_text(TXT_NO_DRIVES),14,70,432,&lv_font_montserrat_14,MUTED);
+    lv_obj_add_flag(no_drives,LV_OBJ_FLAG_HIDDEN);
+    /* The third page: what is on the machine. One card and one name, and
+     * the room under it is deliberate: the picture Steam already keeps for
+     * every game goes there, and that is a step of its own. */
+    lv_obj_t *play_card=panel(page[2],10,0,460,300,CARD,true);
+    icon(play_card,&icon_gamepad_2,14,14,MUTED);
+    text_at(play_card,panel_text(TXT_PLAYING),52,16,240,&lv_font_montserrat_14,MUTED);
+    line(play_card,14,44,432,1);
+    playing_name=text_at(play_card,panel_text(TXT_NOTHING_PLAYING),20,64,420,&lv_font_montserrat_24,TEXT);
+    lv_label_set_long_mode(playing_name,LV_LABEL_LONG_WRAP);
     lv_obj_t *foot=panel(s,10,386,460,48,CARD,true);
     icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&lv_font_montserrat_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&lv_font_montserrat_18,BLUE);
     line(foot,151,9,1,30);icon(foot,&icon_circuit_board,165,12,MUTED);text_at(foot,"GPU",198,6,99,&lv_font_montserrat_12,MUTED);gpu_value=text_at(foot,"-- C",198,22,99,&lv_font_montserrat_18,BLUE);
@@ -263,6 +375,19 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_set_style_bg_opa(settings_button,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(settings_button,0,0);
     lv_obj_set_style_text_font(settings_button,&lv_font_montserrat_14,0);
     lv_obj_t *setup=button(s,panel_text(TXT_SETUP),358,436,112,44,clicked,PANEL_SETUP);lv_obj_set_style_bg_opa(setup,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(setup,0,0);lv_obj_set_style_text_font(setup,&lv_font_montserrat_14,0);
+}
+/* A size a person reads, out of a count of bytes.
+ *
+ * Gibibytes, because that is what an operating system counts in and what
+ * the number on the box does not. One decimal below a hundred and none
+ * above it: "9.4 GB" and "916 GB" are both four characters of meaning, and
+ * "916.3" is one of noise.
+ */
+static void say_size(char *out,size_t room,uint64_t bytes)
+{
+    double gib=(double)bytes/(1024.0*1024.0*1024.0);
+    if(gib<100.0)snprintf(out,room,"%.1f GB",gib);
+    else snprintf(out,room,"%.0f GB",gib);
 }
 void panel_ui_update(const panel_state_t *s)
 {
@@ -307,4 +432,49 @@ void panel_ui_update(const panel_state_t *s)
     if(s->online&&s->gpu_temp>=0)lv_label_set_text_fmt(gpu_value,"%d °C",s->gpu_temp);else lv_label_set_text(gpu_value,"-- °C");
     if(s->online&&s->gpu_watts>=0)lv_label_set_text_fmt(power_value,"%d W",s->gpu_watts);else lv_label_set_text(power_value,"-- W");
     lv_label_set_text(message,s->message);
+    /* The second page. Offline leaves every one of these at a dash rather
+     * than at the last thing the PC said, which would read as current. */
+    if(mode_now){
+        lv_label_set_text(mode_now,!s->online?"--":
+                          s->game_mode?panel_text(TXT_MODE_GAME):panel_text(TXT_MODE_DESKTOP));
+        lv_label_set_text(mode_caption,s->game_mode?panel_text(TXT_TO_DESKTOP):panel_text(TXT_TO_GAME));
+        /* The button carries where it goes, so the press is the target and
+         * never "the other one". See PANEL_DESKTOP_MODE in ui.h. */
+        lv_obj_remove_event_cb(mode_button,clicked);
+        lv_obj_add_event_cb(mode_button,clicked,LV_EVENT_CLICKED,
+                            (void *)(intptr_t)(s->game_mode?PANEL_DESKTOP_MODE:PANEL_GAME_MODE));
+        if(s->online)lv_obj_remove_state(mode_button,LV_STATE_DISABLED);
+        else lv_obj_add_state(mode_button,LV_STATE_DISABLED);
+    }
+    int shown=s->online&&s->drive_count>0?s->drive_count:0;
+    if(shown>PANEL_DRIVES)shown=PANEL_DRIVES;
+    for(int i=0;i<PANEL_DRIVES;i++){
+        if(!drive_rows[i])break;
+        if(i>=shown){lv_obj_add_flag(drive_rows[i],LV_OBJ_FLAG_HIDDEN);continue;}
+        lv_obj_remove_flag(drive_rows[i],LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(drive_names[i],s->drives[i].name);
+        char left[24],whole[24];
+        say_size(left,sizeof(left),s->drives[i].free);
+        say_size(whole,sizeof(whole),s->drives[i].total);
+        lv_label_set_text_fmt(drive_free[i],"%s %s / %s",left,panel_text(TXT_FREE),whole);
+        /* The bar fills with what is used, because a bar that fills as a
+         * drive empties reads backwards. A total of nought would divide by
+         * nought, and drives() never sends one. */
+        uint64_t total=s->drives[i].total;
+        uint64_t used=total>s->drives[i].free?total-s->drives[i].free:0;
+        int width=total?(int)((used*436)/total):0;
+        lv_obj_set_width(drive_bars[i],width);
+        /* Red where a drive is nearly full, which is the one thing about a
+         * drive somebody wants to see without reading. */
+        lv_obj_set_style_bg_color(drive_bars[i],
+                                  lv_color_hex(total&&used*10>=total*9?RED:BLUE),0);
+    }
+    if(no_drives){
+        if(shown==0)lv_obj_remove_flag(no_drives,LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(no_drives,LV_OBJ_FLAG_HIDDEN);
+    }
+    /* The third page. */
+    if(playing_name)
+        lv_label_set_text(playing_name,
+                          s->online&&s->playing[0]?s->playing:panel_text(TXT_NOTHING_PLAYING));
 }
