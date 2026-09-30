@@ -128,6 +128,32 @@ lv_display_t *panel_display_start(void)
      * The animation draws 102400 pixels a frame instead of 230400 and
      * pays nothing for the change.
      *
+     * What the board said afterwards, against the same animation with the
+     * network held off in both runs:
+     *
+     *                        full_refresh   direct_mode
+     *     average frame          55 ms          51 ms
+     *     whole animation      4245 ms        3890 ms
+     *     frames near 90 ms        16              2
+     *     frames near 67 ms         5             17
+     *
+     * The heavy frames did not go. They came down one rung, and the step
+     * a person sees went from twice the light frames to one and a half.
+     *
+     * The same numbers give the frame period of this panel, which nothing
+     * on the board had ever said. Every gap fell into a heap at 45, 67 or
+     * 90 ms, and those are 22 to 23 apart. So a period is about 22.5 ms
+     * and the panel runs at about 44 Hz, which is what 12 MHz and the
+     * timings of this panel work out at.
+     *
+     * That also says where the floor is. A frame holds for 40 ms in the
+     * file and a flush lands on a boundary, so the fastest a frame goes is
+     * two periods, or 45 ms. 51 is close to it. Reaching it asks the
+     * heaviest frames to do their work in under 5 ms, which a GIF decoder
+     * at 320 by 320 does not do. A faster pixel clock makes it worse
+     * rather than better: at 16 MHz a period is 16.9 ms, and 40 ms then
+     * lands on three of them, which is 50.7.
+     *
      * avoid_tearing needs one of direct_mode and full_refresh. Without
      * either, esp_lvgl_port reaches the end of its chain and asks LVGL
      * for partial mode over a screen-sized buffer, which draws correctly

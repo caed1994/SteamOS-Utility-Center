@@ -47,33 +47,26 @@ extern const uint8_t boot_animation_end[] asm("_binary_boot_steam_gif_end");
 
 /* Hold the network back until the animation is over. A MEASUREMENT.
  *
- * This is not how the panel is meant to start, and a one here makes the
- * panel reach the PC about three seconds later than a nought does. It is
- * here to answer one question, and it goes back to nought once that
- * question has an answer.
+ * Nought, because it has answered its question. A one makes the panel
+ * reach the PC about four seconds later, so this is not how it starts.
  *
- * The question. The board reported the animation running slow in the
- * middle, and panel_boot.c measured it: 57 ms a frame where 40 was asked,
- * the worst frame 120 ms, 27 of 76 frames past their time. The file said
- * that was possible, because the frames in the middle carry twenty times
- * the work of the ones at the ends.
+ * The question was whether the startup animation ran slow because of the
+ * Wi-Fi start beside it. The board had reported 57 ms a frame where 40 was
+ * asked, and the worst frame of that run sat inside a three second hole in
+ * the log where the Wi-Fi driver came up.
  *
- * The timestamps of that run say something else. The animation covered
- * 1885 ms to 6170 ms. The network work started at 1944 and the Wi-Fi
- * driver alone took until 4853, which is a hole of nearly three seconds
- * in the log with nothing in it. The worst frame of the animation sits
- * inside that hole. The heaviest frame of the file does not sit there.
+ * It did not. The same animation with the network held off came back at
+ * 55 ms a frame, the same worst frame, the same count over time. The two
+ * simply begin together because both begin at boot.
  *
- * So the slow part follows the network and not the picture, and those two
- * cannot be told apart while they run at the same time. A one here runs
- * the same animation with nothing beside it. The run above is the other
- * half of the pair, and the two are read against each other.
+ * What it was is in the note above the display configuration in
+ * panel_display.c: the frames that overwrite the whole square cost about
+ * twice what the others do. Drawing only what changed took 16 of those
+ * frames off the worst rung of the ladder and left 2.
  *
- * What the answer decides. Frames near 44 ms and flat means the picture
- * was never the problem and the animation has to stop sharing the chip
- * with the Wi-Fi start. Frames near 57 ms again means the decoder really
- * is that slow here and the animation itself has to get cheaper. */
-#define PANEL_MEASURE_ANIMATION_ALONE 1
+ * Put it back to one to run the pair again. panel_boot.c prints the
+ * numbers either way. */
+#define PANEL_MEASURE_ANIMATION_ALONE 0
 
 static atomic_uint ui_heartbeat_ms;
 static atomic_bool display_asleep;
