@@ -101,13 +101,37 @@ lv_display_t *panel_display_start(void)
      * the display starts on the new buffer at a frame boundary, never in
      * the middle of one.
      *
-     * full_refresh and not direct_mode. full_refresh redraws the whole
-     * screen at every refresh, so the buffer LVGL draws into comes out
-     * complete whatever it held two frames back. Direct mode costs less
-     * and asks LVGL to remember what each of the two buffers still lacks.
-     * This panel refreshes when something changes, not at a fixed rate,
-     * and a label every three seconds is most of what changes. The cheaper
-     * mode buys little and goes wrong in ways nobody sees.
+     * direct_mode and not full_refresh, which is a change of mind with a
+     * measurement behind it.
+     *
+     * full_refresh redraws the whole screen at every refresh: 480 by 480,
+     * or 230400 pixels. The startup animation covers 320 by 320 of that,
+     * which is 102400. The rest is the black behind it, drawn again at
+     * every frame for nothing.
+     *
+     * The board measured that animation at 55 ms a frame where 40 was
+     * asked, and 16 frames of 77 took about twice as long as the rest.
+     * The network was ruled out first: the same numbers came back with
+     * the Wi-Fi start held off until the animation was over.
+     *
+     * Direct mode draws only what was made invalid. The doubt about it
+     * was that the two buffers drift apart, because LVGL draws into the
+     * one the display does not read and that buffer is two frames old.
+     * LVGL 9.5 answers that in refr_sync_areas: it keeps the areas it
+     * drew last time and copies them into the other buffer. It also takes
+     * away the areas it is about to draw again, with lv_area_diff, so it
+     * copies nothing that an overwrite is coming for.
+     *
+     * lv_gif calls lv_obj_invalidate on the whole image at every frame.
+     * So the area it draws and the area it keeps are the same 320 by 320
+     * square, the difference of the two is empty, and no copy happens.
+     * The animation draws 102400 pixels a frame instead of 230400 and
+     * pays nothing for the change.
+     *
+     * avoid_tearing needs one of direct_mode and full_refresh. Without
+     * either, esp_lvgl_port reaches the end of its chain and asks LVGL
+     * for partial mode over a screen-sized buffer, which draws correctly
+     * and tears again. tests/test_panel_display.py holds the pair.
      *
      * The flush waits for that frame boundary and has no timeout. The wait
      * ends only while the RGB DMA runs, and it does run this early: the
@@ -127,7 +151,7 @@ lv_display_t *panel_display_start(void)
         .hres=BSP_LCD_H_RES,.vres=BSP_LCD_V_RES,
         .color_format=LV_COLOR_FORMAT_RGB565,
         .flags={.buff_dma=false,.buff_spiram=false,.sw_rotate=false,
-                .full_refresh=true},
+                .direct_mode=true},
     };
     const lvgl_port_display_rgb_cfg_t rgb={.flags={.bb_mode=true,.avoid_tearing=true}};
     lv_display_t *screen=lvgl_port_add_disp_rgb(&display,&rgb);
@@ -183,7 +207,7 @@ lv_display_t *panel_display_start(void)
     ESP_RETURN_ON_FALSE(panel_input,NULL,tag,"Touch allocation failed");
     panel_screen=screen;
     ESP_LOGI(tag,"RGB: requested PCLK=12MHz, bounce=%d rows, %d frame buffers "
-             "at %p and %p, full refresh, core=1",
+             "at %p and %p, direct mode, core=1",
              CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_HEIGHT,
              CONFIG_BSP_LCD_RGB_BUFFER_NUMS,first,second);
     return screen;

@@ -340,3 +340,69 @@ class StandbyOrderTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TearingTest(unittest.TestCase):
+    """The pair that keeps the display swapping buffers instead of copying.
+
+    Reported from the board: small tears ran through the startup animation.
+    The answer was two frame buffers and a flush that swaps them at a frame
+    boundary, which esp_lvgl_port calls avoid_tearing.
+
+    None of it can run here. What these hold is the shape, because every way
+    this breaks is quiet: the panel draws a correct picture and tears again,
+    and nothing says so.
+    """
+
+    def source(self):
+        with open(os.path.join(FIRMWARE, "panel_display.c"),
+                  encoding="utf-8") as handle:
+            return without_comments(handle.read())
+
+    def test_the_swap_is_asked_for(self):
+        self.assertRegex(self.source(), r"\.avoid_tearing\s*=\s*true")
+
+    def test_it_is_asked_for_beside_one_of_the_two_modes_it_needs(self):
+        """avoid_tearing alone is a display that tears.
+
+        esp_lvgl_port takes the panel's frame buffers whatever the mode is.
+        The flush swaps them only for direct_mode or full_refresh: read
+        lvgl_port_flush_callback, which asks for those two by name. Without
+        either it falls through its chain to partial mode over a
+        screen-sized buffer, and the driver copies again.
+        """
+        code = self.source()
+        if not re.search(r"\.avoid_tearing\s*=\s*true", code):
+            self.skipTest("nothing asks for the swap")
+        self.assertRegex(code, r"\.(direct_mode|full_refresh)\s*=\s*true",
+                         "avoid_tearing without direct_mode or full_refresh "
+                         "draws a correct picture and tears again")
+
+    def test_the_panel_holds_more_than_one_frame_buffer(self):
+        """One buffer makes the request for the second fail, and the whole
+        display comes back NULL. The count is a Kconfig, so it lives in
+        sdkconfig.defaults, and a _Static_assert here fails the build when
+        it stops taking effect."""
+        defaults = os.path.join(os.path.dirname(FIRMWARE),
+                                "sdkconfig.defaults")
+        with open(defaults, encoding="utf-8") as handle:
+            self.assertRegex(handle.read(),
+                             r"(?m)^CONFIG_BSP_LCD_RGB_BUFFER_NUMS=([2-9]|\d\d)")
+        self.assertRegex(self.source(),
+                         r"_Static_assert\(\s*CONFIG_BSP_LCD_RGB_BUFFER_NUMS"
+                         r"\s*>=\s*2")
+
+    def test_the_draw_buffer_is_checked_against_the_panel_buffers(self):
+        """The one guard that catches a flush gone back to copying."""
+        code = self.source()
+        self.assertIn("esp_lcd_rgb_panel_get_frame_buffer", code)
+        self.assertRegex(code, r"ESP_RETURN_ON_FALSE\(\s*own\s*,")
+
+    def test_the_log_says_which_mode_it_ended_up_in(self):
+        """A person reading a serial log has no other way to tell."""
+        code = self.source()
+        # The text is split over several C string literals, so this takes
+        # the whole call and not the first piece of it.
+        said = re.search(r'ESP_LOGI\([^;]*?"RGB: .*?\);', code, re.S)
+        self.assertIsNotNone(said, "nothing logs how the display came up")
+        self.assertRegex(said.group(0), r"direct mode|full refresh")
