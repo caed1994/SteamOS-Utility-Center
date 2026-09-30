@@ -29,9 +29,30 @@ sys.path.insert(0, os.path.join(
 from steamos_utility_center import companion, steamapps    # noqa: E402
 
 TOKEN = "t" * companion.TOKEN_MINIMUM
-# Two bytes that no decoder reads, which is all these need: the rule is
-# that the bytes arrive whole and unchanged.
-PICTURE = b"\xff\xd8" + b"steam header bytes" * 40 + b"\xff\xd9"
+
+
+def jpeg(width=460, height=215, kind=0xC0, room=0):
+    """A JPEG as far as its frame header, and padding after it.
+
+    The service reads the front of the file to learn whether the panel
+    can decode it, so the front has to be real. What follows a frame
+    header is entropy data that nothing here reads.
+
+    kind names the frame header: 0xC0 is baseline, which the panel
+    decodes, and 0xC2 is progressive, which it does not.
+    """
+    frame = bytes([0xFF, kind, 0x00, 0x11, 0x08,
+                   height >> 8, height & 0xFF, width >> 8, width & 0xFF,
+                   0x03]) + bytes([1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1])
+    out = (b"\xff\xd8"
+           + b"\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+           + frame + b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00")
+    out += b"\x7f" * max(0, room - len(out) - 2)
+    return out + b"\xff\xd9"
+
+
+# The one the tests hand over unless they want another.
+PICTURE = jpeg(room=760)
 
 
 def library(home, appid, name="header.jpg", body=PICTURE):
@@ -76,7 +97,29 @@ class LookupTest(unittest.TestCase):
         one screen's worth of memory to spare."""
         with tempfile.TemporaryDirectory() as home:
             library(home, 1840, "header.jpg",
-                    b"\xff\xd8" + b"x" * (steamapps.ART_LIMIT + 10))
+                    jpeg(room=steamapps.ART_LIMIT + 10))
+            self.assertEqual(steamapps.artwork(1840, home), "")
+
+    def test_a_picture_the_panel_cannot_decode_is_no_picture(self):
+        """The panel decodes with TJPGD, which reads baseline JPEG and
+        nothing else. A progressive one costs 40 KB over the air and
+        leaves the card empty, so it never leaves this machine."""
+        with tempfile.TemporaryDirectory() as home:
+            library(home, 1840, "header.jpg", jpeg(kind=0xC2))
+            self.assertEqual(steamapps.artwork(1840, home), "")
+
+    def test_a_baseline_one_next_to_it_is_taken(self):
+        """The header is progressive and the hero is not, so the hero
+        goes. A game keeps its picture where one of the two can be
+        read."""
+        with tempfile.TemporaryDirectory() as home:
+            library(home, 1840, "header.jpg", jpeg(kind=0xC2))
+            wanted = library(home, 1840, "library_hero.jpg", jpeg())
+            self.assertEqual(steamapps.artwork(1840, home), wanted)
+
+    def test_something_that_is_not_a_picture_at_all_is_no_picture(self):
+        with tempfile.TemporaryDirectory() as home:
+            library(home, 1840, "header.jpg", b"not a picture")
             self.assertEqual(steamapps.artwork(1840, home), "")
 
     def test_the_path_is_built_and_never_taken_from_a_caller(self):

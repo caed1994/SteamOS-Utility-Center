@@ -45,6 +45,15 @@ CONFIG_LV_USE_GIF=y
 # header.jpg for every game and the service hands it over; this is what
 # reads it.
 CONFIG_LV_USE_TJPGD=y
+# TJPGD reads a file. It refuses bytes in memory outright unless this
+# driver makes a block of memory look like a file, and it carries no
+# default in the Kconfig of the component, the same hole LV_USE_LOG had.
+# Without it the panel got a warning it could not print and a picture it
+# could not size. See the LV_IMAGE_SRC_VARIABLE branch of decoder_info in
+# lv_tjpgd.c, and firmware/companion/main/ui.c.
+CONFIG_LV_USE_FS_MEMFS=y
+# 77 is 'M'. The letter names the drive this driver answers for.
+CONFIG_LV_FS_MEMFS_LETTER=77
 # And what keeps the result. The default is nought, which is no cache at
 # all: LVGL would decode the picture again at every refresh, and a refresh
 # happens at every swipe of the band. 460 by 215 as RGB565 is 197800

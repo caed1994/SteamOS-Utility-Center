@@ -28,18 +28,21 @@
 #define LV_FONT_DEFAULT &lv_font_montserrat_16
 #define LV_BUILD_EXAMPLES 0
 #define LV_BUILD_DEMOS 0
-// The log, at the one level that stays quiet in a loop.
+// The log.
 //
 // A nought here was the same shape of blind spot as the colour depth above:
 // panel_boot.c measures the pacing of the animation and prints it with
 // LV_LOG_USER, and a check with no log never runs that line at all.
 //
-// The level is USER and not the WARN the panel uses. check_idle turns the
-// screen over 20000 times, and a warning that fires once per turn is 20000
-// lines in the job. USER prints at every level below NONE, so the reading
-// comes out and nothing else does.
+// The level is WARN, and USER is not a quieter setting although it reads
+// like one. The order is TRACE, INFO, WARN, ERROR, USER, NONE, and LVGL
+// prints what stands at the level or above. At USER that is USER alone:
+// every LV_LOG_ERROR goes missing. The preview ran that way while LVGL
+// was writing "Failed to open image" at every refresh of the card, and
+// the checks all passed. check_pages now fails on such a line, and it
+// needs the line to arrive first.
 #define LV_USE_LOG 1
-#define LV_LOG_LEVEL LV_LOG_LEVEL_USER
+#define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
 #define LV_LOG_PRINTF 1
 // panel_boot.c plays the startup animation, and check_boot runs it.
 #define LV_USE_GIF 1
@@ -49,3 +52,8 @@
 // colour depth above is here for the same reason.
 #define LV_USE_TJPGD 1
 #define LV_CACHE_DEF_SIZE 262144
+// TJPGD refuses bytes in memory without this. It reads a file, and this
+// is the driver that makes a block of memory look like one. See the
+// LV_IMAGE_SRC_VARIABLE branch of decoder_open in lv_tjpgd.c.
+#define LV_USE_FS_MEMFS 1
+#define LV_FS_MEMFS_LETTER 'M'

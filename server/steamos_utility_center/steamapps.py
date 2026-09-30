@@ -191,12 +191,57 @@ def now_playing(root=PROC, home=None, where=None):
     return name or ("App %d" % appid)
 
 
+# The frame header of a baseline JPEG, and the ones that are not a frame
+# header at all although they sit in the same range.
+BASELINE = 0xC0
+NOT_A_FRAME = (0xC4, 0xC8, 0xCC)
+
+
+def baseline_jpeg(path, read=512):
+    """True for a JPEG the panel can decode.
+
+    The panel decodes with TJPGD, and TJPGD reads baseline JPEG alone.
+    Every other frame header, progressive among them, comes back
+    JDR_FMT3. A picture that fails there costs the panel a transfer and
+    leaves the card empty, so it is better not sent.
+
+    Only the front of the file is read. The frame header stands in front
+    of the entropy data, which is the rest of it.
+    """
+    try:
+        with open(path, "rb") as handle:
+            front = handle.read(read)
+    except OSError:                                     # pragma: no cover
+        return False
+    if len(front) < 4 or front[0] != 0xFF or front[1] != 0xD8:
+        return False
+    at = 2
+    while at + 3 < len(front):
+        if front[at] != 0xFF:
+            return False
+        kind = front[at + 1]
+        if kind == 0xFF:                    # padding in front of a marker
+            at += 1
+            continue
+        if kind == 0xD8 or kind == 0x01 or 0xD0 <= kind <= 0xD7:
+            at += 2                         # the ones that carry no length
+            continue
+        if kind == BASELINE:
+            return True
+        if 0xC0 <= kind <= 0xCF and kind not in NOT_A_FRAME:
+            return False                    # a frame header of another kind
+        at += 2 + ((front[at + 2] << 8) | front[at + 3])
+    return False
+
+
 def artwork(appid, home=None):
     """The picture for that number, or "" where there is none.
 
     A path built from a number and a name of this module's own. Nothing
     from the network reaches it, so there is no way to ask this for a file
     somewhere else.
+
+    A picture the panel cannot decode counts as none. See baseline_jpeg.
     """
     if appid is None:
         return ""
@@ -206,10 +251,12 @@ def artwork(appid, home=None):
         for name in ART_NAMES:
             path = os.path.join(where, name)
             try:
-                if os.path.getsize(path) <= ART_LIMIT:
-                    return path
+                if os.path.getsize(path) > ART_LIMIT:
+                    continue
             except OSError:
                 continue
+            if baseline_jpeg(path):
+                return path
     return ""
 
 

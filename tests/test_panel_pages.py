@@ -204,6 +204,34 @@ class BannerTest(unittest.TestCase):
         # nothing and is the same as none.
         self.assertGreater(int(said.group(1)), 197800)
 
+    def test_the_decoder_is_allowed_to_read_bytes_in_memory(self):
+        """TJPGD reads a file. LV_USE_FS_MEMFS is the driver that makes a
+        block of memory look like one, and it carries no default in the
+        Kconfig of the component, the same hole LV_USE_LOG had.
+
+        Without it the decoder refuses the picture, the built-in decoder
+        takes the bytes as a bitmap, and the card fills with the file read
+        as pixels. The panel showed that and then died."""
+        defaults = os.path.join(COMPANION, "sdkconfig.defaults")
+        with open(defaults, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertRegex(text, r"(?m)^CONFIG_LV_USE_FS_MEMFS=y")
+        letter = re.search(r"(?m)^CONFIG_LV_FS_MEMFS_LETTER=(\d+)", text)
+        self.assertIsNotNone(letter, "the driver answers for no letter")
+        self.assertTrue(chr(int(letter.group(1))).isupper())
+
+    def test_only_a_baseline_picture_reaches_the_screen(self):
+        """TJPGD reads SOF0 and nothing else: SOF1 to SOF15 come back
+        JDR_FMT3. A progressive picture that gets past the door is one
+        LVGL fails to open at every refresh."""
+        code = without_comments(read("ui.c"))
+        self.assertIn("kind==0xC0", code)
+        gate = re.search(r"static bool jpeg_size\(.*?\n\}", code, re.S)
+        self.assertIsNotNone(gate)
+        # Every other frame header is turned away rather than walked past.
+        self.assertRegex(gate.group(0),
+                         r"(?s)kind>=0xC1&&kind<=0xCF.*?return false")
+
     def test_the_preview_is_built_the_same_way(self):
         """A preview configured differently from the board watches a
         screen the board never shows. The colour depth taught that once."""
@@ -211,6 +239,20 @@ class BannerTest(unittest.TestCase):
             text = h.read()
         self.assertRegex(text, r"(?m)^#define LV_USE_TJPGD 1")
         self.assertRegex(text, r"(?m)^#define LV_CACHE_DEF_SIZE \d+")
+        self.assertRegex(text, r"(?m)^#define LV_USE_FS_MEMFS 1")
+
+    def test_the_preview_shows_what_lvgl_complains_about(self):
+        """LV_LOG_LEVEL_USER hides LV_LOG_ERROR, because USER is above
+        ERROR in the order. The preview ran that way while LVGL was
+        writing "Failed to open image" at every refresh, and nothing
+        printed it."""
+        with open(os.path.join(PREVIEW, "lv_conf.h"), encoding="utf-8") as h:
+            text = h.read()
+        level = re.search(r"(?m)^#define LV_LOG_LEVEL (\w+)", text)
+        self.assertIsNotNone(level)
+        self.assertIn(level.group(1),
+                      ("LV_LOG_LEVEL_TRACE", "LV_LOG_LEVEL_INFO",
+                       "LV_LOG_LEVEL_WARN"))
 
     def test_the_picture_is_fetched_when_the_game_changes(self):
         """Every three seconds would be 40 KB over the air every three

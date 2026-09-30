@@ -65,13 +65,43 @@ static bool within(const void *p,const void *base,size_t n)
  *
  * The trailing newline goes: ESP_LOG adds its own, and LVGL ends its
  * buffer with one. */
+/* The same line again and again, which is what a fault in the draw path
+ * looks like.
+ *
+ * LVGL draws about thirty times a second, so a complaint that belongs to
+ * one object is thirty lines a second, for as long as that object is on
+ * the screen. Every one of them is a write to the UART from the task that
+ * draws, and that task has a frame to fill before the panel asks for the
+ * next one. Enough of them and the screen tears and the watchdog fires.
+ *
+ * So a repeat is counted rather than written, and the count goes out with
+ * the next one that gets through. Nothing is lost that a person needs:
+ * the first line says what is wrong, and the count says it did not stop.
+ */
+#define LOG_REPEATS 64
+static char last_line[80];
+static uint32_t repeats;
 static void lvgl_log(lv_log_level_t level,const char *text)
 {
     size_t len=strlen(text);
     while(len && (text[len-1]=='\n' || text[len-1]=='\r')) len--;
-    if(level>=LV_LOG_LEVEL_ERROR) ESP_LOGE("lvgl","%.*s",(int)len,text);
-    else if(level==LV_LOG_LEVEL_WARN) ESP_LOGW("lvgl","%.*s",(int)len,text);
-    else ESP_LOGI("lvgl","%.*s",(int)len,text);
+    /* As much of the line as is kept, which is what two lines are
+     * compared on. Two different lines that agree over the first eighty
+     * characters count as one, and that costs a count rather than a
+     * line. */
+    size_t keep=len<sizeof(last_line)-1?len:sizeof(last_line)-1;
+    if(strlen(last_line)==keep && strncmp(text,last_line,keep)==0){
+        if(++repeats%LOG_REPEATS)return;
+    }else{
+        memcpy(last_line,text,keep);last_line[keep]=0;
+        repeats=0;
+    }
+    if(level>=LV_LOG_LEVEL_ERROR)
+        ESP_LOGE("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
+    else if(level==LV_LOG_LEVEL_WARN)
+        ESP_LOGW("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
+    else
+        ESP_LOGI("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
 }
 
 lv_display_t *panel_display_start(void)

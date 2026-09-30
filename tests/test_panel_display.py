@@ -406,3 +406,52 @@ class TearingTest(unittest.TestCase):
         said = re.search(r'ESP_LOGI\([^;]*?"RGB: .*?\);', code, re.S)
         self.assertIsNotNone(said, "nothing logs how the display came up")
         self.assertRegex(said.group(0), r"direct mode|full refresh")
+
+
+class LogFloodTest(unittest.TestCase):
+    """One complaint from the draw path, repeated thirty times a second.
+
+    LVGL writes a line when it cannot draw something, and it tries again at
+    every refresh. Every line goes to ESP_LOG from the task that draws, and
+    that task has a frame to fill before the panel asks for the next one.
+    A serial port at 115200 baud is slow enough that this shows as a torn
+    screen, and then as a watchdog.
+
+    The picture of the game found this: a JPEG that LVGL refused sat on the
+    card and complained once per frame for as long as it was up.
+    """
+
+    def source(self):
+        with open(os.path.join(FIRMWARE, "panel_display.c"),
+                  encoding="utf-8") as handle:
+            return without_comments(handle.read())
+
+    def routing(self):
+        code = self.source()
+        found = re.search(r"static void lvgl_log\(.*?\n\}", code, re.S)
+        self.assertIsNotNone(found, "nothing hands LVGL's lines to ESP_LOG")
+        return found.group(0)
+
+    def test_a_repeat_is_counted_and_not_written(self):
+        body = self.routing()
+        self.assertIn("last_line", body)
+        self.assertRegex(body, r"strncmp\(text,last_line,keep\)==0")
+        self.assertRegex(body, r"repeats%LOG_REPEATS\)return")
+
+    def test_the_line_still_comes_out_now_and_then(self):
+        """A fault that never stops must not go quiet either. The count
+        stands behind the line that does get through."""
+        body = self.routing()
+        self.assertIn("and again", body)
+        code = self.source()
+        every = re.search(r"#define LOG_REPEATS (\d+)", code)
+        self.assertIsNotNone(every)
+        # Thirty a second, so this is a line every two seconds or so.
+        self.assertLessEqual(int(every.group(1)), 128)
+
+    def test_the_first_one_is_never_held_back(self):
+        """A fault nobody sees at all is worse than a loud one."""
+        body = self.routing()
+        # repeats is zeroed on a line that differs, and the write below
+        # runs for every line that reaches it.
+        self.assertRegex(body, r"repeats=0;")
