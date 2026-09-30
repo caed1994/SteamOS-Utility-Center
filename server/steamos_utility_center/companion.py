@@ -37,7 +37,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import temperature
+from . import desktop, steamapps, temperature
 
 # The port, and the file that holds the shared secret.
 #
@@ -92,7 +92,27 @@ ACTIONS = {
     "suspend": ("systemctl", "suspend"),
     "reboot": ("systemctl", "reboot"),
     "poweroff": ("systemctl", "poweroff"),
+    # Where to go, and not "the other one". The panel knows the mode from
+    # the last status, which is up to three seconds old, so a toggle would
+    # now and then switch to the side it is already on. A target says what
+    # it means whatever happened in between.
+    #
+    # This is the command SteamOS uses for it. The session goes away and
+    # comes back, which is why this service is ordered After the graphical
+    # session and deliberately not PartOf it. The unit file says so.
+    "desktop_mode": ("steamos-session-select", "plasma"),
+    "game_mode": ("steamos-session-select", "gamescope"),
 }
+
+# Where a person of this machine looks for a drive.
+#
+# The root filesystem, which is the internal one, and whatever udisks
+# mounted under /run/media, which is the card in the slot and anything on
+# a USB port. udisks mounts under the name of the user on some versions
+# and directly under /run/media on others, so both depths are walked.
+DRIVE_ROOT = "/"
+REMOVABLE_ROOT = "/run/media"
+REMOVABLE_DEPTH = 2
 
 # The battery of a controller, which the kernel publishes as a power supply
 # beside the one of a laptop. The name tells them apart.
@@ -428,6 +448,62 @@ def wake_target(root=NET_ROOT, route=ROUTE_TABLE):
     return {"interface": name, "mac": mac}
 
 
+def _mount_points(root=REMOVABLE_ROOT, depth=REMOVABLE_DEPTH):
+    """Every mount under that root, at most that many levels down."""
+    found, here = [], [(root, 0)]
+    while here:
+        path, level = here.pop(0)
+        try:
+            entries = sorted(os.listdir(path))
+        except OSError:
+            continue        # not there, which is the ordinary case
+        for entry in entries:
+            child = os.path.join(path, entry)
+            if not os.path.isdir(child):
+                continue
+            if os.path.ismount(child):
+                found.append(child)
+            elif level + 1 < depth:
+                here.append((child, level + 1))
+    return found
+
+
+def drives(root=DRIVE_ROOT, removable=REMOVABLE_ROOT):
+    """How full each drive is, as the panel draws it.
+
+    Bytes and not percent: the panel has the room to write "212 of 916 GB"
+    and a percentage alone answers the wrong question. A drive that cannot
+    be read is left out rather than shown as empty, because an empty bar
+    reads as plenty of room.
+    """
+    out = []
+    for path in [root] + _mount_points(removable):
+        try:
+            space = os.statvfs(path)
+        except OSError:
+            continue
+        total = space.f_blocks * space.f_frsize
+        if total <= 0:
+            continue        # a pseudo filesystem, which is not a drive
+        out.append({
+            "name": "SSD" if path == root else os.path.basename(path),
+            "total": total,
+            # f_bavail and not f_bfree: the second counts the blocks the
+            # filesystem keeps for root, which nobody can fill a game into.
+            "free": space.f_bavail * space.f_frsize,
+        })
+    return out
+
+
+def session_mode():
+    """"game" while a Game Mode session runs, otherwise "desktop".
+
+    desktop.running_game_mode answers by the compositor of Game Mode,
+    which is the one thing that is there in the one and not the other.
+    """
+    return "game" if desktop.running_game_mode() else "desktop"
+
+
 def status():
     """Everything one GET answers with."""
     return {
@@ -438,6 +514,12 @@ def status():
         # For the Wake button. None where this machine has no wired card,
         # and the panel then shows no such button. See wake_target.
         "wake": wake_target(),
+        # What the panel shows on the page beside the first one.
+        "session": session_mode(),
+        # "" most of the time, and that is not a fault: most of the time
+        # no game runs and the panel then shows nothing.
+        "playing": steamapps.now_playing(),
+        "drives": drives(),
     }
 
 
@@ -459,6 +541,12 @@ def press(name):
     except subprocess.TimeoutExpired:
         # No retry: a suspend that answers late is a suspend that happened.
         return 504, {"error": "command result unknown; do not retry"}
+    except (FileNotFoundError, PermissionError):
+        # The command is not on this machine, or this user cannot run it.
+        # Before this the exception left the handler, the panel got a 500
+        # with a traceback in the log, and the person at the panel got
+        # nothing that says what to install.
+        return 501, {"error": "command not available on this machine"}
     except OSError:
         return 503, {"error": "command unavailable"}
     return 200, {"ok": True}
