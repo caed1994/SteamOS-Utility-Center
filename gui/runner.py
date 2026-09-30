@@ -71,15 +71,38 @@ Only the thread that owns tkinter can call it. So the worker puts its
         try:
             process = subprocess.Popen(
                 command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1)
+                # errors="replace" and not the default, which is strict.
+                #
+                # A serial port carries whatever the other end sends. The
+                # panel writes its startup at one speed and the ROM of the
+                # chip writes at another, and a chip that panics writes a
+                # register dump with bytes in it that are no text at all.
+                # One such byte used to end this thread with a
+                # UnicodeDecodeError, and the log of the fault went with
+                # it. The reader has to survive the thing it is there to
+                # read.
+                text=True, errors="replace", bufsize=1)
         except OSError as exc:
             self.queue.put(("line", "cannot run: %s\n" % exc))   # noqa
             self.queue.put(("done", (1, done)))
             return
-        for line in process.stdout:
-            self.transcript.append(line)
-            self.queue.put(("line", line))
-        code = process.wait()
+        # The done message goes out whatever happens in here.
+        #
+        # Without it a reader that stops leaves the window waiting for a
+        # command that already ended: busy stays true, every button stays
+        # off, and the only way out is to start the program again.
+        code = 1
+        try:
+            for line in process.stdout:
+                self.transcript.append(line)
+                self.queue.put(("line", line))
+            code = process.wait()
+        except Exception as exc:                        # noqa: BLE001
+            self.queue.put(("line", "reading stopped: %s\n" % exc))
+            try:
+                process.kill()
+            except OSError:                             # pragma: no cover
+                pass
         self.queue.put(("done", (code, done)))
 
     def _drain(self):

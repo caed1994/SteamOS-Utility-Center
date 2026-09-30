@@ -188,6 +188,25 @@ jobs:
               > SHA256SUMS )
           ls -l "$out"
 
+      # The file that turns a crash dump into names.
+      #
+      # A panic on the board prints "Backtrace:" and a list of addresses.
+      # Nothing can read those without the ELF of that exact build, and the
+      # ELF carries debug information, so it is far too large to keep in the
+      # repository beside the image. An artifact of the run holds it for
+      # ninety days and costs the clone nothing.
+      #
+      # The name carries the commit. prebuilt/built-from names the source the
+      # image beside it was built from, so a person with a dump can find the
+      # run that made the firmware they flashed.
+      - name: Keep the ELF, so a crash dump can be read
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-elf-${{ github.sha }}
+          path: firmware/companion/build/steamos_companion.elf
+          retention-days: 90
+          if-no-files-found: error
+
       - name: Commit it, if it changed
         shell: bash
         run: |
