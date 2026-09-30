@@ -482,6 +482,16 @@ static int request(const char *path, const char *action)
         && strcmp(session->valuestring,"game")==0;
     snprintf(state.playing,sizeof(state.playing),"%s",
              cJSON_IsString(playing)?playing->valuestring:"");
+    /* The two counts, both or neither. steamapps.achievements holds the
+     * same rules at its end, and this is the second reader of them rather
+     * than trust in the first: a count past its total is not drawn. */
+    cJSON *unlocked=cJSON_GetObjectItemCaseSensitive(root,"achievements");
+    cJSON *got=cJSON_GetObjectItemCaseSensitive(unlocked,"achieved");
+    cJSON *of=cJSON_GetObjectItemCaseSensitive(unlocked,"total");
+    bool counts=cJSON_IsNumber(got)&&cJSON_IsNumber(of)
+        &&of->valueint>0&&got->valueint>=0&&got->valueint<=of->valueint;
+    state.achievements_done=counts?got->valueint:0;
+    state.achievements_total=counts?of->valueint:0;
     state.drive_count=0;
     if(cJSON_IsArray(drives)){
         cJSON *one=NULL;

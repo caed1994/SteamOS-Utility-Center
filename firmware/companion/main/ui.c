@@ -25,7 +25,7 @@ static lv_obj_t *controls[6],*overlay,*setup_screen,*setup_text,*cpu_value,*gpu_
 static lv_obj_t *wake_button,*wake_what;
 /* The second and third pages. Not in controls[] either: that table is
  * indexed by the action and holds the six on the first page. */
-static lv_obj_t *mode_now,*mode_button,*mode_caption,*playing_name;
+static lv_obj_t *mode_now,*mode_button,*mode_caption,*playing_name,*achievement_count;
 static lv_obj_t *drive_rows[PANEL_DRIVES],*drive_names[PANEL_DRIVES];
 static lv_obj_t *drive_bars[PANEL_DRIVES],*drive_free[PANEL_DRIVES];
 static lv_obj_t *no_drives,*band,*dots[3],*esp_power,*wifi_mark;
@@ -371,7 +371,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * of this screen too. A pointer kept past the clean above is a pointer
      * to freed memory, and band_scrolled runs from a touch. */
     band=NULL;mode_now=NULL;mode_button=NULL;mode_caption=NULL;
-    playing_name=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
+    playing_name=NULL;achievement_count=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
     for(int i=0;i<3;i++)dots[i]=NULL;
     for(int i=0;i<PANEL_DRIVES;i++){
         drive_rows[i]=NULL;drive_names[i]=NULL;
@@ -488,7 +488,23 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     text_at(play_card,panel_text(TXT_PLAYING),52,16,240,&lv_font_montserrat_14,MUTED);
     line(play_card,14,44,432,1);
     playing_name=text_at(play_card,panel_text(TXT_NOTHING_PLAYING),20,64,420,&lv_font_montserrat_24,TEXT);
-    lv_label_set_long_mode(playing_name,LV_LABEL_LONG_WRAP);
+    /* Two lines at most, and the rest cut with an ellipsis. A long name
+     * used to have the whole card to itself; it now stops short of the
+     * line below it. */
+    lv_label_set_long_mode(playing_name,LV_LABEL_LONG_DOT);
+    lv_obj_set_height(playing_name,2*lv_font_get_line_height(&lv_font_montserrat_24));
+    /* The achievements of that game, where a mockup once had a frame
+     * rate. The rate had no clean source on the PC; these come out of the
+     * page the Steam client keeps for each game. See
+     * steamapps.achievements.
+     *
+     * The shape of the volume on the first page: a small name and a large
+     * number under it, 31 apart. The pair stands in the middle of the
+     * room under the line, because nothing else shares that room. */
+    line(play_card,14,136,432,1);
+    center_text(text_at(play_card,panel_text(TXT_ACHIEVEMENTS),20,186,420,&lv_font_montserrat_14,MUTED));
+    achievement_count=text_at(play_card,"--",20,217,420,&lv_font_montserrat_32,TEXT);
+    center_text(achievement_count);
     lv_obj_t *foot=panel(s,10,386,460,48,CARD,true);
     icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&lv_font_montserrat_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&lv_font_montserrat_18,BLUE);
     line(foot,151,9,1,30);icon(foot,&icon_circuit_board,165,12,MUTED);text_at(foot,"GPU",198,6,99,&lv_font_montserrat_12,MUTED);gpu_value=text_at(foot,"-- C",198,22,99,&lv_font_montserrat_18,BLUE);
@@ -680,4 +696,13 @@ void panel_ui_update(const panel_state_t *s)
     if(playing_name)
         lv_label_set_text(playing_name,
                           s->online&&s->playing[0]?s->playing:panel_text(TXT_NOTHING_PLAYING));
+    /* A dash for nothing to count, the same dash the temperatures show.
+     * Nought of sixty is a real answer about a game, and no game is not
+     * that answer. */
+    if(achievement_count){
+        if(s->online&&s->playing[0]&&s->achievements_total>0)
+            lv_label_set_text_fmt(achievement_count,"%d / %d",
+                                  s->achievements_done,s->achievements_total);
+        else lv_label_set_text(achievement_count,"--");
+    }
 }

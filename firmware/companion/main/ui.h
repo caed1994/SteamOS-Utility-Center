@@ -66,6 +66,11 @@ typedef struct {
      * many answered up to the room there is. */
     bool game_mode;
     char playing[64];
+    /* How many achievements of that game are unlocked, out of how many.
+     * A total of nought means nothing to count: no game, a game with no
+     * achievements, or a page the Steam client never wrote. The panel
+     * draws those alike, and a zeroed state is already that. */
+    int achievements_done, achievements_total;
     panel_drive_t drives[PANEL_DRIVES];
     int drive_count;
     /* The panel itself, and not the controller that battery and charging

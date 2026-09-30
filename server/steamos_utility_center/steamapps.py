@@ -23,6 +23,8 @@ files it already writes. Both are read only.
 
 from __future__ import annotations
 
+import glob
+import json
 import os
 import re
 
@@ -163,3 +165,122 @@ def now_playing(root=PROC, home=None, where=None):
     # A game whose manifest is gone still runs. The number is worth more
     # than an empty card, and it is what somebody types into a search.
     return name or ("App %d" % appid)
+
+
+# What the library page of a game shows, as the Steam client keeps it: one
+# JSON file for each account and each game, under the account.
+#
+# Read off a real machine: the "achievements" entry carries nAchieved and
+# nTotal, and the total there agrees with the count of achievements in
+# appcache/stats/UserGameStatsSchema_<appid>.bin, which is a second file
+# written by a different part of the client. The panel shows these two
+# numbers and nothing else out of the file.
+#
+# It is the cache of a page. Steam writes it when it lays that page out,
+# so an achievement unlocked a minute ago can be missing until the page is
+# built again. The binary stats file next to the schema is what the client
+# updates at an unlock, but which of its entries hold achievements could
+# not be read off the machine, so it is not used.
+LIBRARY_PAGES = os.path.join("config", "librarycache")
+ACHIEVEMENTS_KEY = "achievements"
+
+# A page of a game is tens of kilobytes. A file far past that is not one
+# of these, and it is not read into memory to find out.
+PAGE_LIMIT = 4 * 1024 * 1024
+
+# The last page read, by its path, its time and its size. status() asks
+# every three seconds and the file changes a few times a day.
+_page_cache = {}
+
+
+def _page_of(appid, home):
+    """The newest page of that game across the accounts on this machine.
+
+    The newest, because the account that uses this machine is the one
+    whose client last wrote a page. A second account that played the same
+    game a year ago leaves a file that is older.
+    """
+    newest = None
+    for root in STEAM_ROOTS:
+        pattern = os.path.join(home, root, "userdata", "*", LIBRARY_PAGES,
+                               "%d.json" % appid)
+        for path in glob.glob(pattern):
+            try:
+                stamp = os.stat(path)
+            except OSError:
+                continue
+            if newest is None or stamp.st_mtime > newest[1].st_mtime:
+                newest = (path, stamp)
+    return newest
+
+
+def _counts(page):
+    """(achieved, total) out of a parsed page, or None.
+
+    The page is a list of pairs, a name and an entry, and a dict is taken
+    as well. Only the entry called exactly "achievements" counts: the same
+    file carries other entries whose names hold that word and whose data is
+    a string, which a looser match once tripped on.
+    """
+    entries = page.items() if isinstance(page, dict) else page
+    if not isinstance(entries, (list, type({}.items()))):
+        return None
+    for entry in entries:
+        if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+            continue
+        name, value = entry
+        if name != ACHIEVEMENTS_KEY or not isinstance(value, dict):
+            continue
+        data = value.get("data", value)
+        if not isinstance(data, dict):
+            return None
+        achieved, total = data.get("nAchieved"), data.get("nTotal")
+        # bool is an int in Python, and True is not a count.
+        numbers = all(isinstance(n, int) and not isinstance(n, bool)
+                      for n in (achieved, total))
+        if not numbers or total <= 0 or not 0 <= achieved <= total:
+            return None
+        return achieved, total
+    return None
+
+
+def achievements(appid, home=None):
+    """(achieved, total) for that game, or None where it is not known.
+
+    None covers a game with no achievements, a game whose page the client
+    never wrote, and a file that is not a page of this kind. The panel
+    draws those the same way.
+
+    The path is built from a number and names of this module's own, the
+    same rule the rest of this module keeps.
+    """
+    if appid is None:
+        return None
+    appid = int(appid)
+    home = os.path.expanduser("~") if home is None else home
+    found = _page_of(appid, home)
+    if found is None:
+        return None
+    path, stamp = found
+    key = (path, stamp.st_mtime_ns, stamp.st_size)
+    if _page_cache.get("key") == key:
+        return _page_cache["value"]
+    value = None
+    if stamp.st_size <= PAGE_LIMIT:
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read(PAGE_LIMIT + 1)
+            if len(raw) <= PAGE_LIMIT:
+                value = _counts(json.loads(raw.decode("utf-8")))
+        except (OSError, UnicodeDecodeError, ValueError):
+            value = None
+    _page_cache["key"], _page_cache["value"] = key, value
+    return value
+
+
+def now_playing_achievements(root=PROC, home=None):
+    """The achievements of the game that runs, as a dict, or None."""
+    counts = achievements(running_appid(root), home=home)
+    if counts is None:
+        return None
+    return {"achieved": counts[0], "total": counts[1]}

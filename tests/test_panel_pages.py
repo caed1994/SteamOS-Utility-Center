@@ -171,6 +171,32 @@ class TheJobRunsItTest(unittest.TestCase):
         self.assertIn("./preview-build/check_pages", job)
 
 
+class AchievementParseTest(unittest.TestCase):
+    """The two counts, read off the answer of the service."""
+
+    def main(self):
+        with open(os.path.join(FIRMWARE, "main.c"), encoding="utf-8") as h:
+            return without_comments(h.read())
+
+    def test_both_or_neither(self):
+        """A count without its total, or past it, is not drawn. The
+        service holds the same rules; this is the second reader of them."""
+        code = self.main()
+        self.assertIn('cJSON_GetObjectItemCaseSensitive(root,"achievements")',
+                      code)
+        self.assertRegex(code, r"of->valueint>0")
+        self.assertRegex(code, r"got->valueint>=0")
+        self.assertRegex(code, r"got->valueint<=of->valueint")
+        self.assertRegex(code, r"state\.achievements_total=counts\?of->valueint:0")
+
+    def test_the_names_of_the_service_are_the_ones_read(self):
+        """The panel reads "achieved" and "total", which is what
+        steamapps.now_playing_achievements writes."""
+        code = self.main()
+        self.assertIn('"achieved"', code)
+        self.assertIn('"total"', code)
+
+
 if __name__ == "__main__":
     unittest.main()
 

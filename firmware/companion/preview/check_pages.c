@@ -79,6 +79,36 @@ static lv_obj_t *thin_line(lv_obj_t *card)
     }
     return NULL;
 }
+// The label under the title of the count, in the same card.
+static lv_obj_t *count_under(lv_obj_t *card,lv_obj_t *title)
+{
+    for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+        lv_obj_t *c=lv_obj_get_child(card,i);
+        if(c!=title&&lv_obj_check_type(c,&lv_label_class)
+           &&lv_obj_get_y(c)>lv_obj_get_y(title))return c;
+    }
+    return NULL;
+}
+// The last line of one pixel in the card that stands above a height.
+static lv_obj_t *line_below(lv_obj_t *card,int32_t above)
+{
+    lv_obj_t *found=NULL;
+    for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+        lv_obj_t *c=lv_obj_get_child(card,i);
+        if(lv_obj_get_height(c)==1&&lv_obj_get_y(c)<above)found=c;
+    }
+    return found;
+}
+// The label of the name: the one that stands between the two lines.
+static lv_obj_t *name_above(lv_obj_t *card,lv_obj_t *between)
+{
+    for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+        lv_obj_t *c=lv_obj_get_child(card,i);
+        if(lv_obj_check_type(c,&lv_label_class)&&lv_obj_get_y(c)>44
+           &&lv_obj_get_y(c)<lv_obj_get_y(between))return c;
+    }
+    return NULL;
+}
 static panel_state_t base(void)
 {
     panel_state_t s={.online=true,.wifi=true,.battery=50,.volume=30,
@@ -342,6 +372,53 @@ int main(void)
         assert(!label(lv_screen_active(),panel_text(TXT_CHECK_SETUP)));
     }
 
+    // How many achievements of the game that runs are unlocked, under its
+    // name on the third page.
+    {
+        s=base();
+        snprintf(s.playing,sizeof s.playing,"DragonSword : Awakening");
+        s.achievements_done=49;s.achievements_total=60;
+        panel_ui_update(&s);
+        lv_obj_t *title=label(lv_screen_active(),panel_text(TXT_ACHIEVEMENTS));
+        assert(title);
+        assert(label(lv_screen_active(),"49 / 60"));
+        lv_obj_t *card=lv_obj_get_parent(title);
+        lv_obj_t *count=count_under(card,title);
+        assert(count);
+        // Nought of sixty is a real answer about a game.
+        s.achievements_done=0;
+        panel_ui_update(&s);
+        assert(strcmp(lv_label_get_text(count),"0 / 60")==0);
+        // And a dash for everything with nothing to count: a game with no
+        // achievements, no game at all, and a PC that does not answer.
+        s.achievements_total=0;
+        panel_ui_update(&s);
+        assert(strcmp(lv_label_get_text(count),"--")==0);
+        s.achievements_done=49;s.achievements_total=60;s.playing[0]=0;
+        panel_ui_update(&s);
+        assert(strcmp(lv_label_get_text(count),"--")==0);
+        snprintf(s.playing,sizeof s.playing,"DragonSword : Awakening");
+        s.online=false;
+        panel_ui_update(&s);
+        assert(strcmp(lv_label_get_text(count),"--")==0);
+
+        // The name stops short of the line between it and the count, however
+        // long it is: two lines at most.
+        s=base();
+        // W is the widest letter there is, so fifty of them run past two
+        // lines of this card and still fit the 64 bytes a name has here.
+        snprintf(s.playing,sizeof s.playing,
+                 "WWWWWWWWWW WWWWWWWWWW WWWWWWWWWW WWWWWWWWWW WWWWWWWWWW");
+        panel_ui_update(&s);
+        lv_obj_update_layout(lv_screen_active());
+        lv_obj_t *between=line_below(card,lv_obj_get_y(title)-1);
+        assert(between);
+        lv_obj_t *name=name_above(card,between);
+        assert(name);
+        assert(lv_obj_get_y(name)+lv_obj_get_height(name)<=lv_obj_get_y(between));
+        assert(lv_obj_get_y(title)>lv_obj_get_y(between));
+    }
+
     // The two sliders of the display card, and the room under each.
     //
     // The board showed the second one pressed against the bottom edge of
@@ -376,7 +453,8 @@ int main(void)
     puts("OK: three pages that snap, the session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
          "them drawn with nothing for LVGL to complain about, the battery of "
-         "the panel in the corner with the network mark against it, and room "
-         "under both display sliders.");
+         "the panel in the corner with the network mark against it, the "
+         "achievements of the game under its name, and room under both "
+         "display sliders.");
     return 0;
 }

@@ -6,6 +6,15 @@
 #include "ui.h"
 static uint8_t pixels[480*480*4];
 static void flush(lv_display_t *display,const lv_area_t *area,uint8_t *data){(void)area;(void)data;lv_display_flush_ready(display);}
+/* The band is the one object that scrolls sideways and holds three pages. */
+static lv_obj_t *band_in(lv_obj_t *root)
+{
+    if(lv_obj_get_scroll_dir(root)==LV_DIR_HOR&&lv_obj_get_child_count(root)==3)return root;
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++){
+        lv_obj_t *f=band_in(lv_obj_get_child(root,i));if(f)return f;
+    }
+    return NULL;
+}
 int main(int argc,char **argv)
 {
     lv_init();
@@ -31,7 +40,20 @@ int main(int argc,char **argv)
         s.online=false;s.can_wake=true;
     }
     if(argc>2&&strcmp(argv[2],"setup")==0){s.setup=true;strcpy(s.setup_ssid,"SteamOS-Panel-3A12");strcpy(s.setup_password,"ABCD2345EFGH");}
+    /* The third page, with a game on it and its achievements under the
+     * name. */
+    if(argc>2&&strcmp(argv[2],"playing")==0){
+        strcpy(s.playing,"DragonSword : Awakening");
+        s.achievements_done=49;s.achievements_total=60;
+    }
     panel_ui_update(&s);
+    if(argc>2&&strcmp(argv[2],"playing")==0){
+        lv_obj_t *band=band_in(lv_screen_active());
+        if(band){
+            lv_obj_update_layout(band);
+            lv_obj_scroll_to_view(lv_obj_get_child(band,2),LV_ANIM_OFF);
+        }
+    }
     if(argc>2&&strcmp(argv[2],"confirm")==0)panel_ui_confirm(PANEL_POWEROFF);
     if(argc>2&&strncmp(argv[2],"settings",8)==0)panel_ui_settings_open();
     /* The settings scroll, and the end of them is a page of its own to

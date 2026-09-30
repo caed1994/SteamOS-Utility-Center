@@ -584,6 +584,9 @@ def status():
         # "" most of the time, and that is not a fault: most of the time
         # no game runs and the panel then shows nothing.
         "playing": steamapps.now_playing(),
+        # {"achieved": 49, "total": 60}, or None for no game and for a
+        # game with nothing to count. See steamapps.achievements.
+        "achievements": steamapps.now_playing_achievements(),
         "drives": drives(),
     }
 

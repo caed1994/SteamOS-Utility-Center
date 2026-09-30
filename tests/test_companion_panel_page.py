@@ -193,6 +193,18 @@ class StatusTest(unittest.TestCase):
         self.assertIsInstance(answer["playing"], str)
         self.assertIsInstance(answer["drives"], list)
 
+    def test_the_answer_carries_the_achievements_of_the_game(self):
+        """None with no game on this machine, which is the ordinary case
+        where the tests run. The key is there either way: the panel reads
+        a missing key and a null alike, and a key that comes and goes is a
+        second thing to get right."""
+        answer = companion.status()
+        self.assertIn("achievements", answer)
+        counts = answer["achievements"]
+        if counts is not None:
+            self.assertEqual(set(counts), {"achieved", "total"})
+            self.assertLessEqual(counts["achieved"], counts["total"])
+
     def test_it_still_carries_what_the_first_page_draws(self):
         answer = companion.status()
         for key in ("host", "controllers", "audio", "telemetry", "wake"):
