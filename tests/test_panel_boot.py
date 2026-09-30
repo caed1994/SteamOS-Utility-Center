@@ -145,6 +145,38 @@ class AnimationFileTest(unittest.TestCase):
         self.assertIsNotNone(said, "panel_boot.c names no frame time")
         self.assertEqual(int(said.group(1)), self.delays()[0] * 10)
 
+    def canvas(self):
+        """The size of the picture, out of the GIF header.
+
+        Bytes six to nine of every GIF hold the width and the height, two
+        bytes each, least significant first. A fixed place, so reading it
+        needs no parser and cannot lose its way in the compressed pixels.
+        """
+        with open(ANIMATION, "rb") as handle:
+            head = handle.read(10)
+        return (head[6] | (head[7] << 8), head[8] | (head[9] << 8))
+
+    def test_the_origin_names_the_size_the_file_really_is(self):
+        """The recipe has to make the file beside it.
+
+        It said fps=24 once while the file ran at 30, and a reader who
+        trusts it makes a different file. The size is the same kind of
+        claim and drifts the same way.
+        """
+        width, height = self.canvas()
+        text = read(ORIGIN)
+        self.assertIn("scale=%d:%d" % (width, height), text,
+                      "the recipe scales to another size than the file is")
+        self.assertIn("%dx%d" % (width, height), text,
+                      "the prose names another size than the file is")
+
+    def test_it_fits_on_the_panel(self):
+        """panel_boot.c centres the picture and asks nothing. One wider
+        than the screen is one with its edges cut off."""
+        width, height = self.canvas()
+        self.assertLessEqual(width, 480)
+        self.assertLessEqual(height, 480)
+
     def test_the_origin_carries_the_rate_the_file_runs_at(self):
         """The recipe in there has to make the file that is here."""
         text = read(ORIGIN)

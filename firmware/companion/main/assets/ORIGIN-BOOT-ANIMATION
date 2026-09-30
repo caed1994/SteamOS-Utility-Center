@@ -17,7 +17,7 @@ What was done to it
   The source was a 1920x1080 VP9 clip at 30 frames each second, 3.117
   seconds long. All of its content sits in a 600x600 square in the middle of
   the frame and the rest is black, so that square was cut out, put on
-  320x320, and written as a GIF of 64 colours at 25 frames each second. The
+  256x256, and written as a GIF of 64 colours at 25 frames each second. The
   sound was dropped. Nothing else was changed.
 
   25 and not the 30 of the source, for two reasons that were both measured
@@ -31,12 +31,19 @@ What was done to it
   tests/test_panel_boot.py fails on a file where they differ.
 
   The work in a frame is not even either, and the middle of this animation
-  is where it peaks. The heaviest frame carries 19646 bytes of compressed
-  pixels and covers the whole 320x320 square. The frames at each end carry
-  about 1850 and cover 74x74. So the decoder has nearly twenty times the
-  work in the middle, the panel waits for a frame boundary at every flush,
-  and work that runs past the boundary costs a whole period. 40 ms a frame
-  gives that middle a third more room than 30 did.
+  is where it peaks. The heaviest frame carries 14326 bytes of compressed
+  pixels and covers the whole square. The frames at each end carry about
+  1600 and cover a small rectangle inside it. So the decoder has about nine
+  times the work in the middle, the panel waits for a frame boundary at
+  every flush, and work that runs past the boundary costs a whole period.
+  40 ms a frame gives that middle a third more room than 30 did.
+
+  256 and not the 320 this file had first. The board measured the heavy
+  frames at about 67 ms against 45 for the light ones, and a smaller square
+  is the one lever that takes work away from the decoder without changing
+  what the animation is. It costs 64 percent of the pixels and 73 percent
+  of the bytes in the heaviest frame. main/panel_display.c carries the
+  measurement it came from.
 
   An earlier version of this file ran at 24 frames a second, to answer the
   tears the panel drew through the animation. That was the wrong answer:
@@ -46,16 +53,16 @@ What was done to it
 
   The steps, for anybody who wants to make it again:
 
-    ffmpeg -i <source> -vf "crop=600:600:660:240,scale=320:320:flags=lanczos,\
+    ffmpeg -i <source> -vf "crop=600:600:660:240,scale=256:256:flags=lanczos,\
     fps=25,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=\
     dither=none" -gifflags -transdiff -loop 0 boot-steam.gif
 
-  The 25 frame version in this repository was not made from that clip. The
-  clip is not here, so it was made from the 30 frame GIF with the same
-  command and no crop or scale. The picture was already 64 colours without
-  dither, so the second pass through palettegen and paletteuse changes no
-  pixel that survives it. Anybody who holds the source clip gets a slightly
-  better file from the command above.
+  The file in this repository was not made from that clip, which is not
+  here. It was made from the 320x320 GIF at 30 frames, in one pass, with
+  the scale and the rate above and no crop. One pass and not two, because
+  each pass through palettegen and paletteuse is a generation of loss and
+  the picture is already down to 64 colours. Anybody who holds the source
+  clip gets a better file from the command above.
 
   -gifflags -transdiff is not decoration, and the first image shipped
   without it played on the board as a square of solid green. Three things

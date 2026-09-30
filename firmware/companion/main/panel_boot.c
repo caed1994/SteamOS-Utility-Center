@@ -36,15 +36,18 @@ static lv_obj_t *cover;
 
 /* What the animation really ran at, measured while it ran.
  *
- * Reported from the board: the middle looks slower than the ends. The file
- * says why that is possible. The heaviest frame carries 19646 bytes of LZW
- * and covers the whole 320x320 square, where the frames at each end carry
- * about 1850 and cover 74x74. So the decoder has nearly twenty times the
- * work in the middle. Every flush waits for a frame boundary of the panel
- * as well, so work that runs past the boundary costs a whole period.
+ * Reported from the board: the middle looks slower than the ends, and it
+ * does. The heaviest frame of this file carries 14326 bytes of LZW and
+ * covers the whole square, where the frames at each end carry about 1600
+ * and cover a small rectangle in the middle of it. So the decoder has
+ * about nine times the work where the shape changes.
  *
- * What the file cannot say is how long that work takes on this chip, and
- * that is the number that decides whether 40 ms is enough.
+ * That alone does not make a step anybody sees. The step comes from the
+ * flush, which waits for a frame boundary of the panel. A period is about
+ * 22.5 ms, measured off the heaps these numbers fall into, so a frame
+ * takes 45 ms or 67 or 90 and nothing between. Work that runs past a
+ * boundary costs a whole period, and the heavy frames land a rung lower
+ * than the rest.
  * LV_EVENT_DRAW_POST_END arrives once for each frame that reaches the
  * screen, because nothing else under this cover asks for a refresh. So the
  * gap between two of them is the gap a person sees. */

@@ -132,8 +132,8 @@ lv_display_t *panel_display_start(void)
      * measurement behind it.
      *
      * full_refresh redraws the whole screen at every refresh: 480 by 480,
-     * or 230400 pixels. The startup animation covers 320 by 320 of that,
-     * which is 102400. The rest is the black behind it, drawn again at
+     * or 230400 pixels. The startup animation covers 256 by 256 of that,
+     * which is 65536. The rest is the black behind it, drawn again at
      * every frame for nothing.
      *
      * The board measured that animation at 55 ms a frame where 40 was
@@ -150,9 +150,8 @@ lv_display_t *panel_display_start(void)
      * copies nothing that an overwrite is coming for.
      *
      * lv_gif calls lv_obj_invalidate on the whole image at every frame.
-     * So the area it draws and the area it keeps are the same 320 by 320
-     * square, the difference of the two is empty, and no copy happens.
-     * The animation draws 102400 pixels a frame instead of 230400 and
+     * So the area it draws and the area it keeps are the same square, the difference of the two is empty, and no copy happens.
+     * The animation draws 65536 pixels a frame instead of 230400 and
      * pays nothing for the change.
      *
      * What the board said afterwards, against the same animation with the
@@ -177,7 +176,7 @@ lv_display_t *panel_display_start(void)
      * file and a flush lands on a boundary, so the fastest a frame goes is
      * two periods, or 45 ms. 51 is close to it. Reaching it asks the
      * heaviest frames to do their work in under 5 ms, which a GIF decoder
-     * at 320 by 320 does not do. A faster pixel clock makes it worse
+     * at this size does not do. A faster pixel clock makes it worse
      * rather than better: at 16 MHz a period is 16.9 ms, and 40 ms then
      * lands on three of them, which is 50.7.
      *
