@@ -110,6 +110,47 @@ class ReasonTest(unittest.TestCase):
         self.assertIn("default:", table.group(0))
 
 
+class ResetReasonTest(unittest.TestCase):
+    """Why the panel started, in the first line of the log.
+
+    A person reaches for the serial cable after a fault and not before it,
+    so the line that matters is the one about the boot that already
+    happened. It said reset_reason=4, which nobody can read.
+
+    Four answers point at four different places. A panic is a fault in
+    this firmware. A watchdog is work that ran too long. A brownout is the
+    power supply and not the code at all, and this panel has form there:
+    plugged in beside the LED board, it took that one down with it.
+    """
+
+    def table(self):
+        code = without_comments(read("main.c"))
+        found = re.search(r"reset_reason_name\(esp_reset_reason_t reason\)"
+                          r"\s*\{.*?\n\}", code, re.S)
+        self.assertIsNotNone(found, "the reason has no name")
+        return found.group(0)
+
+    def test_the_first_line_says_why_in_words(self):
+        code = without_comments(read("main.c"))
+        said = re.search(r'ESP_LOGI\("panel_boot","version[^;]*;', code)
+        self.assertIsNotNone(said, "nothing logs the start")
+        self.assertIn("reset_reason_name", said.group(0),
+                      "a bare number sends every reader to a header")
+        # The number stays beside the word. A reader who knows the header
+        # loses nothing.
+        self.assertIn("reset_reason=%d", said.group(0))
+
+    def test_the_four_that_point_at_different_places_are_named(self):
+        table = self.table()
+        for reason in ("ESP_RST_PANIC", "ESP_RST_TASK_WDT",
+                       "ESP_RST_BROWNOUT", "ESP_RST_POWERON"):
+            self.assertIn(reason, table,
+                          "%s is one of the answers and has no name" % reason)
+
+    def test_one_it_does_not_know_still_says_something(self):
+        self.assertIn("default:", self.table())
+
+
 class StepTimingTest(unittest.TestCase):
     """Which call takes the seconds."""
 

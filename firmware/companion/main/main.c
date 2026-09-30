@@ -705,9 +705,39 @@ static void network_task(void *arg)
             ESP_LOGW("panel_wifi","%s took %u ms",what,(unsigned)spent__); \
     } while (0)
 
+/* Why the panel started, in words.
+ *
+ * The number was here before and nobody can read it. This line is the
+ * first thing in the log and the only thing that says what happened the
+ * last time round, which matters because a person reaches for the cable
+ * after the fault and not before it.
+ *
+ * The four that are worth telling apart: a panic is a fault in this
+ * firmware, a watchdog is work that did not finish, a brownout is the
+ * power supply and not the code at all, and a power-on is somebody at the
+ * wall socket. */
+static const char *reset_reason_name(esp_reset_reason_t reason)
+{
+    switch (reason) {
+    case ESP_RST_POWERON:  return "power came on";
+    case ESP_RST_EXT:      return "the reset pin";
+    case ESP_RST_SW:       return "this firmware asked for it";
+    case ESP_RST_PANIC:    return "a panic, so a fault in this firmware";
+    case ESP_RST_INT_WDT:  return "the interrupt watchdog";
+    case ESP_RST_TASK_WDT: return "the task watchdog, so work that ran long";
+    case ESP_RST_WDT:      return "another watchdog";
+    case ESP_RST_DEEPSLEEP:return "deep sleep ended";
+    case ESP_RST_BROWNOUT: return "a brownout, so the power supply";
+    case ESP_RST_SDIO:     return "SDIO";
+    default:               return "see esp_reset_reason_t";
+    }
+}
+
 void app_main(void)
 {
-    ESP_LOGI("panel_boot","version=%s reset_reason=%d",esp_app_get_description()->version,(int)esp_reset_reason());
+    esp_reset_reason_t why=esp_reset_reason();
+    ESP_LOGI("panel_boot","version=%s, started because %s (reset_reason=%d)",
+             esp_app_get_description()->version,reset_reason_name(why),(int)why);
     esp_err_t err=nvs_flash_init();
     if (err==ESP_ERR_NVS_NO_FREE_PAGES || err==ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
