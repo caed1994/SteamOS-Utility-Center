@@ -14,3 +14,9 @@ size_t panel_display_stack_bytes(void);
 
 /* Caller must hold the LVGL lock. Network and RGB timing continue running. */
 esp_err_t panel_display_standby(bool sleep, int brightness);
+
+/* Whether a finger is on the glass of a sleeping panel.
+ *
+ * false while the panel is awake, because LVGL reads the same controller
+ * then and two readers share one bus. See panel_display_touched. */
+bool panel_display_touched(void);

@@ -18,7 +18,7 @@
 #define BLUE 0x49A8F7
 #define RED 0xF06B79
 
-static lv_obj_t *connection,*dot,*battery,*audio_status,*audio_toggle,*audio_knob,*volume,*brightness_label,*message;
+static lv_obj_t *connection,*dot,*battery,*audio_status,*audio_toggle,*audio_knob,*volume,*brightness_label,*sleep_label,*message;
 static lv_obj_t *controls[6],*overlay,*setup_screen,*setup_text,*cpu_value,*gpu_value,*power_value;
 /* Not in controls[]: that table is indexed by the action, it holds the
  * six the service performs, and PANEL_WAKE is done by the panel. */
@@ -109,26 +109,74 @@ static void clicked(lv_event_t *e)
     if(action>=PANEL_SUSPEND&&action<=PANEL_SETUP)panel_ui_confirm(action);
     else if(send_action)send_action(action);
 }
+/* What the slider for the sleep timeout stops at, in minutes.
+ *
+ * Stops and not every number between. A minute either way means nothing
+ * at a quarter of an hour, and a slider that lands on 23 minutes reads
+ * like a mistake. Nought is the first, because "never" belongs at the end
+ * a slider starts from.
+ *
+ * The count of minutes is what is stored, not the place in this list. A
+ * later firmware that offers other stops still reads what somebody picked
+ * with this one. */
+static const uint8_t sleep_choices[]={0,1,2,5,10,15,30,45,60};
+#define SLEEP_CHOICES (int)(sizeof sleep_choices/sizeof *sleep_choices)
+
+/* The nearest stop to a count of minutes.
+ *
+ * Nearest and not equal: the stored number comes from another firmware or
+ * from a hand at nvs, and a value between two stops has to land on one of
+ * them rather than on the first. */
+static int sleep_index(int minutes)
+{
+    int best=0,gap=-1;
+    for(int i=0;i<SLEEP_CHOICES;i++){
+        int away=minutes>sleep_choices[i]?minutes-sleep_choices[i]
+                                         :sleep_choices[i]-minutes;
+        if(gap<0||away<gap){gap=away;best=i;}
+    }
+    return best;
+}
+static void sleep_words(char *out,size_t room,int minutes)
+{
+    if(minutes<=0)snprintf(out,room,"%s",panel_text(TXT_SLEEP_NEVER));
+    else snprintf(out,room,"%d %s",minutes,panel_text(TXT_MINUTES));
+}
 static void setting_slider(lv_event_t *e)
 {
     panel_setting_t key=(panel_setting_t)(intptr_t)lv_event_get_user_data(e);
     int value=lv_slider_get_value(lv_event_get_target(e));
     if(key==PANEL_BRIGHTNESS){local.brightness=value;lv_label_set_text_fmt(brightness_label,"%d %%",value);}
+    else if(key==PANEL_SLEEP_AFTER){
+        /* The slider stands on a place in the list; everything below this
+         * line counts minutes. */
+        char said[24];
+        value=sleep_choices[value<0?0:value>=SLEEP_CHOICES?SLEEP_CHOICES-1:value];
+        local.sleep_after=value;
+        sleep_words(said,sizeof said,value);
+        lv_label_set_text(sleep_label,said);
+    }
     else {local.sound_volume=value;lv_label_set_text_fmt(sound_value,"%d %%",value);}
     bool save=lv_event_get_code(e)==LV_EVENT_RELEASED;
     if(save_setting)save_setting(key,value,save);
     if(save && key==PANEL_SOUND_VOLUME)feedback();
 }
-static void slider_at(lv_obj_t *parent,int y,int minimum,int value,panel_setting_t key)
+static void slider_range(lv_obj_t *parent,int y,int minimum,int maximum,int value,panel_setting_t key)
 {
     lv_obj_t *slider=lv_slider_create(parent);lv_obj_set_pos(slider,28,y);lv_obj_set_size(slider,380,8);
-    lv_slider_set_range(slider,minimum,100);lv_slider_set_value(slider,value,LV_ANIM_OFF);
+    lv_slider_set_range(slider,minimum,maximum);lv_slider_set_value(slider,value,LV_ANIM_OFF);
     lv_obj_set_style_bg_color(slider,lv_color_hex(EDGE),LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider,lv_color_hex(BLUE),LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider,lv_color_hex(TEXT),LV_PART_KNOB);
     lv_obj_set_style_pad_all(slider,7,LV_PART_KNOB);lv_obj_set_ext_click_area(slider,18);
     lv_obj_add_event_cb(slider,setting_slider,LV_EVENT_VALUE_CHANGED,(void *)(intptr_t)key);
     lv_obj_add_event_cb(slider,setting_slider,LV_EVENT_RELEASED,(void *)(intptr_t)key);
+}
+/* The two that run from a lowest value to a hundred, which is what a per
+ * cent is. */
+static void slider_at(lv_obj_t *parent,int y,int minimum,int value,panel_setting_t key)
+{
+    slider_range(parent,y,minimum,100,value,key);
 }
 static void tones_changed(lv_event_t *e)
 {
@@ -147,7 +195,7 @@ static void language_clicked(lv_event_t *e)
     // was current then. Every one of them is now wrong, so both are built
     // again. The person stays where they were, on the settings page.
     lv_obj_delete(settings_screen);settings_screen=NULL;
-    brightness_label=NULL;sound_value=NULL;sound_status=NULL;
+    brightness_label=NULL;sleep_label=NULL;sound_value=NULL;sound_status=NULL;
     panel_ui_create(send_action,save_setting,play_sound,&local);
     panel_ui_settings_open();
 }
@@ -168,14 +216,32 @@ void panel_ui_settings_open(void)
     button(settings_screen,panel_language_name(panel_text_language()==PANEL_ENGLISH?PANEL_GERMAN:PANEL_ENGLISH),
            344,8,124,44,language_clicked,0);
     line(settings_screen,0,62,480,1);
-    lv_obj_t *display=panel(settings_screen,20,78,440,114,CARD,true);
+    /* There is more here than a screen holds, so it scrolls. The band on
+     * the main screen scrolls as well, so this is not a new thing to
+     * learn. A slider takes the drag that lands on it, which is what
+     * keeps the two apart. */
+    lv_obj_add_flag(settings_screen,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(settings_screen,LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(settings_screen,LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_t *display=panel(settings_screen,20,78,440,186,CARD,true);
     icon(display,&icon_sun,16,18,MUTED);
     text_at(display,panel_text(TXT_BRIGHTNESS),62,16,268,&lv_font_montserrat_18,TEXT);
     brightness_label=text_at(display,"",338,16,88,&lv_font_montserrat_18,BLUE);
     lv_label_set_text_fmt(brightness_label,"%d %%",local.brightness);
     text_at(display,panel_text(TXT_BRIGHTNESS_WHAT),62,43,350,&lv_font_montserrat_12,MUTED);
     slider_at(display,88,5,local.brightness,PANEL_BRIGHTNESS);
-    lv_obj_t *sound=panel(settings_screen,20,206,440,216,CARD,true);
+    line(display,18,112,402,1);
+    text_at(display,panel_text(TXT_SLEEP_AFTER),20,126,268,&lv_font_montserrat_18,TEXT);
+    sleep_label=text_at(display,"",318,126,108,&lv_font_montserrat_18,BLUE);
+    {
+        char said[24];
+        sleep_words(said,sizeof said,local.sleep_after);
+        lv_label_set_text(sleep_label,said);
+    }
+    text_at(display,panel_text(TXT_SLEEP_AFTER_WHAT),20,150,404,&lv_font_montserrat_12,MUTED);
+    slider_range(display,172,0,SLEEP_CHOICES-1,sleep_index(local.sleep_after),
+                 PANEL_SLEEP_AFTER);
+    lv_obj_t *sound=panel(settings_screen,20,278,440,216,CARD,true);
     icon(sound,&icon_volume_2,12,12,MUTED);
     text_at(sound,panel_text(TXT_TONES),70,16,240,&lv_font_montserrat_18,TEXT);
     text_at(sound,panel_text(TXT_TONES_WHAT),70,44,340,&lv_font_montserrat_12,MUTED);
@@ -191,7 +257,7 @@ void panel_ui_settings_open(void)
     slider_at(sound,138,0,local.sound_volume,PANEL_SOUND_VOLUME);
     button(sound,panel_text(TXT_TEST_TONE),276,164,144,44,test_sound,0);
     sound_status=text_at(sound,panel_text(TXT_SPEAKER),20,176,248,&lv_font_montserrat_12,MUTED);
-    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,447,440,&lv_font_montserrat_12,MUTED);
+    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,506,440,&lv_font_montserrat_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
 /* Which of the three marks under the band is lit.

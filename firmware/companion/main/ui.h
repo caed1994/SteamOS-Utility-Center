@@ -60,9 +60,14 @@ typedef struct {
 
 typedef void (*panel_action_cb_t)(panel_action_t action);
 typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
-               PANEL_LANGUAGE } panel_setting_t;
+               PANEL_LANGUAGE, PANEL_SLEEP_AFTER } panel_setting_t;
+/* sleep_after counts minutes, and nought means the display stays on. The
+ * stored value is the count and not a place in the list of choices, so a
+ * later firmware that offers other choices still reads what somebody
+ * picked with this one. */
 typedef struct { int brightness, sound_volume; bool touch_tones;
-                 panel_language_t language; } panel_settings_t;
+                 panel_language_t language; int sleep_after; }
+    panel_settings_t;
 typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);
 void panel_ui_create(panel_action_cb_t callback, panel_setting_cb_t setting_cb, panel_sound_cb_t sound_cb, const panel_settings_t *settings);

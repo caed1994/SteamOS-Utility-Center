@@ -48,6 +48,19 @@ extern const uint8_t boot_animation_end[] asm("_binary_boot_steam_gif_end");
 static atomic_uint ui_heartbeat_ms;
 static atomic_bool display_asleep;
 static int display_brightness=70; /* Updated only by the LVGL thread after startup. */
+/* Minutes of no touch before the display goes dark, and nought for never.
+ * Written by setting_set and read by ui_tick, both on the LVGL thread. */
+static int display_sleep_after;
+/* Why the display sleeps.
+ *
+ * A panel that went dark by itself comes back at a touch, which is the
+ * whole point of a timeout. A panel somebody switched off with the button
+ * has to stay off: a touch there is the sleeve of whoever walks past, and
+ * waking to that is the opposite of what the button was pressed for.
+ *
+ * So the reason is kept and not only the state. The button is the only
+ * way back from a sleep the button started. */
+static atomic_bool asleep_by_hand;
 static QueueHandle_t actions;
 static QueueHandle_t sounds;
 static SemaphoreHandle_t lock;
@@ -60,7 +73,11 @@ static panel_settings_t settings_load(void)
 {
     panel_settings_t settings={.brightness=70,.sound_volume=30,
                                .touch_tones=false,
-                               .language=PANEL_ENGLISH};
+                               .language=PANEL_ENGLISH,
+                               /* Off by itself is what somebody asks for
+                                * rather than what they get, so a panel
+                                * with nothing stored stays lit. */
+                               .sleep_after=0};
     nvs_handle_t h;
     if(nvs_open("panel_ui",NVS_READONLY,&h)==ESP_OK){
         uint8_t value;
@@ -71,6 +88,10 @@ static panel_settings_t settings_load(void)
         // which is what a board with nothing stored answers in.
         if(nvs_get_u8(h,"language",&value)==ESP_OK && value<PANEL_LANGUAGE_COUNT)
             settings.language=(panel_language_t)value;
+        /* Minutes, so anything past an hour is a number this firmware did
+         * not write. */
+        if(nvs_get_u8(h,"sleep_after",&value)==ESP_OK && value<=60)
+            settings.sleep_after=value;
         nvs_close(h);
     }
     // Here, and not where the screen is built. The setup portal opens
@@ -83,11 +104,18 @@ static void setting_set(panel_setting_t key,int value,bool save)
 {
     const char *name=key==PANEL_BRIGHTNESS?"brightness":
                      key==PANEL_SOUND_VOLUME?"sound_volume":
-                     key==PANEL_LANGUAGE?"language":"touch_tones";
+                     key==PANEL_LANGUAGE?"language":
+                     key==PANEL_SLEEP_AFTER?"sleep_after":"touch_tones";
     esp_err_t result=ESP_OK;
     if(key==PANEL_BRIGHTNESS){
         if(!atomic_load(&display_asleep))result=bsp_display_brightness_set(value);
         if(result==ESP_OK)display_brightness=value;
+    }
+    if(key==PANEL_SLEEP_AFTER){
+        display_sleep_after=value;
+        /* A fresh start, so that a timeout somebody just set
+         * does not count the minutes before they set it. */
+        lv_display_trigger_activity(NULL);
     }
     if(result==ESP_OK && save){
         nvs_handle_t h;
@@ -174,20 +202,47 @@ static void watch_stack(void)
                  (unsigned)left,(unsigned)panel_display_stack_bytes());
 }
 
+/* Put the display down or bring it back, and remember why.
+ *
+ * One door for the button and for the timeout, so that the state, the
+ * sound queue and the log line cannot drift apart between them. by_hand
+ * is read only on the way down; on the way up the reason is over.
+ */
+static void display_sleeping(bool sleep,bool by_hand)
+{
+    if(sleep==atomic_load(&display_asleep))return;
+    esp_err_t err=panel_display_standby(sleep,display_brightness);
+    if(err!=ESP_OK){
+        ESP_LOGW("panel_power","Standby change failed: %s",esp_err_to_name(err));
+        return;
+    }
+    atomic_store(&display_asleep,sleep);
+    atomic_store(&asleep_by_hand,sleep && by_hand);
+    if(sleep && sounds)xQueueReset(sounds);
+    /* The clock starts at the moment of waking. Without this the panel
+     * counts the whole sleep as time without a touch and goes straight
+     * back down. */
+    if(!sleep)lv_display_trigger_activity(NULL);
+    ESP_LOGI("panel_power","Display %s%s; Wi-Fi and PC polling remain active",
+             sleep?"standby":"awake",
+             sleep?(by_hand?" by the button":" after the set time"):"");
+}
+
 static void ui_tick(lv_timer_t *timer)
 {
     (void)timer;
     watch_stack();
-    if(panel_power_take_toggle()){
-        bool sleep=!atomic_load(&display_asleep);
-        esp_err_t err=panel_display_standby(sleep,display_brightness);
-        if(err==ESP_OK){
-            atomic_store(&display_asleep,sleep);
-            if(sleep && sounds)xQueueReset(sounds);
-            ESP_LOGI("panel_power","Display %s; Wi-Fi and PC polling remain active",sleep?"standby":"awake");
-        }else{
-            ESP_LOGW("panel_power","Standby change failed: %s",esp_err_to_name(err));
-        }
+    if(panel_power_take_toggle())
+        display_sleeping(!atomic_load(&display_asleep),true);
+    if(atomic_load(&display_asleep)){
+        /* A touch brings back a display that went down on its own, and
+         * leaves one that the button switched off where it is. */
+        if(!atomic_load(&asleep_by_hand) && panel_display_touched())
+            display_sleeping(false,false);
+    }else if(display_sleep_after>0 &&
+             lv_display_get_inactive_time(NULL)
+                 >= (uint32_t)display_sleep_after*60u*1000u){
+        display_sleeping(true,false);
     }
     atomic_store(&ui_heartbeat_ms,(uint32_t)(esp_timer_get_time()/1000));
     if(atomic_load(&display_asleep))return;
@@ -663,6 +718,8 @@ void app_main(void)
     esp_err_t key_err=panel_power_init();
     if(key_err!=ESP_OK)ESP_LOGW("panel_power","PWRKEY unavailable: %s",esp_err_to_name(key_err));
     panel_settings_t settings=settings_load();
+    display_brightness=settings.brightness;
+    display_sleep_after=settings.sleep_after;
     sounds=xQueueCreate(1,sizeof(int));
     assert(sounds);
     BaseType_t sound_created=xTaskCreate(sound_task,"panel_sound",6144,NULL,3,NULL);

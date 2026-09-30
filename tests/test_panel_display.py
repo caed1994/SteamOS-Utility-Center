@@ -331,11 +331,22 @@ class StandbyOrderTest(unittest.TestCase):
         self.assertIn("return err", waking)
 
     def test_the_state_changes_only_after_the_hardware_agreed(self):
+        """Written against the order and not against the spelling. The
+        early return and the wrapping if say the same thing, and a rule
+        that knows only one of them fails the next time somebody turns
+        the condition round."""
         with open(os.path.join(FIRMWARE, "main.c")) as handle:
             text = handle.read()
-        found = re.search(r"panel_display_standby\(sleep,[^)]*\);\s*"
-                          r"if\(err==ESP_OK\)\{", text)
-        self.assertTrue(found, "the standby result is not checked in main.c")
+        door = re.search(r"static void display_sleeping\(.*?\n\}", text, re.S)
+        self.assertIsNotNone(door, "nothing in main.c changes the standby")
+        body = door.group(0)
+        self.assertIn("panel_display_standby(sleep,", body)
+        looked = body.index("err")
+        changed = body.index("atomic_store(&display_asleep")
+        self.assertLess(looked, changed,
+                        "the state is changed before the hardware answered")
+        self.assertIn("return", body[looked:changed],
+                      "a standby that failed has to leave the state alone")
 
 
 if __name__ == "__main__":
@@ -542,3 +553,82 @@ class DrawingStackTest(unittest.TestCase):
         self.assertGreater(int(floor.group(1)), 0)
         self.assertIn("ESP_LOGW", re.search(
             r"static void watch_stack\(void\).*?\n\}", code, re.S).group(0))
+
+
+class SleepTimeoutTest(unittest.TestCase):
+    """The display that goes dark by itself, and comes back at a touch.
+
+    The panel hangs on a wall and nobody wants it lit at night. A timeout
+    puts it down, and a touch brings it back, which is the whole point of
+    a timeout: a panel that needs the button to come back is a panel
+    somebody walks to twice.
+
+    The button is the other case and has to stay the other case. A display
+    switched off by hand that woke at any touch would come back at the
+    sleeve of whoever walks past, which is the opposite of what the button
+    was pressed for. So the reason is kept beside the state.
+    """
+
+    def main(self):
+        with open(os.path.join(FIRMWARE, "main.c"), encoding="utf-8") as h:
+            return without_comments(h.read())
+
+    def tick(self):
+        code = self.main()
+        found = re.search(r"static void ui_tick\(lv_timer_t \*timer\).*?\n\}",
+                          code, re.S)
+        self.assertIsNotNone(found)
+        return found.group(0)
+
+    def test_the_timeout_reads_the_time_since_the_last_touch(self):
+        """LVGL keeps that time itself. A count of its own in this panel
+        would be a second answer to a question already answered."""
+        tick = self.tick()
+        self.assertIn("lv_display_get_inactive_time(NULL)", tick)
+        # Minutes, because that is what the setting holds.
+        self.assertRegex(tick, r"display_sleep_after\s*\*\s*60u?\s*\*\s*1000u?")
+
+    def test_nought_minutes_leaves_the_display_on(self):
+        """Off by itself is what somebody asks for, not what they get."""
+        self.assertRegex(self.tick(), r"display_sleep_after\s*>\s*0")
+
+    def test_a_touch_wakes_a_display_that_went_down_on_its_own(self):
+        tick = self.tick()
+        self.assertIn("panel_display_touched()", tick)
+
+    def test_a_touch_leaves_a_display_the_button_switched_off(self):
+        tick = self.tick()
+        self.assertRegex(
+            tick, r"!atomic_load\(&asleep_by_hand\)\s*&&\s*panel_display_touched",
+            "the reason has to be read before a touch wakes anything")
+
+    def test_the_button_says_it_was_the_button(self):
+        """One door for both, so the state and the reason cannot drift."""
+        tick = self.tick()
+        self.assertRegex(tick, r"panel_power_take_toggle\(\)\s*\)?\s*\n?\s*"
+                               r"display_sleeping\(.*?,true\)")
+
+    def test_the_clock_starts_again_at_the_moment_of_waking(self):
+        """Without this the panel counts the whole sleep as time with no
+        touch and goes straight back down."""
+        code = self.main()
+        door = re.search(r"static void display_sleeping\(bool sleep,bool by_hand\)"
+                         r".*?\n\}", code, re.S)
+        self.assertIsNotNone(door)
+        self.assertIn("lv_display_trigger_activity(NULL)", door.group(0))
+
+    def test_the_sleeping_panel_is_the_only_one_that_reads_the_touch(self):
+        """LVGL reads the same controller on its own timer while the panel
+        is awake, and two readers share one bus."""
+        with open(os.path.join(FIRMWARE, "panel_display.c"),
+                  encoding="utf-8") as handle:
+            code = without_comments(handle.read())
+        found = re.search(r"bool panel_display_touched\(void\).*?\n\}",
+                          code, re.S)
+        self.assertIsNotNone(found)
+        self.assertIn("!is_asleep", found.group(0))
+
+    def test_the_minutes_survive_a_restart(self):
+        code = self.main()
+        self.assertIn('nvs_get_u8(h,"sleep_after"', code)
+        self.assertRegex(code, r'key==PANEL_SLEEP_AFTER\?"sleep_after"')

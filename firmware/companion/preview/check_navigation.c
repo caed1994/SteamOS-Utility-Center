@@ -68,7 +68,32 @@ static void walk(panel_language_t language)
     lv_obj_send_event(brightness,LV_EVENT_VALUE_CHANGED,NULL);
     assert(last_key==PANEL_BRIGHTNESS && last_value==55 && !last_save);
     lv_obj_send_event(brightness,LV_EVENT_RELEASED,NULL);assert(last_save);
-    skip=1;lv_obj_t *volume=kind(lv_screen_active(),&lv_slider_class,&skip);assert(volume);
+    // The second slider is the one that says when the display goes dark.
+    //
+    // It stands on a place in a list of stops and reports minutes, which
+    // is what gets stored: a later firmware with other stops still reads
+    // what somebody picked here. Nothing else in this panel reports a
+    // number other than the one under the knob.
+    skip=1;lv_obj_t *sleep=kind(lv_screen_active(),&lv_slider_class,&skip);
+    assert(sleep);
+    assert(label(lv_screen_active(),panel_text(TXT_SLEEP_NEVER)));
+    lv_slider_set_value(sleep,4,LV_ANIM_OFF);
+    lv_obj_send_event(sleep,LV_EVENT_RELEASED,NULL);
+    assert(last_key==PANEL_SLEEP_AFTER && last_value==10 && last_save);
+    assert(!label(lv_screen_active(),panel_text(TXT_SLEEP_NEVER)));
+    // The top of the slider is the longest wait and not a wrong reading
+    // past the end of the list.
+    lv_slider_set_value(sleep,lv_slider_get_max_value(sleep),LV_ANIM_OFF);
+    lv_obj_send_event(sleep,LV_EVENT_RELEASED,NULL);
+    assert(last_key==PANEL_SLEEP_AFTER && last_value==60);
+    lv_slider_set_value(sleep,0,LV_ANIM_OFF);
+    lv_obj_send_event(sleep,LV_EVENT_RELEASED,NULL);
+    assert(last_key==PANEL_SLEEP_AFTER && last_value==0);
+    assert(label(lv_screen_active(),panel_text(TXT_SLEEP_NEVER)));
+    lv_slider_set_value(sleep,4,LV_ANIM_OFF);
+    lv_obj_send_event(sleep,LV_EVENT_RELEASED,NULL);
+
+    skip=2;lv_obj_t *volume=kind(lv_screen_active(),&lv_slider_class,&skip);assert(volume);
     lv_slider_set_value(volume,45,LV_ANIM_OFF);lv_obj_send_event(volume,LV_EVENT_RELEASED,NULL);
     assert(last_key==PANEL_SOUND_VOLUME && last_value==45 && last_save);
     click(panel_text(TXT_TEST_TONE));assert(sounds==1 && actions==0);
@@ -79,15 +104,22 @@ static void walk(panel_language_t language)
     click(panel_text(TXT_BACK));assert(!label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
     open_settings();
     assert(label(lv_screen_active(),"55 %") && label(lv_screen_active(),"45 %"));
+    // And the wait it was left at, which comes back off the stored
+    // count of minutes and not off the place of the knob.
+    {
+        char wanted[24];
+        snprintf(wanted,sizeof wanted,"10 %s",panel_text(TXT_MINUTES));
+        assert(label(lv_screen_active(),wanted));
+    }
     skip=0;sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(lv_obj_has_state(sw,LV_STATE_CHECKED));
-    assert(settings==4 && actions==0);
+    assert(settings==8 && actions==0);
     // The button in the corner carries the name of the other language. A
     // press on it builds both screens again, and the person stays here.
     panel_language_t next=other(language);
     click(panel_language_name(next));
     assert(panel_text_language()==next);
     assert(last_key==PANEL_LANGUAGE && last_value==(int)next && last_save);
-    assert(settings==5 && actions==0);
+    assert(settings==9 && actions==0);
     assert(label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
     assert(label(lv_screen_active(),"55 %") && label(lv_screen_active(),"45 %"));
     skip=0;sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(lv_obj_has_state(sw,LV_STATE_CHECKED));

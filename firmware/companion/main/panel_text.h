@@ -34,6 +34,14 @@
     X(TXT_BRIGHTNESS,      "Display brightness",    "Displayhelligkeit") \
     X(TXT_BRIGHTNESS_WHAT, "The display of this ESP only", \
                            "Nur das Display dieses ESP") \
+    X(TXT_SLEEP_AFTER,     "Display off after",     "Display aus nach") \
+    X(TXT_SLEEP_AFTER_WHAT, \
+                           "A touch wakes it again, unless the button " \
+                           "switched it off", \
+                           "Beruehrung weckt es wieder, ausser der Knopf " \
+                           "hat es ausgeschaltet") \
+    X(TXT_SLEEP_NEVER,     "Never",                 "Nie") \
+    X(TXT_MINUTES,         "min",                   "Min") \
     X(TXT_TONES,           "Key tones",             "Tastentoene") \
     X(TXT_TONES_WHAT,      "A sound at each press on this panel", \
                            "Ton bei Bedienung des Panels") \

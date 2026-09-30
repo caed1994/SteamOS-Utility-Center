@@ -16,6 +16,9 @@
 
 static lv_display_t *panel_screen;
 static lv_indev_t *panel_input;
+/* Kept, so that something can read the touch while LVGL does not.
+ * See panel_display_touched. */
+static esp_lcd_touch_handle_t panel_touch;
 static bool is_asleep;
 
 /* The lowest brightness this board holds steady, in percent.
@@ -324,6 +327,7 @@ lv_display_t *panel_display_start(void)
 
     esp_lcd_touch_handle_t touch=NULL;
     ESP_ERROR_CHECK(bsp_touch_new(NULL,&touch));
+    panel_touch=touch;
     const lvgl_port_touch_cfg_t input={.disp=screen,.handle=touch};
     panel_input=lvgl_port_add_touch(&input);
     ESP_RETURN_ON_FALSE(panel_input,NULL,tag,"Touch allocation failed");
@@ -430,6 +434,28 @@ static void backlight_off(void)
 static esp_err_t backlight_on(int brightness)
 {
     return bsp_display_brightness_set(brightness);
+}
+
+/* Whether a finger is on the glass, asked of the controller itself.
+ *
+ * A sleeping panel stops reading the touch: panel_ui_sleep turns the input
+ * device off and pauses the timer that reads it. What it does not do is
+ * switch the controller off. The GT911 stays on the I2C bus and still
+ * knows what it feels, and nobody asks. This asks.
+ *
+ * Meant for the sleeping panel and for nothing else. Call it while LVGL
+ * reads the same controller on its own timer and two readers share one
+ * bus, so this answers false while the panel is awake rather than leave
+ * that to a caller who forgets.
+ */
+bool panel_display_touched(void)
+{
+    if(!panel_touch || !is_asleep)return false;
+    if(esp_lcd_touch_read_data(panel_touch)!=ESP_OK)return false;
+    uint16_t x=0,y=0,strength=0;
+    uint8_t count=0;
+    return esp_lcd_touch_get_coordinates(panel_touch,&x,&y,&strength,&count,1)
+           && count>0;
 }
 
 esp_err_t panel_display_standby(bool sleep,int brightness)
