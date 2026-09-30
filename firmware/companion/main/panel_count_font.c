@@ -11,12 +11,10 @@
 // all a count and a dash need, so it costs a few kilobytes and not the
 // hundred a whole alphabet at this size would.
 //
-// To make it again, with lv_font_conv 1.5.2 from npm:
-//
-//   lv_font_conv --no-compress --no-prefilter --bpp 4 --size 64 \
-//     --font Montserrat-Medium.ttf -r 0x20,0x2D,0x2F,0x30-0x39 \
-//     --format lvgl --force-fast-kern-format --lv-include lvgl.h \
-//     -o panel_count_font.c
+// To make it again, with lv_font_conv 1.5.2 from npm, give it the options on
+// the "Opts" line below. Those are on one line on purpose: a backslash at the
+// end of a line comment carries the comment on to the next line, and the
+// firmware build stops for that.
 //
 // The licence of the face is in third-party-licenses/Montserrat-OFL.txt.
 
