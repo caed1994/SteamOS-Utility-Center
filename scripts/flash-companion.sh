@@ -28,7 +28,37 @@ set -euo pipefail
 # the BOOT button to come back.
 ESPTOOL_VERSION="4.12.0"
 CHIP="esp32s3"
+
+# How fast, over a wire where that means something.
+#
+# A board on a USB-to-serial chip really runs at this rate and the write
+# takes about a quarter of the time it would at 115200.
 BAUD="460800"
+
+# And the rate over the native USB port of the chip, which is a number with
+# nothing behind it.
+#
+# The panel reports "USB mode: USB-Serial/JTAG", so it is a USB device of
+# its own and not a serial chip. The rate of a USB CDC device is a field the
+# hardware ignores; the speed is USB's. esptool does not know that: it calls
+# change_baud whenever the rate asked for is above the one it connects with,
+# on this port as on any other. So the number bought no speed and added a
+# handshake in the middle of a flash, and the flash stopped in the middle
+# again and again with "Lost connection" and "The chip stopped responding".
+#
+# 115200 is the rate esptool connects at, so this asks for no change at all.
+USB_BAUD="115200"
+
+# The USB-Serial/JTAG unit of an Espressif chip. esptool knows it by the
+# same number: USB_JTAG_SERIAL_PID in esptool/loader.py.
+NATIVE_USB="1001"
+
+# How many times to write the whole flash before giving up.
+#
+# Writing it again from the start is safe: every byte is written and
+# verified against its own hash, so a second run repairs whatever a first
+# run left behind. What it is not is free, so this stops at three.
+ATTEMPTS=3
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
@@ -58,10 +88,18 @@ say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 # a refusal to flash a board that is probably right.
 ESPRESSIF="303a"
 if command -v udevadm >/dev/null 2>&1; then
-    VENDOR="$(udevadm info --query=property --name="$PORT" 2>/dev/null \
-              | sed -n 's/^ID_VENDOR_ID=//p' | head -1)"
-    MODEL="$(udevadm info --query=property --name="$PORT" 2>/dev/null \
-             | sed -n 's/^ID_MODEL=//p' | head -1)"
+    PROPERTIES="$(udevadm info --query=property --name="$PORT" 2>/dev/null)"
+    VENDOR="$(printf '%s\n' "$PROPERTIES" | sed -n 's/^ID_VENDOR_ID=//p' | head -1)"
+    MODEL="$(printf '%s\n' "$PROPERTIES" | sed -n 's/^ID_MODEL=//p' | head -1)"
+    PRODUCT="$(printf '%s\n' "$PROPERTIES" | sed -n 's/^ID_MODEL_ID=//p' | head -1)"
+    # The same answer esptool prints as "USB mode: USB-Serial/JTAG", read
+    # before the board is touched rather than after.
+    if [[ "${PRODUCT,,}" == "$NATIVE_USB" ]]; then
+        BAUD="$USB_BAUD"
+        say "This board talks over the USB port of the chip itself, where a
+    baud rate is a number with nothing behind it. Asking for $USB_BAUD,
+    which asks esptool to change nothing."
+    fi
     if [[ -n "$VENDOR" && "${VENDOR,,}" != "$ESPRESSIF" ]]; then
         die "$PORT is not an Espressif board. It reports ${MODEL:-vendor $VENDOR}.
 The panel is an ESP32-S3 and shows up as an Espressif device. Look at
@@ -94,14 +132,47 @@ assert m.version('esptool') == '$ESPTOOL_VERSION'" 2>/dev/null; then
         || die "could not install esptool. Is this machine on the network?"
 fi
 
-say "Writing the firmware to $PORT"
 # The offsets are the ones the partition table in firmware/companion gives.
 # They are spelled here because this script runs with no ESP-IDF to ask.
-"$VENV/bin/python" -m esptool --chip "$CHIP" --port "$PORT" --baud "$BAUD" \
-    --before default_reset --after hard_reset write_flash \
-    --flash_mode dio --flash_freq 80m --flash_size 16MB \
-    0x0 "$BOOTLOADER" \
-    0x8000 "$PARTITIONS" \
-    0x10000 "$APPLICATION"
+write_it() {
+    "$VENV/bin/python" -m esptool --chip "$CHIP" --port "$PORT" --baud "$BAUD" \
+        --before default_reset --after hard_reset write_flash \
+        --flash_mode dio --flash_freq 80m --flash_size 16MB \
+        0x0 "$BOOTLOADER" \
+        0x8000 "$PARTITIONS" \
+        0x10000 "$APPLICATION"
+}
 
-say "Done. The panel restarts and asks for its network and this machine."
+# Again, rather than the person again.
+#
+# A write of two megabytes over this port stops in the middle now and then,
+# and every stop reads as "Lost connection" or "The chip stopped
+# responding". Whatever the reason of the day, the answer is the same, and
+# this gives it rather than the person at the keyboard.
+#
+# Nothing here is lost by a second run. esptool writes every block and
+# checks it against its own hash, and a partition written twice holds what
+# the second run put there. A run that stopped halfway leaves a board that
+# cannot start, and the only way out of that is exactly this: write it
+# again.
+for attempt in $(seq 1 "$ATTEMPTS"); do
+    if [[ "$attempt" -eq 1 ]]; then
+        say "Writing the firmware to $PORT"
+    else
+        say "That stopped before the end. Trying again, $attempt of $ATTEMPTS."
+        # The board restarts itself after a broken write and takes a moment
+        # to show up on the port again.
+        sleep 2
+        [[ -e "$PORT" ]] || die "$PORT went away. Unplug the board and plug it
+in again, then run this once more."
+    fi
+    if write_it; then
+        say "Done. The panel restarts and asks for its network and this machine."
+        exit 0
+    fi
+done
+
+die "The firmware did not go over in $ATTEMPTS tries.
+The board holds half an image now and does not start. That is not broken:
+run this again, and if it keeps stopping, use another USB cable or another
+port. A hub between the two is worth taking out."

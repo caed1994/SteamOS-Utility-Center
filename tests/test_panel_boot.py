@@ -409,7 +409,7 @@ class FlashGuardTest(unittest.TestCase):
 
     SCRIPT = os.path.join(REPO, "scripts", "flash-companion.sh")
 
-    def run_it(self, vendor, model="Some Device"):
+    def run_it(self, vendor, model="Some Device", product="4001"):
         """The script, as a person and not as root, with a made-up udevadm."""
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
@@ -420,7 +420,9 @@ class FlashGuardTest(unittest.TestCase):
         with open(fake, "w") as handle:
             handle.write("#!/usr/bin/env bash\n"
                          "echo ID_VENDOR_ID=%s\n"
-                         "echo ID_MODEL=%s\n" % (vendor, model.replace(" ", "_")))
+                         "echo ID_MODEL_ID=%s\n"
+                         "echo ID_MODEL=%s\n"
+                         % (vendor, product, model.replace(" ", "_")))
         os.chmod(fake, 0o755)
         port = os.path.join(root, "ttyFake")
         open(port, "w").close()
@@ -450,6 +452,54 @@ class FlashGuardTest(unittest.TestCase):
         done = self.run_it("303a", "USB JTAG serial debug unit")
         self.assertNotIn("not an Espressif board", done.stderr)
         self.assertIn("no firmware in", done.stderr)
+
+    def test_the_native_usb_port_gets_no_baud_rate_change(self):
+        """The panel reports "USB mode: USB-Serial/JTAG", which is a USB
+        device of the chip itself and not a serial chip. The rate of a USB
+        CDC device is a field the hardware ignores.
+
+        esptool does not know that. It calls change_baud whenever the rate
+        asked for stands above the one it connects with, on this port as on
+        any other, so a number here bought no speed and put a handshake in
+        the middle of a two megabyte write. The write stopped in the middle
+        again and again.
+
+        1001 is the product of that unit. esptool holds the same number as
+        USB_JTAG_SERIAL_PID."""
+        done = self.run_it("303a", "USB JTAG serial debug unit", "1001")
+        self.assertIn("nothing behind it", done.stdout)
+        self.assertIn("115200", done.stdout)
+
+    def test_a_serial_chip_keeps_the_faster_rate(self):
+        """There the rate is real and the write takes a quarter of the
+        time."""
+        done = self.run_it("303a", "CP2102 USB to UART Bridge", "ea60")
+        # It reached the check and passed it, rather than stopping in front
+        # of it. Without this the rule below holds for a script that never
+        # ran that far.
+        self.assertIn("no firmware in", done.stderr)
+        self.assertNotIn("nothing behind it", done.stdout)
+
+    def test_it_writes_again_rather_than_ask_the_person_to(self):
+        """Two megabytes over this port stop in the middle now and then.
+        Writing it again from the start is safe: every block is checked
+        against its own hash, so a second run repairs what a first left
+        behind."""
+        with open(self.SCRIPT, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertRegex(text, r"(?m)^ATTEMPTS=([2-9])")
+        self.assertRegex(text, r'for attempt in \$\(seq 1 "\$ATTEMPTS"\)')
+        # The whole write is one function, so a retry repeats all of it and
+        # not the last part of it.
+        self.assertRegex(text, r"(?s)write_it\(\) \{.*0x10000 \"\$APPLICATION\"")
+        self.assertIn("if write_it; then", text)
+
+    def test_a_write_that_never_finishes_says_what_that_leaves(self):
+        """A board that holds half an image does not start, and somebody
+        who does not know that thinks it is broken."""
+        with open(self.SCRIPT, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("holds half an image", text)
 
     def test_the_vendor_is_read_before_esptool_runs(self):
         """esptool resets the board to ask which chip it is. A reset of
