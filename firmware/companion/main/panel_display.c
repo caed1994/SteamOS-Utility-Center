@@ -96,7 +96,15 @@ static void lvgl_log(lv_log_level_t level,const char *text)
         memcpy(last_line,text,keep);last_line[keep]=0;
         repeats=0;
     }
-    if(level>=LV_LOG_LEVEL_ERROR)
+    /* USER before ERROR, because USER stands above it.
+     *
+     * The order in LVGL is TRACE, INFO, WARN, ERROR, USER, NONE, so a
+     * test of "at least ERROR" catches USER as well. The board showed
+     * that: the timing of the startup animation, which panel_boot.c
+     * writes with LV_LOG_USER, arrived in the log as an error. */
+    if(level==LV_LOG_LEVEL_USER)
+        ESP_LOGI("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
+    else if(level>=LV_LOG_LEVEL_ERROR)
         ESP_LOGE("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
     else if(level==LV_LOG_LEVEL_WARN)
         ESP_LOGW("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
@@ -104,8 +112,8 @@ static void lvgl_log(lv_log_level_t level,const char *text)
         ESP_LOGI("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
 }
 
-/* Twelve kilobytes for the drawing task. See panel_display_start. */
-#define PANEL_LVGL_STACK (12 * 1024)
+/* Sixteen kilobytes for the drawing task. See panel_display_start. */
+#define PANEL_LVGL_STACK (16 * 1024)
 
 size_t panel_display_stack_bytes(void){return PANEL_LVGL_STACK;}
 
@@ -132,7 +140,15 @@ lv_display_t *panel_display_start(void)
      * at startup, and this asks for twelve of them.
      *
      * ui_tick measures what is really left, from inside this task, and says
-     * so. A number here without that is a guess that nobody checks. */
+     * so. A number here without that is a guess that nobody checks.
+     *
+     * And the board answered. Twelve kilobytes stood here first, and the
+     * panel reported 708 bytes left of them, at 1831 ms, which is where
+     * the screen is built and the animation starts. So the task really
+     * wants 11580, and whatever ESP_LVGL_PORT_INIT_CONFIG offered was far
+     * under that: the overflow was not bad luck. Sixteen leaves about
+     * 4800 bytes, which is room for a deeper draw than any this has seen
+     * rather than a number that only just fits. */
     port.task_stack=PANEL_LVGL_STACK;
     ESP_ERROR_CHECK(lvgl_port_init(&port));
     /* After lvgl_port_init, which is what calls lv_init. */

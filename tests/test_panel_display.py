@@ -449,6 +449,18 @@ class LogFloodTest(unittest.TestCase):
         # Thirty a second, so this is a line every two seconds or so.
         self.assertLessEqual(int(every.group(1)), 128)
 
+    def test_a_reading_is_not_logged_as_a_fault(self):
+        """USER stands above ERROR in the order LVGL uses, so a test of
+        "at least ERROR" catches it too. The board showed the timing of
+        the startup animation, which panel_boot.c writes with LV_LOG_USER,
+        arriving in the log as an error."""
+        body = self.routing()
+        user = body.index("LV_LOG_LEVEL_USER")
+        error = body.index("LV_LOG_LEVEL_ERROR")
+        self.assertLess(user, error,
+                        "USER has to be answered before the test that "
+                        "catches everything at ERROR and above")
+
     def test_the_first_one_is_never_held_back(self):
         """A fault nobody sees at all is worse than a loud one."""
         body = self.routing()
@@ -488,8 +500,10 @@ class DrawingStackTest(unittest.TestCase):
         self.assertRegex(code, r"port\.task_stack\s*=")
         said = re.search(r"#define PANEL_LVGL_STACK \(?(\d+)\s*\*\s*1024", code)
         self.assertIsNotNone(said, "the stack has no size of its own here")
-        # The default it used to take was under eight, and that overflowed.
-        self.assertGreaterEqual(int(said.group(1)), 8)
+        # The board measured it: 708 bytes left of 12288, so the task
+        # wants 11580. Twelve only just held, and this asks for room
+        # above what was seen rather than a number that fits it exactly.
+        self.assertGreaterEqual(int(said.group(1)) * 1024, 11580 + 2048)
 
     def test_one_place_holds_the_number(self):
         """The health line prints the headroom against the whole. Two
