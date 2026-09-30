@@ -65,8 +65,12 @@ CONFIG_BSP_LCD_RGB_BUFFER_NUMS=2
 # The level stays at the WARN the component defaults to, so this is quiet.
 # LV_LOG_USER prints at every level below NONE, which is how the timing of
 # the animation reaches the same serial output as ESP_LOGI.
+# LV_LOG_PRINTF stays off on purpose. printf from the LVGL task and
+# ESP_LOG from the Wi-Fi task share one UART and no lock, and the board
+# showed two lines cut into each other. main/panel_display.c registers a
+# callback that hands LVGL's lines to ESP_LOG, which does take a lock.
 CONFIG_LV_USE_LOG=y
-CONFIG_LV_LOG_PRINTF=y
+# CONFIG_LV_LOG_PRINTF is not set
 
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 

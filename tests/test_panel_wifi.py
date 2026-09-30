@@ -143,3 +143,74 @@ class StepTimingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WeakAPTest(unittest.TestCase):
+    """The far AP behind the same name, and why it is not an answer.
+
+    Four starts off the board named two of them:
+
+        3c:37:12:35:dd:95   channel 6   -51 to -55 dBm
+        2c:91:ab:94:1c:9e   channel 9   -85 to -86 dBm
+
+    All four began on channel 6, so sorting by signal does work. Three
+    were refused there, and the retry count then sent them to the far one.
+    Two joined it, and one of those never got an address at all.
+    """
+
+    def source(self):
+        return without_comments(read("main.c"))
+
+    def test_a_signal_this_weak_is_not_a_candidate(self):
+        """The header reads nought or more as -127, so leaving it out is
+        the same as no floor. The floor has to be a negative number."""
+        said = re.search(r"threshold\.rssi\s*=\s*(-\d+)", self.source())
+        self.assertIsNotNone(said, "nothing keeps the far AP out of the list")
+        self.assertLess(int(said.group(1)), 0)
+
+    def test_the_floor_clears_the_near_AP_and_stops_the_far_one(self):
+        """-55 joined and worked. -85 associated and got no address. A
+        floor between them is the whole point, and one outside that range
+        either locks the panel out or lets the far AP back in."""
+        said = re.search(r"threshold\.rssi\s*=\s*(-\d+)", self.source())
+        floor = int(said.group(1))
+        self.assertLess(floor, -55, "this would refuse the AP that works")
+        self.assertGreater(floor, -85, "this lets the AP back in that "
+                                       "associates and gets no address")
+
+
+class LogSharingTest(unittest.TestCase):
+    """One wire, two writers.
+
+    Read off the board: a line of LVGL's arrived inside the middle of a
+    line of the Wi-Fi driver's. LV_LOG_PRINTF writes with printf from the
+    LVGL task, ESP_LOG writes from whichever task has something to say,
+    and nothing holds them apart.
+    """
+
+    def display(self):
+        with open(os.path.join(FIRMWARE, "panel_display.c"),
+                  encoding="utf-8") as handle:
+            return without_comments(handle.read())
+
+    def test_lvgl_lines_go_through_the_one_that_locks(self):
+        self.assertIn("lv_log_register_print_cb", self.display())
+
+    def test_printf_is_not_the_way_out(self):
+        defaults = os.path.join(os.path.dirname(FIRMWARE),
+                                "sdkconfig.defaults")
+        with open(defaults, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertRegex(text, r"(?m)^CONFIG_LV_USE_LOG=y",
+                         "without the log module the callback is never "
+                         "called and the panel says nothing")
+        self.assertNotRegex(text, r"(?m)^CONFIG_LV_LOG_PRINTF=y",
+                            "printf and ESP_LOG share a UART and no lock")
+
+    def test_the_callback_is_registered_after_lvgl_exists(self):
+        """lv_log_register_print_cb before lv_init is a write into
+        nothing. lvgl_port_init is what calls lv_init here."""
+        code = self.display()
+        started = code.index("lvgl_port_init(&port)")
+        registered = code.index("lv_log_register_print_cb")
+        self.assertLess(started, registered)

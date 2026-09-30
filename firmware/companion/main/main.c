@@ -654,6 +654,31 @@ void app_main(void)
          * spent fifteen seconds failing. */
         wifi.sta.scan_method=WIFI_ALL_CHANNEL_SCAN;
         wifi.sta.sort_method=WIFI_CONNECT_AP_BY_SIGNAL;
+        /* And a floor under what counts as an AP at all.
+         *
+         * Four starts off the board named two APs behind one name:
+         *
+         *     3c:37:12:35:dd:95   channel 6   -51 to -55 dBm
+         *     2c:91:ab:94:1c:9e   channel 9   -85 to -86 dBm
+         *
+         * The sort above works: every one of the four began on channel 6,
+         * which is the near one. Three of them were then refused there,
+         * and failure_retry_cnt sent them on to the far one. Two joined
+         * it. One of those two associated and never got an address in
+         * twenty seconds.
+         *
+         * So the far AP is not a worse answer than the near one, it is
+         * not an answer. A floor keeps it out of the list, and the retry
+         * count then does what it was added for: two more goes at the
+         * near AP inside one connect, rather than a full scan of every
+         * channel between each go.
+         *
+         * -75 sits well below the near AP and well above the far one.
+         * The header reads a value of nought or more as -127, which is
+         * the same as no floor at all, so nought was never neutral. A
+         * panel that has to live on a weaker link than this needs this
+         * one number changed. */
+        wifi.sta.threshold.rssi=-75;
         wifi.sta.failure_retry_cnt=2;
         WIFI_STEP("esp_wifi_set_mode",
                   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA)));

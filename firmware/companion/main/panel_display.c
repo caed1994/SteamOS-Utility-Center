@@ -10,6 +10,8 @@
 #include "esp_lcd_panel_rgb.h"
 #include "esp_lvgl_port.h"
 #include <stdint.h>
+#include <string.h>
+#include "esp_log.h"
 #include "driver/ledc.h"
 
 static lv_display_t *panel_screen;
@@ -49,6 +51,29 @@ static bool within(const void *p,const void *base,size_t n)
 /* Keep RGB DMA interrupts and LVGL on core 1. The main task is pinned there
  * by sdkconfig; esp_lcd allocates its interrupts on the calling core.
  * Wi-Fi uses core 0. Board pins and ST7701 commands remain owned by the BSP. */
+/* LVGL's log, through the same door as everything else.
+ *
+ * Read off the board: a line of LVGL's and a line of the Wi-Fi driver's
+ * arrived cut into each other, one inside the middle word of the other.
+ * LV_LOG_PRINTF writes with printf from the LVGL task while ESP_LOG writes
+ * from whatever task had something to say, and the two share a UART and no
+ * lock. Two writers, one wire.
+ *
+ * ESP_LOG takes a lock. So this hands LVGL's lines to it and the interleave
+ * cannot happen. It also gives them the timestamp and the tag that every
+ * other line has.
+ *
+ * The trailing newline goes: ESP_LOG adds its own, and LVGL ends its
+ * buffer with one. */
+static void lvgl_log(lv_log_level_t level,const char *text)
+{
+    size_t len=strlen(text);
+    while(len && (text[len-1]=='\n' || text[len-1]=='\r')) len--;
+    if(level>=LV_LOG_LEVEL_ERROR) ESP_LOGE("lvgl","%.*s",(int)len,text);
+    else if(level==LV_LOG_LEVEL_WARN) ESP_LOGW("lvgl","%.*s",(int)len,text);
+    else ESP_LOGI("lvgl","%.*s",(int)len,text);
+}
+
 lv_display_t *panel_display_start(void)
 {
     const char *tag="panel_display";
@@ -56,6 +81,8 @@ lv_display_t *panel_display_start(void)
     lvgl_port_cfg_t port=ESP_LVGL_PORT_INIT_CONFIG();
     port.task_affinity=1;
     ESP_ERROR_CHECK(lvgl_port_init(&port));
+    /* After lvgl_port_init, which is what calls lv_init. */
+    lv_log_register_print_cb(lvgl_log);
 
     esp_lcd_panel_handle_t panel=NULL;
     esp_lcd_panel_io_handle_t io=NULL;
