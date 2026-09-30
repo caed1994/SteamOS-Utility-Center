@@ -30,7 +30,7 @@ add_subdirectory(../managed_components/lvgl__lvgl lvgl)
 # nothing built these. The job in
 # .github/workflows/companion-firmware.yml builds and runs them now.
 set(PANEL_UI_SOURCES ../main/ui.c ../main/icons.c ../main/panel_text.c
-                     ../main/panel_ui_sleep.c)
+                     ../main/panel_ui_sleep.c ../main/panel_count_font.c)
 add_executable(panel_preview preview.c ${PANEL_UI_SOURCES})
 target_include_directories(panel_preview PRIVATE ../main)
 target_link_libraries(panel_preview PRIVATE lvgl m)

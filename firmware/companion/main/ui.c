@@ -26,6 +26,13 @@ static lv_obj_t *wake_button,*wake_what;
 /* The second and third pages. Not in controls[] either: that table is
  * indexed by the action and holds the six on the first page. */
 static lv_obj_t *mode_now,*mode_button,*mode_caption,*playing_name,*achievement_count;
+/* The room of the name on the third page: from under the line below "Now
+ * playing" at 44 to the line over the achievements. */
+#define NAME_TOP 45
+#define NAME_ROOM 71
+#define NAME_FONT (&lv_font_montserrat_26)
+LV_FONT_DECLARE(panel_count_font);
+static void name_show(const char *text);
 static lv_obj_t *drive_rows[PANEL_DRIVES],*drive_names[PANEL_DRIVES];
 static lv_obj_t *drive_bars[PANEL_DRIVES],*drive_free[PANEL_DRIVES];
 static lv_obj_t *no_drives,*band,*dots[3],*esp_power,*wifi_mark;
@@ -487,23 +494,25 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     icon(play_card,&icon_gamepad_2,14,14,MUTED);
     text_at(play_card,panel_text(TXT_PLAYING),52,16,240,&lv_font_montserrat_14,MUTED);
     line(play_card,14,44,432,1);
-    playing_name=text_at(play_card,panel_text(TXT_NOTHING_PLAYING),20,64,420,&lv_font_montserrat_24,TEXT);
-    /* Two lines at most, and the rest cut with an ellipsis. A long name
-     * used to have the whole card to itself; it now stops short of the
-     * line below it. */
+    /* The name of the game, in the middle of the room between the two
+     * lines. See name_show, which also keeps it to two lines. */
+    playing_name=text_at(play_card,"",20,NAME_TOP,420,NAME_FONT,TEXT);
+    center_text(playing_name);
     lv_label_set_long_mode(playing_name,LV_LABEL_LONG_DOT);
-    lv_obj_set_height(playing_name,2*lv_font_get_line_height(&lv_font_montserrat_24));
+    name_show(panel_text(TXT_NOTHING_PLAYING));
     /* The achievements of that game, where a mockup once had a frame
      * rate. The rate had no clean source on the PC; these come out of the
      * page the Steam client keeps for each game. See
      * steamapps.achievements.
      *
-     * The shape of the volume on the first page: a small name and a large
-     * number under it, 31 apart. The pair stands in the middle of the
-     * room under the line, because nothing else shares that room. */
-    line(play_card,14,136,432,1);
-    center_text(text_at(play_card,panel_text(TXT_ACHIEVEMENTS),20,186,420,&lv_font_montserrat_14,MUTED));
-    achievement_count=text_at(play_card,"--",20,217,420,&lv_font_montserrat_32,TEXT);
+     * A name and a large number under it, the pair in the middle of the
+     * room under the line. The number is Montserrat Medium like every other
+     * text on this panel, at 64: larger than any size LVGL ships, so the
+     * font is one of this firmware's own, with only the glyphs a count
+     * needs. See panel_count_font.c. */
+    line(play_card,14,NAME_TOP+NAME_ROOM,432,1);
+    center_text(text_at(play_card,panel_text(TXT_ACHIEVEMENTS),20,160,420,&lv_font_montserrat_20,MUTED));
+    achievement_count=text_at(play_card,"--",20,196,420,&panel_count_font,TEXT);
     center_text(achievement_count);
     lv_obj_t *foot=panel(s,10,386,460,48,CARD,true);
     icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&lv_font_montserrat_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&lv_font_montserrat_18,BLUE);
@@ -568,6 +577,26 @@ static void say_size(char *out,size_t room,uint64_t bytes)
     double gib=(double)bytes/(1024.0*1024.0*1024.0);
     if(gib<100.0)snprintf(out,room,"%.1f GB",gib);
     else snprintf(out,room,"%.0f GB",gib);
+}
+/* The name of the game, one line or two, in the middle of its room.
+ *
+ * An LVGL label centres across and not up and down, so a single line
+ * would sit at the top of a box made for two. The text is measured
+ * instead, and the label is made one line or two lines tall and placed in
+ * the middle of the room between the line under "Now playing" and the
+ * line over the achievements. Past two lines the rest is cut with an
+ * ellipsis: a long name used to have the whole card, and it now stops
+ * short of the count. */
+static void name_show(const char *text)
+{
+    if(!playing_name)return;
+    int32_t line=lv_font_get_line_height(NAME_FONT);
+    lv_point_t size;
+    lv_text_get_size(&size,text,NAME_FONT,0,0,420,LV_TEXT_FLAG_NONE);
+    int32_t lines=size.y>line?2:1;
+    lv_obj_set_height(playing_name,lines*line);
+    lv_obj_set_y(playing_name,NAME_TOP+(NAME_ROOM-lines*line)/2);
+    lv_label_set_text(playing_name,text);
 }
 /* The battery of this panel, in the corner of the main screen.
  *
@@ -694,8 +723,7 @@ void panel_ui_update(const panel_state_t *s)
     }
     /* The third page. */
     if(playing_name)
-        lv_label_set_text(playing_name,
-                          s->online&&s->playing[0]?s->playing:panel_text(TXT_NOTHING_PLAYING));
+        name_show(s->online&&s->playing[0]?s->playing:panel_text(TXT_NOTHING_PLAYING));
     /* A dash for nothing to count, the same dash the temperatures show.
      * Nought of sixty is a real answer about a game, and no game is not
      * that answer. */

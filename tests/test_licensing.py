@@ -44,6 +44,17 @@ SCRIPTS = ("server/steamos-utility-center", "gui/steamos-utility-center-panel")
 # carries goes in both.
 OTHERS = ("leds-valve-shim", "cec-toolkit", "dbus-next")
 
+# Single files of this tree under the licence of what they were made from,
+# each with that licence and the file that holds its text. The large count on
+# the wall panel is a font rendered from Montserrat, and a font made from an
+# OFL font stays under the OFL. Our GPL-3 line on it would relicense the
+# work of somebody else.
+MADE_FROM_OTHERS = {
+    "firmware/companion/main/panel_count_font.c":
+        ("OFL-1.1", "firmware/companion/third-party-licenses/Montserrat-OFL.txt",
+         "SIL OPEN FONT LICENSE Version 1.1"),
+}
+
 
 def tracked():
     """Every file git knows about, so nothing untracked or ignored counts."""
@@ -54,7 +65,7 @@ def tracked():
 
 def ours():
     for name in tracked():
-        if name.split("/")[0] in OTHERS:
+        if name.split("/")[0] in OTHERS or name in MADE_FROM_OTHERS:
             continue
         if name.endswith(SUFFIXES) or name in SCRIPTS:
             yield name
@@ -163,6 +174,21 @@ class SpdxHeaderTest(unittest.TestCase):
                 text = handle.read().decode("utf-8", "replace")
             self.assertNotIn("SPDX-License-Identifier: " + LICENCE, text,
                              "%s has been given this project's licence" % name)
+
+    def test_a_file_made_from_other_work_keeps_that_licence(self):
+        """Left out of the sweep, so checked for the other thing: its own
+        SPDX line, a copyright holder, and the text of its licence in the
+        tree. A file that leaves the sweep with none of these is a file with
+        no licence anybody can find."""
+        for name, (licence, text, title) in MADE_FROM_OTHERS.items():
+            self.assertIn(name, tracked(), "%s is not in the tree" % name)
+            head = self._head(name)
+            self.assertIn("SPDX-License-Identifier: " + licence, head, name)
+            self.assertIn("SPDX-FileCopyrightText:", head, name)
+            self.assertNotIn(LICENCE, head,
+                             "%s has been given this project's licence" % name)
+            with open(os.path.join(REPO, text)) as handle:
+                self.assertIn(title, handle.read(), text)
 
     def test_the_licence_text_is_actually_there(self):
         # A header pointing at a licence the repository does not carry is

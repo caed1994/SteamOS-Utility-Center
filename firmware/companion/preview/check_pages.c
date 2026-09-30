@@ -417,6 +417,39 @@ int main(void)
         assert(name);
         assert(lv_obj_get_y(name)+lv_obj_get_height(name)<=lv_obj_get_y(between));
         assert(lv_obj_get_y(title)>lv_obj_get_y(between));
+        lv_obj_t *over=line_below(card,lv_obj_get_y(name));
+        assert(over&&over!=between);
+        int32_t room_middle=(lv_obj_get_y(over)+1+lv_obj_get_y(between))/2;
+        int32_t two_lines=lv_obj_get_height(name);
+        assert(LV_ABS(lv_obj_get_y(name)+two_lines/2-room_middle)<=1);
+
+        // A name of one line stands in the middle of that room too, and not
+        // at the top of a box made for two. Across, each text of the card
+        // is centred on the card.
+        snprintf(s.playing,sizeof s.playing,"DragonSword : Awakening");
+        panel_ui_update(&s);
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_height(name)<two_lines);
+        assert(LV_ABS(lv_obj_get_y(name)+lv_obj_get_height(name)/2-room_middle)<=1);
+        int32_t card_middle=lv_obj_get_width(card)/2;
+        lv_obj_t *texts[]={name,title,count};
+        for(unsigned i=0;i<3;i++){
+            assert(lv_obj_get_style_text_align(texts[i],LV_PART_MAIN)==LV_TEXT_ALIGN_CENTER);
+            assert(LV_ABS(lv_obj_get_x(texts[i])+lv_obj_get_width(texts[i])/2-card_middle)<=1);
+        }
+
+        // The count is the large thing on the card: its digits are at least
+        // twice as tall as the name's, and the pair of title and count
+        // stands in the middle of the room under the line, inside the card.
+        const lv_font_t *digits=lv_obj_get_style_text_font(count,LV_PART_MAIN);
+        const lv_font_t *words=lv_obj_get_style_text_font(name,LV_PART_MAIN);
+        assert(lv_font_get_line_height(digits)>=2*lv_font_get_line_height(words));
+        assert(lv_obj_get_height(count)>=lv_font_get_line_height(digits));
+        int32_t pair_top=lv_obj_get_y(title);
+        int32_t pair_end=lv_obj_get_y(count)+lv_obj_get_height(count);
+        assert(pair_end<=lv_obj_get_height(card));
+        int32_t below_middle=(lv_obj_get_y(between)+1+lv_obj_get_height(card))/2;
+        assert(LV_ABS((pair_top+pair_end)/2-below_middle)<=2);
     }
 
     // The two sliders of the display card, and the room under each.
