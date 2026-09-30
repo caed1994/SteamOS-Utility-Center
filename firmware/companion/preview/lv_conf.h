@@ -51,7 +51,6 @@
 // board is a preview that watches a screen the board never shows. The
 // colour depth above is here for the same reason.
 #define LV_USE_TJPGD 1
-#define LV_CACHE_DEF_SIZE 262144
 // TJPGD refuses bytes in memory without this. It reads a file, and this
 // is the driver that makes a block of memory look like one. See the
 // LV_IMAGE_SRC_VARIABLE branch of decoder_open in lv_tjpgd.c.

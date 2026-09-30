@@ -190,19 +190,40 @@ class BannerTest(unittest.TestCase):
     def main(self):
         return without_comments(read("main.c"))
 
-    def test_the_decoder_and_a_cache_for_it_are_both_on(self):
-        """LV_CACHE_DEF_SIZE defaults to nought, which is no cache. LVGL
-        would then decode the picture again at every refresh, and a
-        refresh happens at every swipe of the band."""
+    def test_the_decoder_is_on(self):
         defaults = os.path.join(COMPANION, "sdkconfig.defaults")
         with open(defaults, encoding="utf-8") as handle:
             text = handle.read()
         self.assertRegex(text, r"(?m)^CONFIG_LV_USE_TJPGD=y")
-        said = re.search(r"(?m)^CONFIG_LV_CACHE_DEF_SIZE=(\d+)", text)
-        self.assertIsNotNone(said, "no image cache at all")
-        # 460 by 215 as RGB565 is 197800 bytes. A cache under that holds
-        # nothing and is the same as none.
-        self.assertGreater(int(said.group(1)), 197800)
+
+    def test_no_image_cache_is_asked_for(self):
+        """A quarter of a megabyte stood here to keep the decoded
+        picture, and it kept nothing.
+
+        TJPGD hands LVGL one block at a time through get_area and never
+        calls lv_image_decoder_add_to_cache, which is the one thing that
+        puts a decode in the cache. Every other decoder in LVGL calls it.
+
+        lv_malloc is the C library here, so the memory would have come
+        out of internal RAM, where the Wi-Fi stack lives. check_pages
+        draws the picture with no cache and passes."""
+        defaults = os.path.join(COMPANION, "sdkconfig.defaults")
+        with open(defaults, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertNotRegex(text, r"(?m)^CONFIG_LV_CACHE_DEF_SIZE=")
+        with open(os.path.join(PREVIEW, "lv_conf.h"), encoding="utf-8") as h:
+            self.assertNotRegex(h.read(), r"(?m)^#define LV_CACHE_DEF_SIZE")
+
+    def test_the_decoder_never_asks_the_cache_to_hold_a_decode(self):
+        """The rule above rests on this. If a later LVGL teaches TJPGD to
+        cache, the reason for leaving the cache out is gone and somebody
+        has to weigh it again."""
+        decoder = os.path.join(COMPANION, "managed_components", "lvgl__lvgl",
+                               "src", "libs", "tjpgd", "lv_tjpgd.c")
+        if not os.path.exists(decoder):
+            self.skipTest("the LVGL component is not checked out here")
+        with open(decoder, encoding="utf-8") as handle:
+            self.assertNotIn("lv_image_decoder_add_to_cache", handle.read())
 
     def test_the_decoder_is_allowed_to_read_bytes_in_memory(self):
         """TJPGD reads a file. LV_USE_FS_MEMFS is the driver that makes a
@@ -238,7 +259,6 @@ class BannerTest(unittest.TestCase):
         with open(os.path.join(PREVIEW, "lv_conf.h"), encoding="utf-8") as h:
             text = h.read()
         self.assertRegex(text, r"(?m)^#define LV_USE_TJPGD 1")
-        self.assertRegex(text, r"(?m)^#define LV_CACHE_DEF_SIZE \d+")
         self.assertRegex(text, r"(?m)^#define LV_USE_FS_MEMFS 1")
 
     def test_the_preview_shows_what_lvgl_complains_about(self):
