@@ -283,6 +283,65 @@ int main(void)
     panel_ui_update(&s);
     assert(!label(lv_screen_active(),LV_SYMBOL_BATTERY_EMPTY " 5 %"));
 
+    // The bottom row: the settings on the left, and on the right the mark
+    // for the network standing directly against the battery.
+    s=base();
+    s.esp_supply=PANEL_SUPPLY_BATTERY;s.esp_battery=87;
+    panel_ui_update(&s);
+    lv_obj_update_layout(lv_screen_active());
+    {
+        lv_obj_t *settings_caption=label(lv_screen_active(),panel_text(TXT_SETTINGS));
+        assert(settings_caption);
+        lv_area_t where;lv_obj_get_coords(settings_caption,&where);
+        assert(where.x1<60);                     // on the left, not the middle
+        lv_obj_t *net=label(lv_screen_active(),LV_SYMBOL_WIFI);
+        lv_obj_t *cell=label(lv_screen_active(),LV_SYMBOL_BATTERY_3 " 87 %");
+        assert(net && cell);
+        lv_area_t a,b;lv_obj_get_coords(net,&a);lv_obj_get_coords(cell,&b);
+        // Directly left of it, on the same row, with a small gap and no
+        // other mark between.
+        assert(a.x2<b.x1);
+        assert(b.x1-a.x2<=16);
+        assert(a.y1<b.y2 && b.y1<a.y2);
+        // And the pair at the right edge, where the setup button stood.
+        assert(b.x2>=440);
+        // A board whose power chip said nothing has no battery to stand
+        // against, and the mark goes to the edge instead of floating.
+        s.esp_supply=PANEL_SUPPLY_UNKNOWN;
+        panel_ui_update(&s);
+        lv_obj_update_layout(lv_screen_active());
+        lv_obj_get_coords(net,&a);
+        assert(a.x2>=440);
+    }
+    // The mark says whether the panel is on the network, in a colour that
+    // asks for a look when it is not.
+    {
+        s=base();s.wifi=true;
+        panel_ui_update(&s);
+        lv_obj_t *net=label(lv_screen_active(),LV_SYMBOL_WIFI);
+        assert(net);
+        lv_color_t on=lv_obj_get_style_text_color(net,0);
+        s.wifi=false;s.online=false;
+        panel_ui_update(&s);
+        lv_color_t off=lv_obj_get_style_text_color(net,0);
+        assert(!lv_color_eq(on,off));
+        assert(off.red>off.green && off.red>off.blue);
+    }
+    // The line in the middle stays empty in the ordinary case: the state
+    // of the connection is the mark now. It comes up for what a mark cannot
+    // say, and goes again when that is over.
+    {
+        s=base();
+        panel_ui_update(&s);
+        assert(!label(lv_screen_active(),panel_text(TXT_CHECK_SETUP)));
+        snprintf(s.message,sizeof s.message,"%s",panel_text(TXT_CHECK_SETUP));
+        panel_ui_update(&s);
+        assert(label(lv_screen_active(),panel_text(TXT_CHECK_SETUP)));
+        s.message[0]=0;
+        panel_ui_update(&s);
+        assert(!label(lv_screen_active(),panel_text(TXT_CHECK_SETUP)));
+    }
+
     // The two sliders of the display card, and the room under each.
     //
     // The board showed the second one pressed against the bottom edge of
@@ -317,6 +376,7 @@ int main(void)
     puts("OK: three pages that snap, the session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
          "them drawn with nothing for LVGL to complain about, the battery of "
-         "the panel in the corner, and room under both display sliders.");
+         "the panel in the corner with the network mark against it, and room "
+         "under both display sliders.");
     return 0;
 }

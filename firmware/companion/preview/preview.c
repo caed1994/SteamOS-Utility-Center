@@ -21,15 +21,14 @@ int main(int argc,char **argv)
      * .github/workflows/companion-firmware.yml builds and runs it now. */
     s.charging=false;
     strcpy(s.host,"FractalMachine");strcpy(s.controller,"PlayStation Controller");
-    strcpy(s.message,"Up to date");
     /* The battery of the panel itself, for the corner of the main screen.
      * A real board shows this only once its power chip answers. */
     s.esp_supply=PANEL_SUPPLY_BATTERY;s.esp_battery=87;
-    if(argc>2&&strcmp(argv[2],"offline")==0){s.online=false;s.wifi=false;strcpy(s.message,"Joining the network");}
+    if(argc>2&&strcmp(argv[2],"offline")==0){s.online=false;s.wifi=false;}
     /* Offline, with an address to wake the PC at. The control card shows
      * its other face here. See panel_wol.c. */
     if(argc>2&&strcmp(argv[2],"wake")==0){
-        s.online=false;s.can_wake=true;strcpy(s.message,"No answer from the PC");
+        s.online=false;s.can_wake=true;
     }
     if(argc>2&&strcmp(argv[2],"setup")==0){s.setup=true;strcpy(s.setup_ssid,"SteamOS-Panel-3A12");strcpy(s.setup_password,"ABCD2345EFGH");}
     panel_ui_update(&s);

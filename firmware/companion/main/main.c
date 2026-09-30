@@ -662,7 +662,20 @@ static void network_task(void *arg)
             int code=connected() ? request("/v1/status",NULL) : 0;
             xSemaphoreTake(lock,portMAX_DELAY);
             state.online=code==200;
-            if ((int32_t)(xTaskGetTickCount()-feedback_until)>=0) snprintf(state.message,sizeof(state.message),"%s",code==200 ? panel_text(TXT_UP_TO_DATE) : code==401 ? panel_text(TXT_CHECK_SETUP) : state.wifi ? panel_text(TXT_NO_ANSWER) : panel_text(TXT_JOINING));
+            /* Something to say, and nothing where there is nothing.
+             *
+             * This line used to carry the state of the connection at
+             * every poll: up to date, no answer, joining the network. The
+             * screen shows that now without words, a mark for the network
+             * at the bottom and the state of the PC at the top, and a
+             * sentence that says the same thing again is one somebody
+             * learns to read past. So the line stays empty, and what
+             * reaches it is what neither mark can say: the token the PC
+             * refused, and the answer to a button, which is written above
+             * and held for five seconds. */
+            if ((int32_t)(xTaskGetTickCount()-feedback_until)>=0)
+                snprintf(state.message,sizeof(state.message),"%s",
+                         code==401 ? panel_text(TXT_CHECK_SETUP) : "");
             xSemaphoreGive(lock);
         }
     }

@@ -28,7 +28,7 @@ static lv_obj_t *wake_button,*wake_what;
 static lv_obj_t *mode_now,*mode_button,*mode_caption,*playing_name;
 static lv_obj_t *drive_rows[PANEL_DRIVES],*drive_names[PANEL_DRIVES];
 static lv_obj_t *drive_bars[PANEL_DRIVES],*drive_free[PANEL_DRIVES];
-static lv_obj_t *no_drives,*band,*dots[3],*esp_power;
+static lv_obj_t *no_drives,*band,*dots[3],*esp_power,*wifi_mark;
 static panel_action_cb_t send_action;
 static panel_setting_cb_t save_setting;
 static panel_sound_cb_t play_sound;
@@ -371,7 +371,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * of this screen too. A pointer kept past the clean above is a pointer
      * to freed memory, and band_scrolled runs from a touch. */
     band=NULL;mode_now=NULL;mode_button=NULL;mode_caption=NULL;
-    playing_name=NULL;no_drives=NULL;esp_power=NULL;
+    playing_name=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
     for(int i=0;i<3;i++)dots[i]=NULL;
     for(int i=0;i<PANEL_DRIVES;i++){
         drive_rows[i]=NULL;drive_names[i]=NULL;
@@ -493,17 +493,51 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&lv_font_montserrat_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&lv_font_montserrat_18,BLUE);
     line(foot,151,9,1,30);icon(foot,&icon_circuit_board,165,12,MUTED);text_at(foot,"GPU",198,6,99,&lv_font_montserrat_12,MUTED);gpu_value=text_at(foot,"-- C",198,22,99,&lv_font_montserrat_18,BLUE);
     line(foot,304,9,1,30);icon(foot,&icon_zap,318,12,MUTED);text_at(foot,"GPU-WATT",350,6,98,&lv_font_montserrat_12,MUTED);power_value=text_at(foot,"-- W",350,22,98,&lv_font_montserrat_18,BLUE);
-    message=text_at(s,panel_text(TXT_CONNECTING),12,451,188,&lv_font_montserrat_12,MUTED);
-    lv_obj_set_height(message,18);
-    lv_obj_t *settings_button=button(s,panel_text(TXT_SETTINGS),206,436,146,44,settings_clicked,0);
+    /* The bottom row: the settings on the left, what the panel has to
+     * say in the middle, and the state of the panel itself on the right.
+     *
+     * The settings sit where a left thumb finds them. The caption goes to
+     * the left edge of its button and not the middle, so it lines up with
+     * the edge of the card above it. */
+    lv_obj_t *settings_button=button(s,panel_text(TXT_SETTINGS),0,436,150,44,settings_clicked,0);
     lv_obj_set_style_bg_opa(settings_button,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(settings_button,0,0);
     lv_obj_set_style_text_font(settings_button,&lv_font_montserrat_14,0);
-    /* The corner the setup button stood in, which moved into the settings.
-     * What stands here now is the battery of this panel, and not of the
-     * controller: that one has its place at the top. It stays empty until
-     * the power chip of the board answers. */
-    esp_power=text_at(s,"",358,450,108,&lv_font_montserrat_14,MUTED);
-    lv_obj_set_style_text_align(esp_power,LV_TEXT_ALIGN_RIGHT,0);
+    lv_obj_align(lv_obj_get_child(settings_button,0),LV_ALIGN_LEFT_MID,12,0);
+    /* Empty unless there is something to say. See the poll in main.c:
+     * the state of the connection is the mark on the right now, and what
+     * reaches this line is what a mark cannot say. */
+    message=text_at(s,"",150,451,180,&lv_font_montserrat_12,MUTED);
+    lv_obj_set_height(message,18);
+    lv_obj_set_style_text_align(message,LV_TEXT_ALIGN_CENTER,0);
+    lv_label_set_long_mode(message,LV_LABEL_LONG_DOT);
+    lv_obj_add_flag(message,LV_OBJ_FLAG_HIDDEN);
+    /* The network and then the battery, side by side from the right edge.
+     *
+     * A row that lays itself out, because the battery is a different width
+     * at 5 and at 100 per cent and is not there at all on a board whose
+     * power chip did not answer. The network mark stays against the
+     * battery in every one of those, and against the edge when there is
+     * no battery to stand against. */
+    lv_obj_t *status=lv_obj_create(s);
+    lv_obj_remove_style_all(status);
+    lv_obj_set_pos(status,330,436);lv_obj_set_size(status,136,44);
+    lv_obj_remove_flag(status,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(status,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_flow(status,LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(status,LV_FLEX_ALIGN_END,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(status,10,0);
+    wifi_mark=lv_label_create(status);
+    lv_label_set_text(wifi_mark,LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_font(wifi_mark,&lv_font_montserrat_14,0);
+    /* Red until the network is joined, which is the one state of it that
+     * asks for a look. */
+    lv_obj_set_style_text_color(wifi_mark,lv_color_hex(RED),0);
+    /* The battery of this panel, and not of the controller: that one has
+     * its place at the top. Hidden until the power chip answers. */
+    esp_power=lv_label_create(status);
+    lv_label_set_text(esp_power,"");
+    lv_obj_set_style_text_font(esp_power,&lv_font_montserrat_14,0);
+    lv_obj_set_style_text_color(esp_power,lv_color_hex(MUTED),0);
     lv_obj_add_flag(esp_power,LV_OBJ_FLAG_HIDDEN);
 }
 /* A size a person reads, out of a count of bytes.
@@ -594,6 +628,13 @@ void panel_ui_update(const panel_state_t *s)
     if(s->online&&s->gpu_temp>=0)lv_label_set_text_fmt(gpu_value,"%d °C",s->gpu_temp);else lv_label_set_text(gpu_value,"-- °C");
     if(s->online&&s->gpu_watts>=0)lv_label_set_text_fmt(power_value,"%d W",s->gpu_watts);else lv_label_set_text(power_value,"-- W");
     lv_label_set_text(message,s->message);
+    if(s->message[0])lv_obj_remove_flag(message,LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(message,LV_OBJ_FLAG_HIDDEN);
+    /* The mark for the network. It answers one question, whether the panel
+     * is on the network, and leaves whether the PC answers to the dot at
+     * the top: a mark that meant both would say nothing about either. */
+    if(wifi_mark)lv_obj_set_style_text_color(wifi_mark,
+        lv_color_hex(s->wifi?MUTED:RED),0);
     /* The second page. Offline leaves every one of these at a dash rather
      * than at the last thing the PC said, which would read as current. */
     if(mode_now){

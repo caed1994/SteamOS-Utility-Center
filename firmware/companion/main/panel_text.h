@@ -89,17 +89,12 @@
                            "Passwort: %s\n\n2. Im Browser oeffnen:\n" \
                            "http://192.168.4.1\n\n" \
                            "3. Heim-WLAN und PC eintragen.") \
-    X(TXT_CONNECTING,      "Connecting ...",        "Verbinde ...") \
     X(TXT_WAIT,            "One moment.",           "Bitte kurz warten.") \
     X(TXT_SENT,            "Sent",                  "Befehl gesendet") \
     X(TXT_NOT_CONFIRMED,   "Not confirmed",         "Befehl nicht bestaetigt") \
     X(TXT_CHECK_TOKEN,     "Check the token",       "Token pruefen") \
     X(TXT_CHECK_SETUP,     "Check the token: Set up", \
                            "Token pruefen: Einrichten") \
-    X(TXT_UP_TO_DATE,      "Up to date",            "Status aktuell") \
-    X(TXT_NO_ANSWER,       "No answer from the PC or the service", \
-                           "PC oder Dienst nicht erreichbar") \
-    X(TXT_JOINING,         "Joining the network",   "WLAN-Verbindung wird aufgebaut") \
     X(TXT_FORM_PLEASE,     "Use the setup form.", \
                            "Bitte das Einrichtungsformular verwenden.") \
     X(TXT_FORM_BAD,        "The network, the PC address or the token is wrong.", \
