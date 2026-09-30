@@ -55,6 +55,19 @@ CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_HEIGHT=40
 # fails the build if this line stops taking effect.
 CONFIG_BSP_LCD_RGB_BUFFER_NUMS=2
 
+# LVGL's own log, which was not compiled in at all.
+#
+# LV_USE_LOG carries no default in the Kconfig of the component, so it was
+# off, and every LV_LOG_ line in this firmware compiled to nothing. One of
+# them is the warning in main/panel_boot.c that says the animation did not
+# load, which is the one thing that explains a panel that stays black.
+#
+# The level stays at the WARN the component defaults to, so this is quiet.
+# LV_LOG_USER prints at every level below NONE, which is how the timing of
+# the animation reaches the same serial output as ESP_LOGI.
+CONFIG_LV_USE_LOG=y
+CONFIG_LV_LOG_PRINTF=y
+
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
 CONFIG_LCD_RGB_ISR_IRAM_SAFE=y

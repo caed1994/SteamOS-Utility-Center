@@ -24,6 +24,62 @@
  * itself is off. See panel_ui_sleep.c. */
 static lv_obj_t *cover;
 
+/* The rate the file holds, in milliseconds per frame.
+ *
+ * 25 frames a second is 4 hundredths of a second, and a GIF counts in
+ * hundredths. 30 was not representable, so ffmpeg wrote 4, 3, 3, 4, 3, 3
+ * and every third frame held a third longer than its neighbours.
+ * assets/ORIGIN-BOOT-ANIMATION carries the rate and the reason. A
+ * re-encode at another rate changes this number too. */
+#define FRAME_MS 40
+
+/* What the animation really ran at, measured while it ran.
+ *
+ * Reported from the board: the middle looks slower than the ends. The file
+ * says why that is possible. The heaviest frame carries 19646 bytes of LZW
+ * and covers the whole 320x320 square, where the frames at each end carry
+ * about 1850 and cover 74x74. So the decoder has nearly twenty times the
+ * work in the middle. Every flush waits for a frame boundary of the panel
+ * as well, so work that runs past the boundary costs a whole period.
+ *
+ * What the file cannot say is how long that work takes on this chip, and
+ * that is the number that decides whether 40 ms is enough.
+ * LV_EVENT_DRAW_POST_END arrives once for each frame that reaches the
+ * screen, because nothing else under this cover asks for a refresh. So the
+ * gap between two of them is the gap a person sees. */
+static uint32_t drawn, began, previous, slowest, slowest_at, slipped;
+
+/* A frame that runs a quarter past its own delay. Two panel periods rather
+ * than one is not a slip at this rate; three is. */
+#define SLIPPED_MS (FRAME_MS + FRAME_MS / 4)
+
+static void frame_drawn(lv_event_t *event)
+{
+    (void)event;
+    uint32_t now = lv_tick_get();
+    if (drawn == 0) {
+        began = now;
+    } else {
+        uint32_t gap = now - previous;
+        if (gap > slowest) { slowest = gap; slowest_at = drawn; }
+        if (gap > SLIPPED_MS) slipped++;
+    }
+    previous = now;
+    drawn++;
+}
+
+static void report(void)
+{
+    if (drawn < 2) return;
+    uint32_t ran = previous - began;
+    LV_LOG_USER("boot animation: %u frames in %u ms, %u ms a frame against "
+                "%u asked, slowest %u ms at frame %u, %u past %u ms",
+                (unsigned)drawn, (unsigned)ran,
+                (unsigned)(ran / (drawn - 1)), (unsigned)FRAME_MS,
+                (unsigned)slowest, (unsigned)slowest_at,
+                (unsigned)slipped, (unsigned)SLIPPED_MS);
+}
+
 /* LVGL tells an object when it goes, and a clean of the screen takes this
  * one with it. So the pointer is dropped here and not by a caller who
  * remembers to. A pointer to a deleted object is the bug that panel_ui_sleep
@@ -50,6 +106,7 @@ static void forget(lv_event_t *event)
 static void finish(void)
 {
     if (!cover) return;
+    report();
     lv_obj_t *going = cover;
     cover = NULL;
     lv_obj_delete_async(going);
@@ -80,6 +137,7 @@ void panel_boot_show(const void *image, size_t size)
      * working panel. Somebody who deletes the asset gets this. */
     if (!image || size == 0) return;
     if (cover) return;
+    drawn = began = previous = slowest = slowest_at = slipped = 0;
 
     lv_obj_t *screen = lv_screen_active();
     if (!screen) return;
@@ -135,5 +193,6 @@ void panel_boot_show(const void *image, size_t size)
     lv_gif_set_loop_count(picture, 1);
     lv_obj_center(picture);
     lv_obj_add_event_cb(picture, played_out, LV_EVENT_READY, NULL);
+    lv_obj_add_event_cb(picture, frame_drawn, LV_EVENT_DRAW_POST_END, NULL);
     lv_obj_move_foreground(cover);
 }

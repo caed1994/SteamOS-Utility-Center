@@ -28,6 +28,18 @@
 #define LV_FONT_DEFAULT &lv_font_montserrat_16
 #define LV_BUILD_EXAMPLES 0
 #define LV_BUILD_DEMOS 0
-#define LV_USE_LOG 0
+// The log, at the one level that stays quiet in a loop.
+//
+// A nought here was the same shape of blind spot as the colour depth above:
+// panel_boot.c measures the pacing of the animation and prints it with
+// LV_LOG_USER, and a check with no log never runs that line at all.
+//
+// The level is USER and not the WARN the panel uses. check_idle turns the
+// screen over 20000 times, and a warning that fires once per turn is 20000
+// lines in the job. USER prints at every level below NONE, so the reading
+// comes out and nothing else does.
+#define LV_USE_LOG 1
+#define LV_LOG_LEVEL LV_LOG_LEVEL_USER
+#define LV_LOG_PRINTF 1
 // panel_boot.c plays the startup animation, and check_boot runs it.
 #define LV_USE_GIF 1

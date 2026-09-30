@@ -17,6 +17,7 @@ is the whole reason it costs no time.
 
 from __future__ import annotations
 
+import collections
 import os
 import re
 import tempfile
@@ -91,6 +92,65 @@ class AnimationFileTest(unittest.TestCase):
         for name in ("panel_boot.c",):
             self.assertIn("ORIGIN-BOOT-ANIMATION",
                           read(os.path.join(FIRMWARE, name)), name)
+
+    def delays(self):
+        """How long each frame of the animation holds, in hundredths.
+
+        A GIF carries that in a Graphic Control Extension, which is a block
+        of eight bytes: 0x21 0xF9 0x04, one byte of flags, the delay as two
+        bytes, the transparent colour, and a nought that ends the block.
+        The nought is what makes this reliable enough to count on. A run of
+        those three bytes inside the compressed pixels is possible, and a
+        nought in the eighth place after it is not likely.
+        """
+        with open(ANIMATION, "rb") as handle:
+            data = handle.read()
+        found, at = [], 0
+        while True:
+            at = data.find(b"\x21\xF9\x04", at)
+            if at < 0:
+                return found
+            if at + 8 <= len(data) and data[at + 7] == 0:
+                found.append(data[at + 4] | (data[at + 5] << 8))
+            at += 1
+
+    def test_every_frame_holds_for_the_same_time(self):
+        """Reported from the board: the animation stutters.
+
+        A GIF counts in hundredths of a second, so 30 frames a second is
+        3.33 and cannot be written. ffmpeg wrote 4, 3, 3, 4, 3, 3 instead,
+        and every third frame held a third longer than the two beside it.
+        That is a third of the frames out of step, from beginning to end.
+
+        25 frames a second is 4 hundredths and nothing else. This rule
+        fails on the file that was here before it, which is the point of
+        it: the next re-encode at a rate that does not divide into 100
+        brings the stutter back in silence otherwise.
+        """
+        found = self.delays()
+        self.assertTrue(found, "no frame delay found in the animation")
+        self.assertEqual(sorted(set(found)), [4],
+                         "the frames do not all hold for 40 ms: %r"
+                         % dict(collections.Counter(found)))
+
+    def test_the_firmware_measures_against_that_time(self):
+        """panel_boot.c times the frames against a number of its own.
+
+        A re-encode that changes the file and not that number measures the
+        animation against a rate it does not run at, and the reading it
+        prints is then wrong in a way nobody can see.
+        """
+        said = re.search(r"#define FRAME_MS (\d+)",
+                         read(os.path.join(FIRMWARE, "panel_boot.c")))
+        self.assertIsNotNone(said, "panel_boot.c names no frame time")
+        self.assertEqual(int(said.group(1)), self.delays()[0] * 10)
+
+    def test_the_origin_carries_the_rate_the_file_runs_at(self):
+        """The recipe in there has to make the file that is here."""
+        text = read(ORIGIN)
+        self.assertIn("fps=25", text,
+                      "the recipe in the origin makes another file than "
+                      "the one beside it")
 
 
 class DecoderTest(unittest.TestCase):
