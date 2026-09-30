@@ -10,7 +10,6 @@ sends a press as a second request. firmware/companion holds its side.
 This service answers two paths and nothing else:
 
     GET  /v1/status     the controllers, the audio and the sensors
-    GET  /v1/art        the picture of the game that runs, where there is one
     POST /v1/action     one of the named presses
 
 It runs in the session of the desktop user and never as root. That is not a
@@ -699,29 +698,6 @@ def make_handler(token, nonces=None):
                 return False
             return nonces.spend(nonce)
 
-        def send_image(self, path):
-            """The picture of the game that runs, as it sits on the disk.
-
-            Read whole and then sent. The file is at most ART_LIMIT and a
-            read that size costs nothing, where a read in pieces with the
-            socket open holds a thread of this service for as long as the
-            panel takes.
-            """
-            try:
-                with open(path, "rb") as handle:
-                    body = handle.read(steamapps.ART_LIMIT + 1)
-            except OSError:
-                return self.reply(404, {"error": "no artwork"})
-            if len(body) > steamapps.ART_LIMIT:
-                return self.reply(404, {"error": "no artwork"})
-            self.send_response(200)
-            self.send_header("Content-Type", "image/jpeg")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header(NONCE_HEADER, nonces.issue())
-            self.end_headers()
-            self.wfile.write(body)
-
         def do_GET(self):
             # The check comes before the path, so a stranger cannot learn
             # which paths exist by reading the codes that come back.
@@ -729,18 +705,6 @@ def make_handler(token, nonces=None):
                 return self.reply(401, {"error": "unauthorized"})
             if self.path == "/v1/status":
                 return self.reply(200, status())
-            # The picture of whatever runs now. No number in the path, so
-            # there is nothing here to ask for another game or another
-            # file: steamapps builds the path from the number it read out
-            # of the process table and a name of its own.
-            #
-            # A 404 covers both nothing playing and a game whose picture
-            # Steam never fetched, because the panel draws those alike.
-            if self.path == "/v1/art":
-                found = steamapps.now_playing_art()
-                if not found:
-                    return self.reply(404, {"error": "no artwork"})
-                return self.send_image(found)
             self.reply(404, {"error": "not found"})
 
         def do_POST(self):

@@ -3,7 +3,6 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
-#include <stddef.h>
 
 #include "panel_text.h"
 
@@ -70,19 +69,3 @@ void panel_ui_create(panel_action_cb_t callback, panel_setting_cb_t setting_cb, 
 void panel_ui_settings_open(void);
 void panel_ui_update(const panel_state_t *state);
 void panel_ui_confirm(panel_action_t action);
-
-/* The picture of the game that runs, on the third page.
- *
- * This TAKES the bytes. The caller allocates them and never frees them or
- * reads them again: the screen keeps the pointer for as long as the
- * picture is up, because LVGL decodes from it rather than from a copy.
- *
- * A second call frees what the first one took. NULL clears the card and
- * frees the last one, which is what the end of a game looks like. So does
- * a rebuild of the screens, because the object that held it went with the
- * clean.
- *
- * panel_ui_banner_bytes answers how much is held, which is how the check
- * under preview/ reads that the freeing really happens. */
-void panel_ui_banner(void *jpeg, size_t size);
-size_t panel_ui_banner_bytes(void);

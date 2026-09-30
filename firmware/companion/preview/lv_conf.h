@@ -46,13 +46,3 @@
 #define LV_LOG_PRINTF 1
 // panel_boot.c plays the startup animation, and check_boot runs it.
 #define LV_USE_GIF 1
-// ui.c draws the picture of the game that runs, and check_pages runs it.
-// The same two as the panel: a preview configured differently from the
-// board is a preview that watches a screen the board never shows. The
-// colour depth above is here for the same reason.
-#define LV_USE_TJPGD 1
-// TJPGD refuses bytes in memory without this. It reads a file, and this
-// is the driver that makes a block of memory look like one. See the
-// LV_IMAGE_SRC_VARIABLE branch of decoder_open in lv_tjpgd.c.
-#define LV_USE_FS_MEMFS 1
-#define LV_FS_MEMFS_LETTER 'M'

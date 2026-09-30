@@ -5,9 +5,6 @@
 #include <stdint.h>
 #include <string.h>
 #include "lvgl.h"
-/* lvgl.h does not carry this one, and the picture of a game has to leave
- * the cache before its bytes are freed. See panel_ui_banner. */
-#include "src/misc/cache/instance/lv_image_cache.h"
 #include "ui.h"
 #include "icons.h"
 #include "panel_text.h"
@@ -31,13 +28,7 @@ static lv_obj_t *wake_button,*wake_what;
 static lv_obj_t *mode_now,*mode_button,*mode_caption,*playing_name;
 static lv_obj_t *drive_rows[PANEL_DRIVES],*drive_names[PANEL_DRIVES];
 static lv_obj_t *drive_bars[PANEL_DRIVES],*drive_free[PANEL_DRIVES];
-static lv_obj_t *no_drives,*band,*dots[3],*banner;
-/* The bytes the screen took, the descriptor LVGL reads them through, and
- * how many there are. See panel_ui_banner in ui.h: these are owned here
- * and nowhere else. */
-static void *banner_bytes;
-static size_t banner_size;
-static lv_image_dsc_t banner_film;
+static lv_obj_t *no_drives,*band,*dots[3];
 static panel_action_cb_t send_action;
 static panel_setting_cb_t save_setting;
 static panel_sound_cb_t play_sound;
@@ -203,112 +194,6 @@ void panel_ui_settings_open(void)
     text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,447,440,&lv_font_montserrat_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
-/* How wide and how tall the picture is, read out of the picture.
- *
- * This is not a nicety. LVGL asks its decoders for the size of an image
- * before it draws one, and for bytes in memory the JPEG decoder answers
- * with the numbers out of THIS descriptor rather than out of the file:
- * see decoder_info in lv_tjpgd.c, the LV_IMAGE_SRC_VARIABLE branch. A
- * descriptor that says nought by nought is a picture LVGL sizes at
- * nought by nought, and the panel went on to draw it.
- *
- * So the numbers are read here, from the frame header of the file. A
- * JPEG is a chain of markers: 0xFF, a kind, and a length that counts
- * itself. The kinds 0xC0 to 0xCF are the frame headers, and three of
- * them in that range are something else. The frame header carries the
- * height and then the width, each two bytes, after one byte of
- * precision.
- *
- * false for anything that does not read as a JPEG, which keeps a
- * half-arrived or refused answer off the screen. */
-static bool jpeg_size(const uint8_t *bytes,size_t size,
-                      uint16_t *width,uint16_t *height)
-{
-    if(!bytes||size<4||bytes[0]!=0xFF||bytes[1]!=0xD8)return false;
-    size_t at=2;
-    while(at+3<size){
-        if(bytes[at]!=0xFF)return false;
-        uint8_t kind=bytes[at+1];
-        /* Padding. A marker is allowed to carry any number of 0xFF in
-         * front of it. */
-        if(kind==0xFF){at++;continue;}
-        /* The ones that carry no length: start, end, restart. */
-        if(kind==0xD8||kind==0x01||(kind>=0xD0&&kind<=0xD7)){at+=2;continue;}
-        size_t length=((size_t)bytes[at+2]<<8)|bytes[at+3];
-        if(length<2||at+2+length>size)return false;
-        /* 0xC0 and nothing else. The decoder in LVGL is TJPGD, and
-         * TJPGD reads baseline JPEG alone: see the switch in
-         * managed_components/lvgl__lvgl/src/libs/tjpgd/tjpgd.c, where
-         * SOF1 to SOF15 all return JDR_FMT3. A progressive picture that
-         * gets past here is one LVGL fails to open at every refresh,
-         * which costs work and leaves the card empty anyway. */
-        if(kind==0xC0){
-            if(length<8)return false;
-            *height=(uint16_t)((bytes[at+5]<<8)|bytes[at+6]);
-            *width=(uint16_t)((bytes[at+7]<<8)|bytes[at+8]);
-            return *width>0&&*height>0;
-        }
-        /* The other frame headers, which name a JPEG this panel cannot
-         * read. 0xC4, 0xC8 and 0xCC are in the same range and are not
-         * frame headers at all. */
-        if(kind>=0xC1&&kind<=0xCF&&kind!=0xC4&&kind!=0xC8&&kind!=0xCC)
-            return false;
-        at+=2+length;
-    }
-    return false;
-}
-/* Put whatever picture is held on whatever card exists.
- *
- * Called after a rebuild as well as after a new picture. The descriptor
- * is static, so its address survives a rebuild and LVGL finds the decode
- * it already made rather than making it again. */
-static void banner_show(void)
-{
-    if(!banner)return;
-    if(banner_bytes){
-        lv_image_set_src(banner,&banner_film);
-        lv_obj_remove_flag(banner,LV_OBJ_FLAG_HIDDEN);
-    }else{
-        lv_image_set_src(banner,NULL);
-        lv_obj_add_flag(banner,LV_OBJ_FLAG_HIDDEN);
-    }
-}
-void panel_ui_banner(void *jpeg,size_t size)
-{
-    /* The same bytes again is the ordinary case: the game did not change
-     * and main.c asks only when it does, but a retry after a lost answer
-     * lands here. Freeing and taking the same pointer would free memory
-     * that is about to be read. */
-    if(jpeg && jpeg==banner_bytes)return;
-    /* Out of the cache before the bytes go. The cache is keyed on the
-     * descriptor, and a decode kept past a free is a decode of memory
-     * that belongs to somebody else by then. */
-    lv_image_cache_drop(&banner_film);
-    if(banner)lv_image_set_src(banner,NULL);
-    free(banner_bytes);
-    banner_bytes=jpeg;banner_size=jpeg?size:0;
-    uint16_t width=0,height=0;
-    if(banner_bytes&&!jpeg_size(banner_bytes,banner_size,&width,&height)){
-        /* Not a picture this panel can read. Drop it here rather than
-         * hand LVGL a size it did not get from the bytes. */
-        LV_LOG_WARN("panel_ui: the picture of the game did not read as a JPEG");
-        free(banner_bytes);
-        banner_bytes=NULL;banner_size=0;
-    }
-    if(banner_bytes){
-        /* RAW says the bytes are a file and not pixels, which is what
-         * panel_boot.c tells LVGL about the animation as well. The size
-         * comes out of the file, because the decoder does not read it. */
-        banner_film.header.magic=LV_IMAGE_HEADER_MAGIC;
-        banner_film.header.cf=LV_COLOR_FORMAT_RAW;
-        banner_film.header.w=width;banner_film.header.h=height;
-        banner_film.header.stride=0;
-        banner_film.data=banner_bytes;
-        banner_film.data_size=banner_size;
-    }
-    banner_show();
-}
-size_t panel_ui_banner_bytes(void){return banner_size;}
 /* Which of the three marks under the band is lit.
  *
  * Read from where the band stopped and not counted from the swipes: a
@@ -383,10 +268,6 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * to freed memory, and band_scrolled runs from a touch. */
     band=NULL;mode_now=NULL;mode_button=NULL;mode_caption=NULL;
     playing_name=NULL;no_drives=NULL;
-    /* The object goes, the bytes stay. A picture is a thing about the
-     * machine and not about the language somebody reads, so a rebuild
-     * puts the same one back rather than asking for it again. */
-    banner=NULL;
     for(int i=0;i<3;i++)dots[i]=NULL;
     for(int i=0;i<PANEL_DRIVES;i++){
         drive_rows[i]=NULL;drive_names[i]=NULL;
@@ -504,13 +385,6 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     line(play_card,14,44,432,1);
     playing_name=text_at(play_card,panel_text(TXT_NOTHING_PLAYING),20,64,420,&lv_font_montserrat_24,TEXT);
     lv_label_set_long_mode(playing_name,LV_LABEL_LONG_WRAP);
-    /* The picture, under the name. 460 by 215 is what Steam keeps, and
-     * this card is 460 across, so it goes up with nothing scaled. It
-     * starts with no source and stays out of the way until one arrives. */
-    banner=lv_image_create(play_card);
-    lv_obj_set_pos(banner,0,116);
-    lv_obj_set_size(banner,460,180);
-    lv_obj_add_flag(banner,LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *foot=panel(s,10,386,460,48,CARD,true);
     icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&lv_font_montserrat_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&lv_font_montserrat_18,BLUE);
     line(foot,151,9,1,30);icon(foot,&icon_circuit_board,165,12,MUTED);text_at(foot,"GPU",198,6,99,&lv_font_montserrat_12,MUTED);gpu_value=text_at(foot,"-- C",198,22,99,&lv_font_montserrat_18,BLUE);
@@ -521,7 +395,6 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_set_style_bg_opa(settings_button,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(settings_button,0,0);
     lv_obj_set_style_text_font(settings_button,&lv_font_montserrat_14,0);
     lv_obj_t *setup=button(s,panel_text(TXT_SETUP),358,436,112,44,clicked,PANEL_SETUP);lv_obj_set_style_bg_opa(setup,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(setup,0,0);lv_obj_set_style_text_font(setup,&lv_font_montserrat_14,0);
-    banner_show();
 }
 /* A size a person reads, out of a count of bytes.
  *

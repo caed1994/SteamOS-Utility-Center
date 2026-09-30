@@ -41,31 +41,6 @@ CONFIG_LV_USE_IMGFONT=y
 # off by default. See firmware/companion/main/panel_boot.c.
 CONFIG_LV_USE_GIF=y
 
-# The picture of the game that runs, on the third page. Steam keeps a
-# header.jpg for every game and the service hands it over; this is what
-# reads it.
-CONFIG_LV_USE_TJPGD=y
-# TJPGD reads a file. It refuses bytes in memory outright unless this
-# driver makes a block of memory look like a file, and it carries no
-# default in the Kconfig of the component, the same hole LV_USE_LOG had.
-# Without it the panel got a warning it could not print and a picture it
-# could not size. See the LV_IMAGE_SRC_VARIABLE branch of decoder_info in
-# lv_tjpgd.c, and firmware/companion/main/ui.c.
-CONFIG_LV_USE_FS_MEMFS=y
-# 77 is 'M'. The letter names the drive this driver answers for.
-CONFIG_LV_FS_MEMFS_LETTER=77
-# There is no cache line here, and that is measured rather than left out.
-#
-# A quarter of a megabyte stood here, to keep the decoded picture. It kept
-# nothing. TJPGD hands LVGL one block of the picture at a time through
-# get_area and never calls lv_image_decoder_add_to_cache, which is what
-# puts a decode in the cache. Every other decoder in LVGL does call it;
-# this one cannot, because it never holds the whole picture.
-#
-# So the line bought no speed and asked for 256 KB of internal memory,
-# which is where lv_malloc goes: CONFIG_LV_USE_CLIB_MALLOC is set above
-# and SPIRAM_USE_MALLOC is not. check_pages draws the picture with the
-# cache at nought and passes.
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_LV_FONT_MONTSERRAT_32=y
 CONFIG_LV_FONT_DEFAULT_MONTSERRAT_16=y
