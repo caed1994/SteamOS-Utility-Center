@@ -188,6 +188,38 @@ jobs:
               > SHA256SUMS )
           ls -l "$out"
 
+      # The reader of crash dumps, against the file it exists for.
+      #
+      # tests/test_panel_backtrace.py builds a 32 bit ELF by hand, because
+      # no binary on a runner or on a desktop is one. That leaves the real
+      # question open: the firmware is a 32 bit Xtensa ELF written by a
+      # different toolchain, and nothing but this job ever holds one.
+      #
+      # app_main is the entry point of the firmware and is in every build.
+      # If it resolves, the header, the section table, the symbol table and
+      # the string table were all read the way this compiler writes them.
+      - name: Read the real ELF with the crash reader
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'CHECK'
+          import importlib.util
+          spec = importlib.util.spec_from_file_location(
+              "backtrace", "tools/panel-backtrace.py")
+          backtrace = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(backtrace)
+          table = backtrace.functions(
+              "firmware/companion/build/steamos_companion.elf")
+          print("functions found:", len(table))
+          assert len(table) > 500, "a whole firmware holds more than this"
+          where = [(a, s, n) for a, s, n in table if n == "app_main"]
+          assert where, "app_main is in every build and was not found"
+          address, size, _name = where[0]
+          print("app_main at 0x%08x, %d bytes" % (address, size))
+          assert backtrace.name_of(table, address + 1)[0] == "app_main"
+          assert backtrace.name_of(table, address) == ("app_main", 0)
+          CHECK
+
       # The file that turns a crash dump into names.
       #
       # A panic on the board prints "Backtrace:" and a list of addresses.
