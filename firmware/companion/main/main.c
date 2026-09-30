@@ -45,6 +45,36 @@
 extern const uint8_t boot_animation_start[] asm("_binary_boot_steam_gif_start");
 extern const uint8_t boot_animation_end[] asm("_binary_boot_steam_gif_end");
 
+/* Hold the network back until the animation is over. A MEASUREMENT.
+ *
+ * This is not how the panel is meant to start, and a one here makes the
+ * panel reach the PC about three seconds later than a nought does. It is
+ * here to answer one question, and it goes back to nought once that
+ * question has an answer.
+ *
+ * The question. The board reported the animation running slow in the
+ * middle, and panel_boot.c measured it: 57 ms a frame where 40 was asked,
+ * the worst frame 120 ms, 27 of 76 frames past their time. The file said
+ * that was possible, because the frames in the middle carry twenty times
+ * the work of the ones at the ends.
+ *
+ * The timestamps of that run say something else. The animation covered
+ * 1885 ms to 6170 ms. The network work started at 1944 and the Wi-Fi
+ * driver alone took until 4853, which is a hole of nearly three seconds
+ * in the log with nothing in it. The worst frame of the animation sits
+ * inside that hole. The heaviest frame of the file does not sit there.
+ *
+ * So the slow part follows the network and not the picture, and those two
+ * cannot be told apart while they run at the same time. A one here runs
+ * the same animation with nothing beside it. The run above is the other
+ * half of the pair, and the two are read against each other.
+ *
+ * What the answer decides. Frames near 44 ms and flat means the picture
+ * was never the problem and the animation has to stop sharing the chip
+ * with the Wi-Fi start. Frames near 57 ms again means the decoder really
+ * is that slow here and the animation itself has to get cheaper. */
+#define PANEL_MEASURE_ANIMATION_ALONE 1
+
 static atomic_uint ui_heartbeat_ms;
 static atomic_bool display_asleep;
 static int display_brightness=70; /* Updated only by the LVGL thread after startup. */
@@ -529,6 +559,23 @@ void app_main(void)
     lv_refr_now(NULL);
     bsp_display_unlock();
     setting_set(PANEL_BRIGHTNESS,settings.brightness,false);
+#if PANEL_MEASURE_ANIMATION_ALONE
+    /* A measurement, and it costs the panel time. Read the note above
+     * PANEL_MEASURE_ANIMATION_ALONE before leaving this on. */
+    {
+        uint32_t waited_from=esp_log_timestamp();
+        /* The cap is what stops a bug here from being a panel that never
+         * joins the network. The animation runs about four seconds, and
+         * fifteen is far past anything it has ever taken. */
+        while(panel_boot_playing() &&
+              esp_log_timestamp()-waited_from<15000)
+            vTaskDelay(pdMS_TO_TICKS(25));
+        ESP_LOGW("panel_boot",
+                 "measurement build: the network waited %u ms for the "
+                 "animation. See PANEL_MEASURE_ANIMATION_ALONE in main.c.",
+                 (unsigned)(esp_log_timestamp()-waited_from));
+    }
+#endif
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();

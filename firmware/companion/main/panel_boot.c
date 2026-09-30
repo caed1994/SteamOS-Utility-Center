@@ -14,6 +14,7 @@
 // under the licence of this project. assets/ORIGIN-BOOT-ANIMATION says what
 // it is, where it came from and how to take it out.
 #include "panel_boot.h"
+#include <stdio.h>
 
 /* The cover the animation sits on. It is black, it is the whole screen, and
  * it stays clickable, so that it swallows a touch: a finger on the panel
@@ -49,6 +50,26 @@ static lv_obj_t *cover;
  * gap between two of them is the gap a person sees. */
 static uint32_t drawn, began, previous, slowest, slowest_at, slipped;
 
+/* Every gap, in buckets of five milliseconds.
+ *
+ * The average and the worst frame say how bad it is. Neither says what
+ * shape it is, and the shape is the answer to why.
+ *
+ * A flush waits for a frame boundary of the panel, so a frame takes one
+ * period, or two, or three. The gaps therefore fall into heaps, one heap
+ * for each count of periods, and the distance between the heaps is the
+ * period. Nothing on the board has ever said what that period is. 12 MHz
+ * and the timings of this panel work out at about 45 Hz, and that is a
+ * calculation, not a measurement. These heaps are the measurement.
+ *
+ * They also separate two causes that look alike in an average. Work that
+ * is always a little too big puts every frame in one heap. Something that
+ * interrupts now and then leaves most of them in the low heap and throws a
+ * few a long way out. */
+#define GAP_BUCKET_MS 5
+#define GAP_BUCKETS 32
+static uint16_t gaps[GAP_BUCKETS + 1];
+
 /* A frame that runs a quarter past its own delay. Two panel periods rather
  * than one is not a slip at this rate; three is. */
 #define SLIPPED_MS (FRAME_MS + FRAME_MS / 4)
@@ -63,6 +84,9 @@ static void frame_drawn(lv_event_t *event)
         uint32_t gap = now - previous;
         if (gap > slowest) { slowest = gap; slowest_at = drawn; }
         if (gap > SLIPPED_MS) slipped++;
+        unsigned bucket = gap / GAP_BUCKET_MS;
+        if (bucket > GAP_BUCKETS) bucket = GAP_BUCKETS;
+        gaps[bucket]++;
     }
     previous = now;
     drawn++;
@@ -78,6 +102,23 @@ static void report(void)
                 (unsigned)(ran / (drawn - 1)), (unsigned)FRAME_MS,
                 (unsigned)slowest, (unsigned)slowest_at,
                 (unsigned)slipped, (unsigned)SLIPPED_MS);
+
+    /* The heaps, as milliseconds against the count of frames in them. The
+     * last bucket carries a plus, because it holds everything above where
+     * the buckets end. */
+    char line[220];
+    line[0] = '\0';
+    size_t at = 0;
+    for (unsigned bucket = 0; bucket <= GAP_BUCKETS; bucket++) {
+        if (gaps[bucket] == 0) continue;
+        int put = snprintf(line + at, sizeof(line) - at, "%s%u%s:%u",
+                           at ? "  " : "", bucket * GAP_BUCKET_MS,
+                           bucket == GAP_BUCKETS ? "+" : "",
+                           (unsigned)gaps[bucket]);
+        if (put < 0 || (size_t)put >= sizeof(line) - at) break;
+        at += (size_t)put;
+    }
+    LV_LOG_USER("boot animation gaps, ms:frames   %s", line);
 }
 
 /* LVGL tells an object when it goes, and a clean of the screen takes this
@@ -138,6 +179,7 @@ void panel_boot_show(const void *image, size_t size)
     if (!image || size == 0) return;
     if (cover) return;
     drawn = began = previous = slowest = slowest_at = slipped = 0;
+    for (unsigned i = 0; i <= GAP_BUCKETS; i++) gaps[i] = 0;
 
     lv_obj_t *screen = lv_screen_active();
     if (!screen) return;

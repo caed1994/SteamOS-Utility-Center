@@ -250,6 +250,38 @@ class WhereItPlaysTest(unittest.TestCase):
                         "put it after the network work and it is a pause, "
                         "not a cover")
 
+    def test_the_measurement_that_holds_the_network_back_has_an_end(self):
+        """PANEL_MEASURE_ANIMATION_ALONE waits for the animation.
+
+        It waits on a flag that the LVGL task clears, and a panel whose
+        animation never ends would then never join the network and never
+        reach the PC. That is the one way this measurement can do harm, so
+        the wait carries a time of its own and gives up at it.
+
+        This rule holds whether the switch is on or off. A measurement that
+        is off today is on again the next time somebody has a question.
+        """
+        code = self.source()
+        wait = re.search(r"while\s*\(\s*panel_boot_playing\(\)(.*?)\)\s*\n?"
+                         r"\s*vTaskDelay", code, re.S)
+        self.assertIsNotNone(wait, "the wait for the animation is not there")
+        self.assertRegex(wait.group(1), r"<\s*\d+",
+                         "the wait has no end, so a panel whose animation "
+                         "hangs never joins the network")
+
+    def test_that_measurement_is_one_switch_and_says_it_is_one(self):
+        """A build that starts differently has to say so where it does it."""
+        whole = read(os.path.join(FIRMWARE, "main.c"))
+        self.assertEqual(whole.count("#define PANEL_MEASURE_ANIMATION_ALONE"),
+                         1, "more than one place decides this")
+        at = whole.index("#define PANEL_MEASURE_ANIMATION_ALONE")
+        opened = whole.rfind("/*", 0, at)
+        closed = whole.rfind("*/", 0, at)
+        self.assertLess(opened, closed, "the switch carries no note above it")
+        self.assertIn("MEASUREMENT", whole[opened:at],
+                      "the note has to say that this is not how the panel "
+                      "is meant to start")
+
     def test_it_runs_under_the_display_lock(self):
         """It builds LVGL objects, and the LVGL task draws them."""
         code = self.source()
