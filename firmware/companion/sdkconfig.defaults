@@ -40,6 +40,16 @@ CONFIG_LV_USE_IMGFONT=y
 # The startup animation. lv_gif.c is in the LVGL this project pins and is
 # off by default. See firmware/companion/main/panel_boot.c.
 CONFIG_LV_USE_GIF=y
+
+# The picture of the game that runs, on the third page. Steam keeps a
+# header.jpg for every game and the service hands it over; this is what
+# reads it.
+CONFIG_LV_USE_TJPGD=y
+# And what keeps the result. The default is nought, which is no cache at
+# all: LVGL would decode the picture again at every refresh, and a refresh
+# happens at every swipe of the band. 460 by 215 as RGB565 is 197800
+# bytes, so this holds one and a little.
+CONFIG_LV_CACHE_DEF_SIZE=262144
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_LV_FONT_MONTSERRAT_32=y
 CONFIG_LV_FONT_DEFAULT_MONTSERRAT_16=y

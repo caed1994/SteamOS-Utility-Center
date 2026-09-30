@@ -173,3 +173,95 @@ class TheJobRunsItTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BannerTest(unittest.TestCase):
+    """The picture of the game, and who owns its bytes.
+
+    What it looks like is checked where it can be drawn:
+    firmware/companion/preview/check_pages.c takes a picture, replaces it,
+    drops it, keeps it over a rebuild, and then takes two hundred of a
+    quarter of a megabyte each and reads /proc/self/statm to see that the
+    memory really went back. That needs a compiler, so it runs in the job.
+
+    What these hold is the shape around it.
+    """
+
+    def main(self):
+        return without_comments(read("main.c"))
+
+    def test_the_decoder_and_a_cache_for_it_are_both_on(self):
+        """LV_CACHE_DEF_SIZE defaults to nought, which is no cache. LVGL
+        would then decode the picture again at every refresh, and a
+        refresh happens at every swipe of the band."""
+        defaults = os.path.join(COMPANION, "sdkconfig.defaults")
+        with open(defaults, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertRegex(text, r"(?m)^CONFIG_LV_USE_TJPGD=y")
+        said = re.search(r"(?m)^CONFIG_LV_CACHE_DEF_SIZE=(\d+)", text)
+        self.assertIsNotNone(said, "no image cache at all")
+        # 460 by 215 as RGB565 is 197800 bytes. A cache under that holds
+        # nothing and is the same as none.
+        self.assertGreater(int(said.group(1)), 197800)
+
+    def test_the_preview_is_built_the_same_way(self):
+        """A preview configured differently from the board watches a
+        screen the board never shows. The colour depth taught that once."""
+        with open(os.path.join(PREVIEW, "lv_conf.h"), encoding="utf-8") as h:
+            text = h.read()
+        self.assertRegex(text, r"(?m)^#define LV_USE_TJPGD 1")
+        self.assertRegex(text, r"(?m)^#define LV_CACHE_DEF_SIZE \d+")
+
+    def test_the_picture_is_fetched_when_the_game_changes(self):
+        """Every three seconds would be 40 KB over the air every three
+        seconds for a picture that did not change, at a machine somebody
+        plays a game on."""
+        code = self.main()
+        self.assertRegex(code, r"strcmp\(playing_now,art_for\)\s*!=\s*0")
+        fetch = re.search(r"if \(strcmp\(playing_now,art_for\).*?\n {12}\}",
+                          code, re.S)
+        self.assertIsNotNone(fetch)
+        self.assertIn("fetch_artwork", fetch.group(0))
+
+    def test_the_bytes_reach_the_screen_on_the_thread_that_draws(self):
+        """panel_ui_banner touches LVGL objects. The network task must not
+        call it, so the bytes are left under the lock and ui_tick takes
+        them."""
+        code = self.main()
+        tick = re.search(r"static void ui_tick\(lv_timer_t \*timer\).*?\n\}",
+                         code, re.S)
+        self.assertIsNotNone(tick)
+        self.assertIn("panel_ui_banner", tick.group(0))
+        network = re.search(r"static void network_task\(void \*arg\).*\Z",
+                            code, re.S)
+        self.assertIsNotNone(network)
+        self.assertNotIn("panel_ui_banner", network.group(0),
+                         "the network task must not draw")
+
+    def test_one_nobody_collected_is_freed_and_not_stacked(self):
+        """Two games in a row inside one turn of the drawing timer. The
+        older picture would otherwise be held until the panel restarts."""
+        code = self.main()
+        hand = re.search(r"static void hand_over_artwork\(.*?\n\}", code, re.S)
+        self.assertIsNotNone(hand)
+        self.assertRegex(hand.group(0), r"if \(pending_art\)\s*heap_caps_free")
+
+    def test_the_buffer_is_given_back_down_to_what_arrived(self):
+        """A picture is held for as long as a game runs. A quarter of a
+        megabyte kept to hold forty thousand bytes is a quarter of a
+        megabyte nobody else can have."""
+        code = self.main()
+        self.assertIn("heap_caps_realloc", code)
+
+    def test_both_ends_name_the_same_ceiling(self):
+        """A change at one end has to show as a picture that does not
+        arrive, never as a buffer that overflows."""
+        said = re.search(r"#define PANEL_ART_LIMIT \((\d+) \* 1024\)",
+                         self.main())
+        self.assertIsNotNone(said)
+        with open(os.path.join(REPO, "server", "steamos_utility_center",
+                               "steamapps.py"), encoding="utf-8") as handle:
+            service = handle.read()
+        theirs = re.search(r"ART_LIMIT = (\d+) \* 1024", service)
+        self.assertIsNotNone(theirs)
+        self.assertEqual(said.group(1), theirs.group(1))

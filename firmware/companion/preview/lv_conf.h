@@ -43,3 +43,9 @@
 #define LV_LOG_PRINTF 1
 // panel_boot.c plays the startup animation, and check_boot runs it.
 #define LV_USE_GIF 1
+// ui.c draws the picture of the game that runs, and check_pages runs it.
+// The same two as the panel: a preview configured differently from the
+// board is a preview that watches a screen the board never shows. The
+// colour depth above is here for the same reason.
+#define LV_USE_TJPGD 1
+#define LV_CACHE_DEF_SIZE 262144

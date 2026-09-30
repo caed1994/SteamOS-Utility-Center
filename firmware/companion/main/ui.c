@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: 2026 caed1994
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include "lvgl.h"
+/* lvgl.h does not carry this one, and the picture of a game has to leave
+ * the cache before its bytes are freed. See panel_ui_banner. */
+#include "src/misc/cache/instance/lv_image_cache.h"
 #include "ui.h"
 #include "icons.h"
 #include "panel_text.h"
@@ -27,7 +31,13 @@ static lv_obj_t *wake_button,*wake_what;
 static lv_obj_t *mode_now,*mode_button,*mode_caption,*playing_name;
 static lv_obj_t *drive_rows[PANEL_DRIVES],*drive_names[PANEL_DRIVES];
 static lv_obj_t *drive_bars[PANEL_DRIVES],*drive_free[PANEL_DRIVES];
-static lv_obj_t *no_drives,*band,*dots[3];
+static lv_obj_t *no_drives,*band,*dots[3],*banner;
+/* The bytes the screen took, the descriptor LVGL reads them through, and
+ * how many there are. See panel_ui_banner in ui.h: these are owned here
+ * and nowhere else. */
+static void *banner_bytes;
+static size_t banner_size;
+static lv_image_dsc_t banner_film;
 static panel_action_cb_t send_action;
 static panel_setting_cb_t save_setting;
 static panel_sound_cb_t play_sound;
@@ -193,6 +203,48 @@ void panel_ui_settings_open(void)
     text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,447,440,&lv_font_montserrat_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
+/* Put whatever picture is held on whatever card exists.
+ *
+ * Called after a rebuild as well as after a new picture. The descriptor
+ * is static, so its address survives a rebuild and LVGL finds the decode
+ * it already made rather than making it again. */
+static void banner_show(void)
+{
+    if(!banner)return;
+    if(banner_bytes){
+        lv_image_set_src(banner,&banner_film);
+        lv_obj_remove_flag(banner,LV_OBJ_FLAG_HIDDEN);
+    }else{
+        lv_image_set_src(banner,NULL);
+        lv_obj_add_flag(banner,LV_OBJ_FLAG_HIDDEN);
+    }
+}
+void panel_ui_banner(void *jpeg,size_t size)
+{
+    /* The same bytes again is the ordinary case: the game did not change
+     * and main.c asks only when it does, but a retry after a lost answer
+     * lands here. Freeing and taking the same pointer would free memory
+     * that is about to be read. */
+    if(jpeg && jpeg==banner_bytes)return;
+    /* Out of the cache before the bytes go. The cache is keyed on the
+     * descriptor, and a decode kept past a free is a decode of memory
+     * that belongs to somebody else by then. */
+    lv_image_cache_drop(&banner_film);
+    if(banner)lv_image_set_src(banner,NULL);
+    free(banner_bytes);
+    banner_bytes=jpeg;banner_size=jpeg?size:0;
+    if(banner_bytes){
+        /* The same shape panel_boot.c gives the animation: LVGL reads the
+         * bytes as they are and decodes them itself. */
+        banner_film.header.magic=LV_IMAGE_HEADER_MAGIC;
+        banner_film.header.cf=LV_COLOR_FORMAT_RAW;
+        banner_film.header.w=0;banner_film.header.h=0;
+        banner_film.data=banner_bytes;
+        banner_film.data_size=banner_size;
+    }
+    banner_show();
+}
+size_t panel_ui_banner_bytes(void){return banner_size;}
 /* Which of the three marks under the band is lit.
  *
  * Read from where the band stopped and not counted from the swipes: a
@@ -267,6 +319,10 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * to freed memory, and band_scrolled runs from a touch. */
     band=NULL;mode_now=NULL;mode_button=NULL;mode_caption=NULL;
     playing_name=NULL;no_drives=NULL;
+    /* The object goes, the bytes stay. A picture is a thing about the
+     * machine and not about the language somebody reads, so a rebuild
+     * puts the same one back rather than asking for it again. */
+    banner=NULL;
     for(int i=0;i<3;i++)dots[i]=NULL;
     for(int i=0;i<PANEL_DRIVES;i++){
         drive_rows[i]=NULL;drive_names[i]=NULL;
@@ -384,6 +440,13 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     line(play_card,14,44,432,1);
     playing_name=text_at(play_card,panel_text(TXT_NOTHING_PLAYING),20,64,420,&lv_font_montserrat_24,TEXT);
     lv_label_set_long_mode(playing_name,LV_LABEL_LONG_WRAP);
+    /* The picture, under the name. 460 by 215 is what Steam keeps, and
+     * this card is 460 across, so it goes up with nothing scaled. It
+     * starts with no source and stays out of the way until one arrives. */
+    banner=lv_image_create(play_card);
+    lv_obj_set_pos(banner,0,116);
+    lv_obj_set_size(banner,460,180);
+    lv_obj_add_flag(banner,LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *foot=panel(s,10,386,460,48,CARD,true);
     icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&lv_font_montserrat_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&lv_font_montserrat_18,BLUE);
     line(foot,151,9,1,30);icon(foot,&icon_circuit_board,165,12,MUTED);text_at(foot,"GPU",198,6,99,&lv_font_montserrat_12,MUTED);gpu_value=text_at(foot,"-- C",198,22,99,&lv_font_montserrat_18,BLUE);
@@ -394,6 +457,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_set_style_bg_opa(settings_button,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(settings_button,0,0);
     lv_obj_set_style_text_font(settings_button,&lv_font_montserrat_14,0);
     lv_obj_t *setup=button(s,panel_text(TXT_SETUP),358,436,112,44,clicked,PANEL_SETUP);lv_obj_set_style_bg_opa(setup,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(setup,0,0);lv_obj_set_style_text_font(setup,&lv_font_montserrat_14,0);
+    banner_show();
 }
 /* A size a person reads, out of a count of bytes.
  *

@@ -56,6 +56,30 @@ static panel_config_t config;
 
 typedef struct { char data[4096]; size_t length; bool overflow; } response_t;
 
+/* The picture of the game, on its way from the network task to the one
+ * that draws.
+ *
+ * panel_ui_banner touches LVGL objects, so it belongs to the LVGL thread
+ * and the network task must not call it. The bytes are left here under
+ * the lock and ui_tick takes them, which is the same shape as everything
+ * else that crosses this line.
+ *
+ * ready with a NULL pointer is a real message and not an empty one: it
+ * says the game ended, and the screen drops the picture it holds.
+ *
+ * Ownership walks with the pointer. Whoever takes it out of here owns it,
+ * and panel_ui_banner takes it from there. */
+static void *pending_art;
+static size_t pending_art_size;
+static bool pending_art_ready;
+
+/* What the panel carries over the network and decodes. The same ceiling
+ * the service applies, named again at this end so a change at one end
+ * shows up as a picture that does not arrive rather than as a buffer
+ * that overflows. */
+#define PANEL_ART_LIMIT (256 * 1024)
+typedef struct { uint8_t *data; size_t length, room; bool overflow; } image_t;
+
 static panel_settings_t settings_load(void)
 {
     panel_settings_t settings={.brightness=70,.sound_volume=30,
@@ -161,7 +185,18 @@ static void ui_tick(lv_timer_t *timer)
     atomic_store(&ui_heartbeat_ms,(uint32_t)(esp_timer_get_time()/1000));
     if(atomic_load(&display_asleep))return;
     panel_state_t copy;
-    xSemaphoreTake(lock,portMAX_DELAY); copy=state; xSemaphoreGive(lock);
+    void *art=NULL;size_t art_size=0;bool art_ready=false;
+    xSemaphoreTake(lock,portMAX_DELAY);
+    copy=state;
+    if(pending_art_ready){
+        art=pending_art;art_size=pending_art_size;art_ready=true;
+        pending_art=NULL;pending_art_size=0;pending_art_ready=false;
+    }
+    xSemaphoreGive(lock);
+    /* This thread draws, so this thread hands the bytes to the screen.
+     * A NULL with art_ready is the end of a game and not an empty
+     * message: it says to drop the picture that is up. */
+    if(art_ready)panel_ui_banner(art,art_size);
     panel_ui_update(&copy);
 }
 
@@ -280,15 +315,23 @@ static bool same_header(const char *given, const char *wanted)
     return *given==0 && *wanted==0;
 }
 
+/* Every answer carries the next nonce, and both readers below need it.
+ * A reader that forgets one costs the panel a 401 on whatever it asks
+ * next, which it then recovers from at the price of a round trip. */
+static void remember_nonce(esp_http_client_event_t *event)
+{
+    if (event->header_key && event->header_value
+        && same_header(event->header_key,PANEL_NONCE_HEADER)) {
+        size_t length=strlen(event->header_value);
+        if (length>0 && length<sizeof(panel_nonce))
+            memcpy(panel_nonce,event->header_value,length+1);
+    }
+}
+
 static esp_err_t collect_data(esp_http_client_event_t *event)
 {
     if (event->event_id==HTTP_EVENT_ON_HEADER) {
-        if (event->header_key && event->header_value
-            && same_header(event->header_key,PANEL_NONCE_HEADER)) {
-            size_t length=strlen(event->header_value);
-            if (length>0 && length<sizeof(panel_nonce))
-                memcpy(panel_nonce,event->header_value,length+1);
-        }
+        remember_nonce(event);
         return ESP_OK;
     }
     if (event->event_id==HTTP_EVENT_ON_DATA) {
@@ -334,6 +377,84 @@ static int attempt(const char *path, const char *action, response_t *out)
     int code=err==ESP_OK && !out->overflow ? esp_http_client_get_status_code(client) : 0;
     esp_http_client_cleanup(client);
     return code;
+}
+
+static esp_err_t collect_image(esp_http_client_event_t *event)
+{
+    if (event->event_id==HTTP_EVENT_ON_HEADER) {
+        remember_nonce(event);
+        return ESP_OK;
+    }
+    if (event->event_id==HTTP_EVENT_ON_DATA) {
+        image_t *out=event->user_data;
+        if (event->data_len<0
+            || out->length+(size_t)event->data_len>out->room) {
+            out->overflow=true;
+            return ESP_FAIL;
+        }
+        memcpy(out->data+out->length,event->data,event->data_len);
+        out->length+=(size_t)event->data_len;
+    }
+    return ESP_OK;
+}
+
+/* The picture, which is bytes and not JSON.
+ *
+ * A reader of its own, because response_t is 4096 bytes on the stack of
+ * the network task and a header.jpg is thirty to sixty thousand. The
+ * buffer is PSRAM, taken at the ceiling and given back down to what
+ * really arrived: a picture is held for as long as a game runs, and
+ * holding a quarter of a megabyte to keep forty thousand bytes is a
+ * quarter of a megabyte nobody else can have.
+ *
+ * Returns the bytes and their count, or NULL. The caller owns them.
+ */
+static void *fetch_artwork(size_t *size)
+{
+    *size=0;
+    image_t out={0};
+    out.room=PANEL_ART_LIMIT;
+    out.data=heap_caps_malloc(out.room,MALLOC_CAP_SPIRAM);
+    if (!out.data) {
+        ESP_LOGW("panel_art","no room for a picture");
+        return NULL;
+    }
+    char url[224], auth[PANEL_AUTH_HEX];
+    snprintf(url,sizeof(url),"%s/v1/art",config.server);
+    esp_http_client_config_t cfg={.url=url,.timeout_ms=6000,
+        .event_handler=collect_image,.user_data=&out,
+        .disable_auto_redirect=true};
+    esp_http_client_handle_t client=esp_http_client_init(&cfg);
+    if (!client) { heap_caps_free(out.data); return NULL; }
+    if (panel_auth_sign(config.token,"GET","/v1/art",panel_nonce,"",0,auth)) {
+        esp_http_client_set_header(client,PANEL_NONCE_HEADER,panel_nonce);
+        esp_http_client_set_header(client,PANEL_AUTH_HEADER,auth);
+    }
+    esp_err_t err=esp_http_client_perform(client);
+    int code=err==ESP_OK ? esp_http_client_get_status_code(client) : 0;
+    esp_http_client_cleanup(client);
+    /* 404 is the ordinary answer for a game whose picture Steam never
+     * fetched, and for no game at all. Neither is a fault. */
+    if (code!=200 || out.overflow || out.length==0) {
+        heap_caps_free(out.data);
+        if (code!=200 && code!=404)
+            ESP_LOGW("panel_art","the picture came back %d",code);
+        return NULL;
+    }
+    void *smaller=heap_caps_realloc(out.data,out.length,MALLOC_CAP_SPIRAM);
+    *size=out.length;
+    return smaller ? smaller : out.data;
+}
+
+/* Leave the picture where the drawing thread finds it. */
+static void hand_over_artwork(void *bytes,size_t size)
+{
+    xSemaphoreTake(lock,portMAX_DELAY);
+    /* One that nobody collected yet. The newer game wins, and the older
+     * picture would otherwise be held for as long as the panel runs. */
+    if (pending_art) heap_caps_free(pending_art);
+    pending_art=bytes;pending_art_size=size;pending_art_ready=true;
+    xSemaphoreGive(lock);
 }
 
 static int request(const char *path, const char *action)
@@ -481,6 +602,11 @@ static void network_task(void *arg)
      * lengths equal. */
     const char *names[]={"volume_down","mute","volume_up","suspend","reboot",
                          "poweroff","desktop_mode","game_mode"};
+    /* The game the picture on the screen belongs to. A name and not a
+     * flag: the panel has no number for a game, and the name is what
+     * changes when the game does. */
+    static char art_for[sizeof(state.playing)];
+    art_for[0]=0;
     TickType_t last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
     TickType_t feedback_until=0;
     TickType_t last_health=xTaskGetTickCount();
@@ -534,6 +660,21 @@ static void network_task(void *arg)
         if (xTaskGetTickCount()-last_poll>=pdMS_TO_TICKS(3000)) {
             last_poll=xTaskGetTickCount();
             int code=connected() ? request("/v1/status",NULL) : 0;
+            /* The picture follows the game and not the poll. A fetch
+             * every three seconds is 40 KB over the air every three
+             * seconds for a picture that did not change, and the panel
+             * asks a machine somebody plays a game on. */
+            char playing_now[sizeof(state.playing)];
+            xSemaphoreTake(lock,portMAX_DELAY);
+            snprintf(playing_now,sizeof(playing_now),"%s",
+                     code==200 ? state.playing : "");
+            xSemaphoreGive(lock);
+            if (strcmp(playing_now,art_for)!=0) {
+                snprintf(art_for,sizeof(art_for),"%s",playing_now);
+                size_t got=0;
+                void *bytes=playing_now[0] ? fetch_artwork(&got) : NULL;
+                hand_over_artwork(bytes,got);
+            }
             xSemaphoreTake(lock,portMAX_DELAY);
             state.online=code==200;
             if ((int32_t)(xTaskGetTickCount()-feedback_until)>=0) snprintf(state.message,sizeof(state.message),"%s",code==200 ? panel_text(TXT_UP_TO_DATE) : code==401 ? panel_text(TXT_CHECK_SETUP) : state.wifi ? panel_text(TXT_NO_ANSWER) : panel_text(TXT_JOINING));
