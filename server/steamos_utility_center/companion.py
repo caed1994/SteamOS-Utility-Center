@@ -97,10 +97,30 @@ ACTIONS = {
     # now and then switch to the side it is already on. A target says what
     # it means whatever happened in between.
     #
-    # This is the command SteamOS uses for it. The session goes away and
-    # comes back, which is why this service is ordered After the graphical
-    # session and deliberately not PartOf it. The unit file says so.
-    "desktop_mode": ("steamos-session-select", "plasma"),
+    # The session goes away and comes back, which is why this service is
+    # ordered After the graphical session and deliberately not PartOf it.
+    # The unit file says so.
+    #
+    # The way to the desktop goes through steamosctl and names no session.
+    # It went through `steamos-session-select plasma` first, and the board
+    # reported what that does: Game Mode ended and nothing came up, a
+    # black screen, and the way back worked. The script says why. Its own
+    # branch for that word is
+    #
+    #     plasma) steamosctl switch-to-desktop-mode plasmax11.desktop ;;
+    #
+    # which asks for X11 by name, whether or not this machine has it. The
+    # same script names steamosctl as what replaces it, and its branch for
+    # a persistent desktop calls switch-to-desktop-mode with no session at
+    # all. With none, the machine starts the desktop it is set up for, so
+    # nothing here has to know whether that is X11 or Wayland.
+    "desktop_mode": ("steamosctl", "switch-to-desktop-mode"),
+    # This one is left as it is, because it works. The same script also
+    # sets the default login mode here, so the way to Game Mode makes
+    # itself the mode this machine starts in and the way to the desktop
+    # does not. That is the script's asymmetry and not this table's, and
+    # changing the half that works to match the half that did not is how
+    # a fix takes a second thing with it.
     "game_mode": ("steamos-session-select", "gamescope"),
 }
 

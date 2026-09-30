@@ -141,9 +141,23 @@ class SessionTest(unittest.TestCase):
         switch to the side it is already on."""
         self.assertIn("desktop_mode", companion.ACTIONS)
         self.assertIn("game_mode", companion.ACTIONS)
-        self.assertEqual(companion.ACTIONS["desktop_mode"][0],
-                         "steamos-session-select")
         self.assertEqual(companion.ACTIONS["game_mode"][-1], "gamescope")
+
+    def test_the_way_to_the_desktop_names_no_display_server(self):
+        """Reported from the board: Game Mode ended and nothing came up.
+
+        `steamos-session-select plasma` runs
+        `steamosctl switch-to-desktop-mode plasmax11.desktop`, which asks
+        for X11 by name whether or not this machine has it. With no session
+        named, the machine starts the one it is set up for.
+        """
+        command = companion.ACTIONS["desktop_mode"]
+        self.assertEqual(command[0], "steamosctl")
+        self.assertEqual(command[1], "switch-to-desktop-mode")
+        for word in ("plasma", "plasmax11.desktop", "plasma.desktop"):
+            self.assertNotIn(word, command,
+                             "this names a session and the machine has one "
+                             "of its own")
 
     def test_every_press_is_a_name_from_the_table(self):
         """The panel sends a name, never a command."""
