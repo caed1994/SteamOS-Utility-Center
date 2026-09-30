@@ -36,6 +36,18 @@ typedef struct {
     uint64_t total, free;
 } panel_drive_t;
 
+/* What powers this panel, as its own power chip answers.
+ *
+ * Three answers and not two. A board whose chip did not answer says
+ * nothing about its supply, and the screen shows nothing for it rather
+ * than a battery that may not be there. A chip that answers and has no
+ * cell behind it is a panel on its cable. */
+typedef enum {
+    PANEL_SUPPLY_UNKNOWN,
+    PANEL_SUPPLY_CABLE,
+    PANEL_SUPPLY_BATTERY
+} panel_supply_t;
+
 typedef struct {
     // charging is a flag and not a word any more. It was the text that the
     // service sends, translated into German before it was stored, and the
@@ -56,6 +68,12 @@ typedef struct {
     char playing[64];
     panel_drive_t drives[PANEL_DRIVES];
     int drive_count;
+    /* The panel itself, and not the controller that battery and charging
+     * above belong to. esp_battery is a percentage and means something
+     * only for PANEL_SUPPLY_BATTERY. */
+    panel_supply_t esp_supply;
+    int esp_battery;
+    bool esp_charging;
 } panel_state_t;
 
 typedef void (*panel_action_cb_t)(panel_action_t action);

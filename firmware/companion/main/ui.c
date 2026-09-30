@@ -28,7 +28,7 @@ static lv_obj_t *wake_button,*wake_what;
 static lv_obj_t *mode_now,*mode_button,*mode_caption,*playing_name;
 static lv_obj_t *drive_rows[PANEL_DRIVES],*drive_names[PANEL_DRIVES];
 static lv_obj_t *drive_bars[PANEL_DRIVES],*drive_free[PANEL_DRIVES];
-static lv_obj_t *no_drives,*band,*dots[3];
+static lv_obj_t *no_drives,*band,*dots[3],*esp_power;
 static panel_action_cb_t send_action;
 static panel_setting_cb_t save_setting;
 static panel_sound_cb_t play_sound;
@@ -185,6 +185,29 @@ static void tones_changed(lv_event_t *e)
     feedback();
 }
 static void test_sound(lv_event_t *e){(void)e;if(play_sound)play_sound(local.sound_volume);}
+/* Every pointer into the settings screen, dropped.
+ *
+ * One list and not four. The back button, the language button, the setup
+ * screen and a rebuild all take the settings screen away, and each of
+ * them kept its own list of labels to forget. The label of the sleep
+ * timeout reached one of the four lists the day it was added and missed
+ * the other three: a pointer to a deleted label in each, waiting for the
+ * next thing to write to it.
+ *
+ * This only drops. A rebuild cleans the whole screen first and the
+ * settings page goes with that clean, so deleting it again here would be
+ * a second free of the same object. settings_forget below is for the
+ * callers where the page is still there. */
+static void settings_drop(void)
+{
+    settings_screen=NULL;
+    brightness_label=NULL;sleep_label=NULL;sound_value=NULL;sound_status=NULL;
+}
+static void settings_forget(void)
+{
+    if(settings_screen)lv_obj_delete(settings_screen);
+    settings_drop();
+}
 static void language_clicked(lv_event_t *e)
 {
     (void)e;feedback();
@@ -194,15 +217,13 @@ static void language_clicked(lv_event_t *e)
     // Both screens are built one time, with the words of the language that
     // was current then. Every one of them is now wrong, so both are built
     // again. The person stays where they were, on the settings page.
-    lv_obj_delete(settings_screen);settings_screen=NULL;
-    brightness_label=NULL;sleep_label=NULL;sound_value=NULL;sound_status=NULL;
+    settings_forget();
     panel_ui_create(send_action,save_setting,play_sound,&local);
     panel_ui_settings_open();
 }
 static void settings_close(lv_event_t *e)
 {
-    (void)e;feedback();lv_obj_delete(settings_screen);settings_screen=NULL;
-    brightness_label=NULL;sound_value=NULL;sound_status=NULL;
+    (void)e;feedback();settings_forget();
 }
 void panel_ui_settings_open(void)
 {
@@ -223,7 +244,13 @@ void panel_ui_settings_open(void)
     lv_obj_add_flag(settings_screen,LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(settings_screen,LV_DIR_VER);
     lv_obj_set_scrollbar_mode(settings_screen,LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_t *display=panel(settings_screen,20,78,440,186,CARD,true);
+    /* Two rows of the same shape. Each starts with its name, the line
+     * under it 27 below, the slider 72 below, and 24 from the top of the
+     * slider to whatever comes next: the line between the rows, or the
+     * edge of the card. The second row was squeezed against the bottom
+     * until the board showed it, and check_pages holds the two gaps
+     * equal. */
+    lv_obj_t *display=panel(settings_screen,20,78,440,228,CARD,true);
     icon(display,&icon_sun,16,18,MUTED);
     text_at(display,panel_text(TXT_BRIGHTNESS),62,16,268,&lv_font_montserrat_18,TEXT);
     brightness_label=text_at(display,"",338,16,88,&lv_font_montserrat_18,BLUE);
@@ -231,17 +258,17 @@ void panel_ui_settings_open(void)
     text_at(display,panel_text(TXT_BRIGHTNESS_WHAT),62,43,350,&lv_font_montserrat_12,MUTED);
     slider_at(display,88,5,local.brightness,PANEL_BRIGHTNESS);
     line(display,18,112,402,1);
-    text_at(display,panel_text(TXT_SLEEP_AFTER),20,126,268,&lv_font_montserrat_18,TEXT);
-    sleep_label=text_at(display,"",318,126,108,&lv_font_montserrat_18,BLUE);
+    text_at(display,panel_text(TXT_SLEEP_AFTER),20,128,268,&lv_font_montserrat_18,TEXT);
+    sleep_label=text_at(display,"",318,128,108,&lv_font_montserrat_18,BLUE);
     {
         char said[24];
         sleep_words(said,sizeof said,local.sleep_after);
         lv_label_set_text(sleep_label,said);
     }
-    text_at(display,panel_text(TXT_SLEEP_AFTER_WHAT),20,150,404,&lv_font_montserrat_12,MUTED);
-    slider_range(display,172,0,SLEEP_CHOICES-1,sleep_index(local.sleep_after),
+    text_at(display,panel_text(TXT_SLEEP_AFTER_WHAT),20,155,404,&lv_font_montserrat_12,MUTED);
+    slider_range(display,200,0,SLEEP_CHOICES-1,sleep_index(local.sleep_after),
                  PANEL_SLEEP_AFTER);
-    lv_obj_t *sound=panel(settings_screen,20,278,440,216,CARD,true);
+    lv_obj_t *sound=panel(settings_screen,20,320,440,216,CARD,true);
     icon(sound,&icon_volume_2,12,12,MUTED);
     text_at(sound,panel_text(TXT_TONES),70,16,240,&lv_font_montserrat_18,TEXT);
     text_at(sound,panel_text(TXT_TONES_WHAT),70,44,340,&lv_font_montserrat_12,MUTED);
@@ -257,7 +284,18 @@ void panel_ui_settings_open(void)
     slider_at(sound,138,0,local.sound_volume,PANEL_SOUND_VOLUME);
     button(sound,panel_text(TXT_TEST_TONE),276,164,144,44,test_sound,0);
     sound_status=text_at(sound,panel_text(TXT_SPEAKER),20,176,248,&lv_font_montserrat_12,MUTED);
-    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,506,440,&lv_font_montserrat_12,MUTED);
+    /* The setup, which used to stand in a corner of the main screen.
+     *
+     * It is not an everyday button. It takes the panel off the network
+     * until somebody finishes it, and a corner of the main screen is where
+     * a stray finger lands. It still asks before it starts, the same
+     * question as before, and the setup screen that follows closes this
+     * one: see settings_forget in panel_ui_update. */
+    lv_obj_t *link=panel(settings_screen,20,550,440,84,CARD,true);
+    text_at(link,panel_text(TXT_CONNECTION),20,16,240,&lv_font_montserrat_18,TEXT);
+    text_at(link,panel_text(TXT_SETUP_WHAT),20,44,240,&lv_font_montserrat_12,MUTED);
+    button(link,panel_text(TXT_SETUP),276,20,144,44,clicked,PANEL_SETUP);
+    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,648,440,&lv_font_montserrat_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
 /* Which of the three marks under the band is lit.
@@ -328,12 +366,12 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * above took it. Kept, its pointer is the reason that
      * panel_ui_settings_open returns at once and the page never opens
      * again. check_navigation builds the screens with that page open. */
-    settings_screen=NULL;brightness_label=NULL;sound_value=NULL;sound_status=NULL;
+    settings_drop();
     /* The band and everything on the second and third pages are children
      * of this screen too. A pointer kept past the clean above is a pointer
      * to freed memory, and band_scrolled runs from a touch. */
     band=NULL;mode_now=NULL;mode_button=NULL;mode_caption=NULL;
-    playing_name=NULL;no_drives=NULL;
+    playing_name=NULL;no_drives=NULL;esp_power=NULL;
     for(int i=0;i<3;i++)dots[i]=NULL;
     for(int i=0;i<PANEL_DRIVES;i++){
         drive_rows[i]=NULL;drive_names[i]=NULL;
@@ -460,7 +498,13 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_t *settings_button=button(s,panel_text(TXT_SETTINGS),206,436,146,44,settings_clicked,0);
     lv_obj_set_style_bg_opa(settings_button,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(settings_button,0,0);
     lv_obj_set_style_text_font(settings_button,&lv_font_montserrat_14,0);
-    lv_obj_t *setup=button(s,panel_text(TXT_SETUP),358,436,112,44,clicked,PANEL_SETUP);lv_obj_set_style_bg_opa(setup,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(setup,0,0);lv_obj_set_style_text_font(setup,&lv_font_montserrat_14,0);
+    /* The corner the setup button stood in, which moved into the settings.
+     * What stands here now is the battery of this panel, and not of the
+     * controller: that one has its place at the top. It stays empty until
+     * the power chip of the board answers. */
+    esp_power=text_at(s,"",358,450,108,&lv_font_montserrat_14,MUTED);
+    lv_obj_set_style_text_align(esp_power,LV_TEXT_ALIGN_RIGHT,0);
+    lv_obj_add_flag(esp_power,LV_OBJ_FLAG_HIDDEN);
 }
 /* A size a person reads, out of a count of bytes.
  *
@@ -475,6 +519,37 @@ static void say_size(char *out,size_t room,uint64_t bytes)
     if(gib<100.0)snprintf(out,room,"%.1f GB",gib);
     else snprintf(out,room,"%.0f GB",gib);
 }
+/* The battery of this panel, in the corner of the main screen.
+ *
+ * Read off the panel itself and not off the PC, so it does not wait for
+ * online the way the numbers beside it do: a panel on its battery with
+ * the PC off is exactly the case where somebody wants to see it.
+ *
+ * A symbol of the level beside the number, in five steps, because a
+ * glance at a corner reads a shape before a figure. The cable is a plug
+ * and no number, because a board with no cell behind the chip has
+ * nothing to count. */
+static void esp_power_show(const panel_state_t *s)
+{
+    if(!esp_power)return;
+    if(s->esp_supply==PANEL_SUPPLY_UNKNOWN){
+        lv_obj_add_flag(esp_power,LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_remove_flag(esp_power,LV_OBJ_FLAG_HIDDEN);
+    if(s->esp_supply==PANEL_SUPPLY_CABLE){
+        lv_label_set_text(esp_power,LV_SYMBOL_USB);
+        return;
+    }
+    int level=s->esp_battery<0?0:s->esp_battery>100?100:s->esp_battery;
+    const char *shape=level>=90?LV_SYMBOL_BATTERY_FULL
+                     :level>=65?LV_SYMBOL_BATTERY_3
+                     :level>=40?LV_SYMBOL_BATTERY_2
+                     :level>=15?LV_SYMBOL_BATTERY_1
+                     :LV_SYMBOL_BATTERY_EMPTY;
+    lv_label_set_text_fmt(esp_power,"%s%s %d %%",
+                          s->esp_charging?LV_SYMBOL_CHARGE " ":"",shape,level);
+}
 void panel_ui_update(const panel_state_t *s)
 {
     /* Repeated label_set_text_fmt calls allocate and invalidate even unchanged
@@ -484,7 +559,7 @@ void panel_ui_update(const panel_state_t *s)
     memcpy(&last_state,s,sizeof(*s));last_state_valid=true;
     if(sound_status)lv_label_set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
     if(s->setup){
-        if(settings_screen){lv_obj_delete(settings_screen);settings_screen=NULL;brightness_label=NULL;sound_value=NULL;sound_status=NULL;}
+        settings_forget();
         if(!setup_screen){
             if(overlay){lv_obj_delete(overlay);overlay=NULL;}
             setup_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
@@ -497,6 +572,7 @@ void panel_ui_update(const panel_state_t *s)
     lv_label_set_text(connection,!s->wifi?panel_text(TXT_WIFI_OFFLINE):s->online?panel_text(TXT_PC_ONLINE):panel_text(TXT_PC_OFFLINE));
     lv_obj_set_style_bg_color(dot,lv_color_hex(s->online?0x70C256:0x60758A),0);
     if(s->online&&s->battery>=0)lv_label_set_text_fmt(battery,"%d %% %s",s->battery,s->charging?LV_SYMBOL_CHARGE:"");else lv_label_set_text(battery,"-- %");
+    esp_power_show(s);
     bool audio=s->online&&s->volume>=0;
     lv_label_set_text(audio_status,!audio?"--":s->muted?panel_text(TXT_MUTED):panel_text(TXT_ACTIVE));
     lv_obj_t *track=lv_obj_get_user_data(audio_toggle);lv_obj_set_style_bg_color(track,lv_color_hex(audio&&!s->muted?BLUE:EDGE),0);lv_obj_set_x(audio_knob,audio&&!s->muted?27:3);

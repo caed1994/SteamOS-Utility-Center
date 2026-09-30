@@ -13,6 +13,7 @@
 #include "esp_app_desc.h"
 #include "panel_display.h"
 #include "panel_power.h"
+#include "panel_battery.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -578,7 +579,34 @@ static void network_task(void *arg)
     TickType_t last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
     TickType_t feedback_until=0;
     TickType_t last_health=xTaskGetTickCount();
+    /* Due at once, so the corner of the screen fills at the first turn
+     * and not five seconds after the rest. */
+    TickType_t last_battery=xTaskGetTickCount()-pdMS_TO_TICKS(5000);
     for (;;) {
+        /* The battery of the panel.
+         *
+         * Here and not in the LVGL timer. This is an I2C read on the bus
+         * the touch and the codec share, and a bus that stalls must stall
+         * this task and not the one that draws. Every five seconds,
+         * because a gauge moves by the minute and a cable is plugged in
+         * by hand: five seconds is before anybody looks twice. */
+        if(xTaskGetTickCount()-last_battery>=pdMS_TO_TICKS(5000)){
+            last_battery=xTaskGetTickCount();
+            panel_supply_t supply;int percent;bool charging;
+            panel_battery_read(&supply,&percent,&charging);
+            xSemaphoreTake(lock,portMAX_DELAY);
+            panel_supply_t was=state.esp_supply;
+            state.esp_supply=supply;state.esp_battery=percent;
+            state.esp_charging=charging;
+            xSemaphoreGive(lock);
+            /* A line when the supply changes and not at every reading: a
+             * cable in or out is an event, a gauge at 87 is not. */
+            if(supply!=was && was!=PANEL_SUPPLY_UNKNOWN)
+                ESP_LOGI("panel_battery","now on %s",
+                         supply==PANEL_SUPPLY_BATTERY?"its cell":
+                         supply==PANEL_SUPPLY_CABLE?"its cable":
+                         "nothing the chip reports");
+        }
         if(xTaskGetTickCount()-last_health>=pdMS_TO_TICKS(30000)){
             last_health=xTaskGetTickCount();
             uint32_t now_ms=(uint32_t)(esp_timer_get_time()/1000);
@@ -717,6 +745,9 @@ void app_main(void)
     if (!panel_display_start()) ESP_ERROR_CHECK(ESP_FAIL);
     esp_err_t key_err=panel_power_init();
     if(key_err!=ESP_OK)ESP_LOGW("panel_power","PWRKEY unavailable: %s",esp_err_to_name(key_err));
+    /* After the key, whose IO expander brings the I2C bus up. Not finding
+     * the chip leaves the corner of the screen empty and nothing else. */
+    panel_battery_init();
     panel_settings_t settings=settings_load();
     display_brightness=settings.brightness;
     display_sleep_after=settings.sleep_after;

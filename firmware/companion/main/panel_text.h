@@ -42,6 +42,7 @@
                            "hat es ausgeschaltet") \
     X(TXT_SLEEP_NEVER,     "Never",                 "Nie") \
     X(TXT_MINUTES,         "min",                   "Min") \
+    X(TXT_CONNECTION,      "Connection",            "Verbindung") \
     X(TXT_TONES,           "Key tones",             "Tastentoene") \
     X(TXT_TONES_WHAT,      "A sound at each press on this panel", \
                            "Ton bei Bedienung des Panels") \

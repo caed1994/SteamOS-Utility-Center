@@ -8,8 +8,6 @@
 // part a rule in Python cannot reach.
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
 #include "lvgl.h"
 #include "ui.h"
@@ -44,23 +42,43 @@ static lv_obj_t *find_band(lv_obj_t *root)
     for(unsigned i=0;i<lv_obj_get_child_count(root);i++){lv_obj_t *f=find_band(lv_obj_get_child(root,i));if(f)return f;}
     return NULL;
 }
-// How much memory this process really holds, out of the kernel.
-//
-// The second number in /proc/self/statm is the resident page count. It is
-// here because the count the screen keeps of its own bytes cannot say
-// whether they were freed, and that is the question.
+// The end of a frame, which this display takes and does nothing with. The
+// pixels stay in the buffer that main hands LVGL, so a rule can read them.
 static void flushed(lv_display_t *d,const lv_area_t *a,uint8_t *p)
 {(void)a;(void)p;lv_display_flush_ready(d);}
+// Everything LVGL complained about while this check ran.
+//
+// LVGL answers something it cannot draw by writing a line and drawing
+// nothing, and the screen then just looks empty. The lines are counted and
+// the check fails on one.
 static unsigned complaints;
 static void complained(lv_log_level_t level,const char *text)
 {
     if(level>=LV_LOG_LEVEL_WARN&&level!=LV_LOG_LEVEL_USER)complaints++;
     fputs(text,stderr);
 }
-// Where the kind of the frame header sits, in a baseline JPEG.
-//
-// Only the check needs this. It walks the markers the same way ui.c does,
-// and stops at the one that says the picture is baseline.
+// The slider after skip others, in the order they were built.
+static lv_obj_t *slider_at_place(lv_obj_t *root,int *skip)
+{
+    if(lv_obj_check_type(root,&lv_slider_class)){
+        if(*skip==0)return root;
+        (*skip)--;
+    }
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++){
+        lv_obj_t *f=slider_at_place(lv_obj_get_child(root,i),skip);
+        if(f)return f;
+    }
+    return NULL;
+}
+// A line of one pixel across a card, which is how ui.c draws a divider.
+static lv_obj_t *thin_line(lv_obj_t *card)
+{
+    for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+        lv_obj_t *c=lv_obj_get_child(card,i);
+        if(lv_obj_get_height(c)==1&&lv_obj_get_width(c)>100)return c;
+    }
+    return NULL;
+}
 static panel_state_t base(void)
 {
     panel_state_t s={.online=true,.wifi=true,.battery=50,.volume=30,
@@ -226,8 +244,79 @@ int main(void)
     }
     assert(complaints==0);
 
+    // The battery of this panel, in the corner the setup stood in.
+    //
+    // Nothing until the power chip answers: a battery drawn on a board
+    // whose chip said nothing is a battery that may not be there.
+    s=base();
+    panel_ui_update(&s);
+    assert(!label(lv_screen_active(),LV_SYMBOL_USB));
+    assert(!label(lv_screen_active(),panel_text(TXT_SETUP)));
+    // A chip with no cell behind it is a panel on its cable, and a plug
+    // with no number says so.
+    s.esp_supply=PANEL_SUPPLY_CABLE;
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),LV_SYMBOL_USB));
+    // A cell: its level as a shape, then the number.
+    s.esp_supply=PANEL_SUPPLY_BATTERY;s.esp_battery=87;
+    panel_ui_update(&s);
+    assert(!label(lv_screen_active(),LV_SYMBOL_USB));
+    assert(label(lv_screen_active(),LV_SYMBOL_BATTERY_3 " 87 %"));
+    s.esp_charging=true;
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),LV_SYMBOL_CHARGE " " LV_SYMBOL_BATTERY_3 " 87 %"));
+    s.esp_charging=false;s.esp_battery=100;
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),LV_SYMBOL_BATTERY_FULL " 100 %"));
+    s.esp_battery=5;
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),LV_SYMBOL_BATTERY_EMPTY " 5 %"));
+    // Read off the panel and not off the PC, so it stays when the PC goes.
+    // A panel on its battery with the PC off is exactly when somebody
+    // looks.
+    s.online=false;
+    panel_ui_update(&s);
+    assert(label(lv_screen_active(),LV_SYMBOL_BATTERY_EMPTY " 5 %"));
+    // And the chip going silent takes it away again rather than leaving
+    // the last reading up as if it were current.
+    s.esp_supply=PANEL_SUPPLY_UNKNOWN;
+    panel_ui_update(&s);
+    assert(!label(lv_screen_active(),LV_SYMBOL_BATTERY_EMPTY " 5 %"));
+
+    // The two sliders of the display card, and the room under each.
+    //
+    // The board showed the second one pressed against the bottom edge of
+    // the card. The first has the line between the rows under it, the
+    // second has the edge; the gap to each has to be the same, measured
+    // from the top of the track.
+    panel_ui_settings_open();
+    lv_obj_update_layout(lv_screen_active());
+    {
+        int skip=0;
+        lv_obj_t *first=slider_at_place(lv_screen_active(),&skip);
+        skip=1;
+        lv_obj_t *second=slider_at_place(lv_screen_active(),&skip);
+        assert(first && second);
+        lv_obj_t *card=lv_obj_get_parent(first);
+        assert(card==lv_obj_get_parent(second));
+        lv_obj_t *between=thin_line(card);
+        assert(between);
+        int32_t first_room=lv_obj_get_y(between)-lv_obj_get_y(first);
+        int32_t second_room=lv_obj_get_height(card)-lv_obj_get_y(second);
+        assert(first_room>0);
+        assert(second_room>=first_room);
+        // The setup stands in the settings now, and still asks first: a
+        // cancel sends nothing.
+        unsigned before=actions;
+        click(panel_text(TXT_SETUP));
+        assert(label(lv_screen_active(),panel_text(TXT_CONFIRM_SETUP)));
+        click(panel_text(TXT_CANCEL));
+        assert(actions==before);
+    }
+
     puts("OK: three pages that snap, the session and its target button, the "
-         "drives with their bars, every one of them offline, and every one "
-         "of them drawn with nothing for LVGL to complain about.");
+         "drives with their bars, every one of them offline, every one of "
+         "them drawn with nothing for LVGL to complain about, the battery of "
+         "the panel in the corner, and room under both display sliders.");
     return 0;
 }

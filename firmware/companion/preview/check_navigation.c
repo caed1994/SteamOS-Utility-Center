@@ -123,10 +123,15 @@ static void walk(panel_language_t language)
     assert(label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
     assert(label(lv_screen_active(),"55 %") && label(lv_screen_active(),"45 %"));
     skip=0;sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(lv_obj_has_state(sw,LV_STATE_CHECKED));
-    // The words below are the ones the button chose.
-    click(panel_text(TXT_BACK));
+    // The setup lives here now and no longer in a corner of the main
+    // screen, where a stray finger lands. It still asks first, and the
+    // question stands over the settings rather than behind them.
     click(panel_text(TXT_SETUP));assert(label(lv_screen_active(),panel_text(TXT_CONFIRM_SETUP)));
     click(panel_text(TXT_CANCEL));assert(actions==0);
+    assert(label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
+    // The words below are the ones the button chose.
+    click(panel_text(TXT_BACK));
+    assert(!label(lv_screen_active(),panel_text(TXT_SETUP)));
 }
 // The walks above ask panel_text for the word and then look for that same
 // word on the screen. So a table that answers with one language whatever it

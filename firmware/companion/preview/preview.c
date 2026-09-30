@@ -22,6 +22,9 @@ int main(int argc,char **argv)
     s.charging=false;
     strcpy(s.host,"FractalMachine");strcpy(s.controller,"PlayStation Controller");
     strcpy(s.message,"Up to date");
+    /* The battery of the panel itself, for the corner of the main screen.
+     * A real board shows this only once its power chip answers. */
+    s.esp_supply=PANEL_SUPPLY_BATTERY;s.esp_battery=87;
     if(argc>2&&strcmp(argv[2],"offline")==0){s.online=false;s.wifi=false;strcpy(s.message,"Joining the network");}
     /* Offline, with an address to wake the PC at. The control card shows
      * its other face here. See panel_wol.c. */
@@ -31,7 +34,14 @@ int main(int argc,char **argv)
     if(argc>2&&strcmp(argv[2],"setup")==0){s.setup=true;strcpy(s.setup_ssid,"SteamOS-Panel-3A12");strcpy(s.setup_password,"ABCD2345EFGH");}
     panel_ui_update(&s);
     if(argc>2&&strcmp(argv[2],"confirm")==0)panel_ui_confirm(PANEL_POWEROFF);
-    if(argc>2&&strcmp(argv[2],"settings")==0)panel_ui_settings_open();
+    if(argc>2&&strncmp(argv[2],"settings",8)==0)panel_ui_settings_open();
+    /* The settings scroll, and the end of them is a page of its own to
+     * look at. The page is the last child of the screen. */
+    if(argc>2&&strcmp(argv[2],"settings-end")==0){
+        lv_obj_t *page=lv_obj_get_child(lv_screen_active(),-1);
+        lv_obj_update_layout(page);
+        lv_obj_scroll_to_y(page,LV_COORD_MAX,LV_ANIM_OFF);
+    }
     lv_refr_now(d);
     FILE *f=fopen(argc>1?argv[1]:"preview.ppm","wb");if(!f)return 1;
     fprintf(f,"P6\n480 480\n255\n");
