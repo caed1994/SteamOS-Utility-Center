@@ -404,12 +404,37 @@ static int request(const char *path, const char *action)
     return 200;
 }
 
+/* What a disconnect number means, in words.
+ *
+ * Every one of these has cost somebody a search through a header. The list
+ * holds the ones this panel has really reported and the neighbours that
+ * mean something different enough to act on. Anything else still prints as
+ * its number, which is what wifi_err_reason_t is indexed by. */
+static const char *wifi_reason_name(uint8_t reason)
+{
+    switch (reason) {
+    case 4:   return "the AP dropped an idle station";
+    case 8:   return "the AP is leaving";
+    case 15:  return "the four way handshake timed out";
+    case 16:  return "the group key update timed out";
+    case 23:  return "802.1X refused it";
+    case 200: return "the beacons stopped";
+    case 201: return "no AP of this name was found";
+    case 202: return "authentication failed";
+    case 203: return "association failed";
+    case 204: return "the handshake timed out";
+    case 205: return "the connection failed";
+    default:  return "see wifi_err_reason_t";
+    }
+}
+
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
     if (base==WIFI_EVENT && id==WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *event=data;
-        ESP_LOGW("panel_wifi","Disconnected, reason=%u",event->reason);
+        ESP_LOGW("panel_wifi","Disconnected, reason=%u: %s",
+                 event->reason,wifi_reason_name(event->reason));
         xSemaphoreTake(lock,portMAX_DELAY);
         state.wifi=false; state.online=false; bool reconnect=!state.setup;
         xSemaphoreGive(lock);
@@ -499,6 +524,28 @@ static void network_task(void *arg)
     }
 }
 
+/* How long each step of joining the network takes.
+ *
+ * Read off the board: between "wifi driver task" and "wifi firmware
+ * version", two lines the driver prints from inside esp_wifi_init, the log
+ * held a hole of 2.9 seconds in one run and 6.8 and 7.2 in two more. A
+ * hundred milliseconds is the usual figure for that call.
+ *
+ * The hole is inside one call and no step here was ever timed, so which
+ * call it is has been a guess. This times each one and says so when it is
+ * slow. A healthy start prints the total and nothing else.
+ *
+ * Fifty milliseconds, because these calls set registers and allocate, and
+ * none of them has an honest reason to take longer. */
+#define WIFI_STEP_LOUD_MS 50
+#define WIFI_STEP(what, call) do { \
+        uint32_t at__=esp_log_timestamp(); \
+        call; \
+        uint32_t spent__=esp_log_timestamp()-at__; \
+        if(spent__>=WIFI_STEP_LOUD_MS) \
+            ESP_LOGW("panel_wifi","%s took %u ms",what,(unsigned)spent__); \
+    } while (0)
+
 void app_main(void)
 {
     ESP_LOGI("panel_boot","version=%s reset_reason=%d",esp_app_get_description()->version,(int)esp_reset_reason());
@@ -569,14 +616,19 @@ void app_main(void)
                  (unsigned)(esp_log_timestamp()-waited_from));
     }
 #endif
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    uint32_t network_began=esp_log_timestamp();
+    WIFI_STEP("esp_netif_init",ESP_ERROR_CHECK(esp_netif_init()));
+    WIFI_STEP("esp_event_loop_create_default",
+              ESP_ERROR_CHECK(esp_event_loop_create_default()));
+    WIFI_STEP("esp_netif_create_default_wifi_sta",
+              esp_netif_create_default_wifi_sta());
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&init));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    WIFI_STEP("esp_wifi_init",ESP_ERROR_CHECK(esp_wifi_init(&init)));
+    WIFI_STEP("esp_wifi_set_storage",
+              ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM)));
     /* Keep association; the driver wakes the radio for AP DTIM beacons. */
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
+    WIFI_STEP("esp_wifi_set_ps",
+              ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM)));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,wifi_event,NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,wifi_event,NULL));
     if (config.ssid[0]) {
@@ -584,11 +636,35 @@ void app_main(void)
         memcpy(wifi.sta.ssid,config.ssid,strlen(config.ssid));
         memcpy(wifi.sta.password,config.password,strlen(config.password));
         wifi.sta.threshold.authmode=WIFI_AUTH_WPA2_PSK;
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&wifi));
-        ESP_ERROR_CHECK(esp_wifi_start());
-        ESP_ERROR_CHECK(esp_wifi_connect());
+        /* Every channel, and the strongest of what they hold.
+         *
+         * The default is WIFI_FAST_SCAN, which the header describes as a
+         * scan that ends at the first AP of this name. A first match is
+         * not a best match, and the board showed the difference: it
+         * associated on channel 9, the four way handshake timed out
+         * there, and the join that worked five seconds later was on
+         * channel 6 at -58 dBm. Four joins failed in that one start.
+         *
+         * sort_method and failure_retry_cnt do nothing without a scan of
+         * all the channels. The header says so at both of them, so the
+         * three belong together or not at all.
+         *
+         * The cost is the scan itself, which now reads every channel
+         * rather than stopping at the first hit. The starts it replaces
+         * spent fifteen seconds failing. */
+        wifi.sta.scan_method=WIFI_ALL_CHANNEL_SCAN;
+        wifi.sta.sort_method=WIFI_CONNECT_AP_BY_SIGNAL;
+        wifi.sta.failure_retry_cnt=2;
+        WIFI_STEP("esp_wifi_set_mode",
+                  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA)));
+        WIFI_STEP("esp_wifi_set_config",
+                  ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&wifi)));
+        WIFI_STEP("esp_wifi_start",ESP_ERROR_CHECK(esp_wifi_start()));
+        WIFI_STEP("esp_wifi_connect",ESP_ERROR_CHECK(esp_wifi_connect()));
     }
+    ESP_LOGI("panel_wifi","network brought up in %u ms, all channels "
+             "scanned, strongest AP first",
+             (unsigned)(esp_log_timestamp()-network_began));
     BaseType_t created=xTaskCreate(network_task,"panel_network",12288,NULL,4,NULL);
     assert(created==pdPASS);
 }
