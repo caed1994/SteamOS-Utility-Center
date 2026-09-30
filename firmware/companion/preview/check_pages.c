@@ -85,6 +85,11 @@ int main(void)
     // goes takes what is open with it.
     assert(actions==0);
     assert(label(lv_screen_active(),panel_text(TXT_CONFIRM_MODE)));
+    // The question and the two buttons, and nothing under it. The line
+    // that stands under the power questions says where the press lands,
+    // which a session question answers in its own words.
+    assert(!label(lv_screen_active(),panel_text(TXT_CONFIRM_HERE)));
+    assert(label(lv_screen_active(),panel_text(TXT_CANCEL)));
     click(panel_text(TXT_CONFIRM));
     assert(actions==1 && last_action==PANEL_DESKTOP_MODE);
 
@@ -97,6 +102,12 @@ int main(void)
     click(panel_text(TXT_TO_GAME));
     click(panel_text(TXT_CONFIRM));
     assert(actions==1 && last_action==PANEL_GAME_MODE);
+
+    // The power questions keep theirs, so the rule above is about the
+    // session and not about the line being gone everywhere.
+    click(panel_text(TXT_POWEROFF));
+    assert(label(lv_screen_active(),panel_text(TXT_CONFIRM_HERE)));
+    click(panel_text(TXT_CANCEL));
 
     // The drives. Two of them, and the bar fills with what is used.
     s.drive_count=2;

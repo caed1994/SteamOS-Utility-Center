@@ -87,7 +87,14 @@ void panel_ui_confirm(panel_action_t action)
     const char *caption=action==PANEL_SUSPEND?panel_text(TXT_CONFIRM_SUSPEND):action==PANEL_REBOOT?panel_text(TXT_CONFIRM_REBOOT):action==PANEL_POWEROFF?panel_text(TXT_CONFIRM_OFF):(action==PANEL_DESKTOP_MODE||action==PANEL_GAME_MODE)?panel_text(TXT_CONFIRM_MODE):panel_text(TXT_CONFIRM_SETUP);
     lv_obj_t *box=panel(overlay,20,132,440,216,CARD,true);
     text_at(box,caption,20,26,400,&lv_font_montserrat_20,TEXT);
-    text_at(box,action==PANEL_SETUP?panel_text(TXT_SETUP_WHAT):(action==PANEL_DESKTOP_MODE||action==PANEL_GAME_MODE)?panel_text(TXT_MODE_WHAT):panel_text(TXT_CONFIRM_HERE),20,66,400,&lv_font_montserrat_16,MUTED);
+    /* A second line only where there is something to say. Switching the
+     * session says it in the question, and a sentence under it that
+     * repeats the obvious is a sentence somebody reads once and then
+     * reads past. */
+    const char *what=action==PANEL_SETUP?panel_text(TXT_SETUP_WHAT)
+        :(action==PANEL_DESKTOP_MODE||action==PANEL_GAME_MODE)?""
+        :panel_text(TXT_CONFIRM_HERE);
+    if(what[0])text_at(box,what,20,66,400,&lv_font_montserrat_16,MUTED);
     button(box,panel_text(TXT_CANCEL),20,126,192,62,confirmation,0);
     lv_obj_t *yes=button(box,panel_text(TXT_CONFIRM),228,126,192,62,confirmation,1);lv_obj_set_style_bg_color(yes,lv_color_hex(BLUE),0);
     lv_obj_set_style_text_color(yes,lv_color_hex(BG),0);

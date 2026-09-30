@@ -107,8 +107,6 @@
     X(TXT_TO_GAME,         "To Game Mode", "Zu Game Mode") \
     X(TXT_TO_DESKTOP,      "To Desktop", "Zum Desktop") \
     X(TXT_CONFIRM_MODE,    "Switch the session?", "Sitzung wechseln?") \
-    X(TXT_MODE_WHAT,       "This closes what is open.", \
-                           "Das schliesst, was offen ist.") \
     X(TXT_DRIVES,          "Drives", "Datentraeger") \
     X(TXT_NO_DRIVES,       "No drive answered.", \
                            "Kein Datentraeger hat geantwortet.") \

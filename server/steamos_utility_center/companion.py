@@ -106,13 +106,27 @@ ACTIONS = {
 
 # Where a person of this machine looks for a drive.
 #
-# The root filesystem, which is the internal one, and whatever udisks
-# mounted under /run/media, which is the card in the slot and anything on
-# a USB port. udisks mounts under the name of the user on some versions
-# and directly under /run/media on others, so both depths are walked.
-DRIVE_ROOT = "/"
-REMOVABLE_ROOT = "/run/media"
-REMOVABLE_DEPTH = 2
+# The list the kernel keeps, and not a guess at the paths. The first
+# version of this read "/" and called it the internal drive, which is
+# wrong on the machine it was written for: SteamOS keeps "/" as a read
+# only 5 GiB partition for its A and B updates, and everything a person
+# stores goes on /home. The panel showed 0.6 GB free of 5.0 and the
+# machine had 920 GiB. It missed a second NVMe drive of 4 TB altogether,
+# because that is mounted at neither of the two paths it looked at.
+#
+# So the filesystems come from the kernel now, and the ones a person means
+# are picked out of them by what they are rather than by where they sit.
+MOUNTS = "/proc/mounts"
+
+# Compressed memory is not a drive. It rarely carries a filesystem at all,
+# and where it does it is swap that looks like one.
+NOT_A_DRIVE = ("/dev/zram",)
+
+# Below this a filesystem belongs to the operating system and not to
+# anybody's games. The read only root of SteamOS is 5 GiB, /var is 256
+# MiB, and the two EFI partitions are smaller again. The smallest card
+# anybody puts in a slot is well above it.
+DRIVE_FLOOR = 16 * 1024 ** 3
 
 # The battery of a controller, which the kernel publishes as a power supply
 # beside the one of a laptop. The name tells them apart.
@@ -448,50 +462,81 @@ def wake_target(root=NET_ROOT, route=ROUTE_TABLE):
     return {"interface": name, "mac": mac}
 
 
-def _mount_points(root=REMOVABLE_ROOT, depth=REMOVABLE_DEPTH):
-    """Every mount under that root, at most that many levels down."""
-    found, here = [], [(root, 0)]
-    while here:
-        path, level = here.pop(0)
-        try:
-            entries = sorted(os.listdir(path))
-        except OSError:
-            continue        # not there, which is the ordinary case
-        for entry in entries:
-            child = os.path.join(path, entry)
-            if not os.path.isdir(child):
-                continue
-            if os.path.ismount(child):
-                found.append(child)
-            elif level + 1 < depth:
-                here.append((child, level + 1))
-    return found
+def mounted(path=MOUNTS):
+    """Every filesystem on a real drive that anybody can write to.
+
+    A device under /dev and not a name: that alone leaves out proc, sysfs,
+    every tmpfs and the overlays. Writable, because a filesystem nobody can
+    write to is not a place for a game, and the root of SteamOS is exactly
+    that.
+    """
+    out = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError:                                     # pragma: no cover
+        return out
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        device, point, options = parts[0], parts[1], parts[3]
+        if not device.startswith("/dev/"):
+            continue
+        if device.startswith(NOT_A_DRIVE):
+            continue
+        if "rw" not in options.split(","):
+            continue
+        # /proc/mounts writes a space in a path as \040.
+        out.append((device, point.replace("\\040", " ")))
+    return out
 
 
-def drives(root=DRIVE_ROOT, removable=REMOVABLE_ROOT):
-    """How full each drive is, as the panel draws it.
+def drive_name(point):
+    """A short word for that mount, as the panel prints it.
+
+    The last part of the path: /home reads as home and a card at
+    /run/media/deck/Games reads as Games. The root of a machine that has
+    no last part gets a word of its own.
+    """
+    if point == "/":
+        return "System"
+    return os.path.basename(point.rstrip("/")) or point
+
+
+def drives(path=MOUNTS, floor=DRIVE_FLOOR):
+    """How full each drive is, biggest first, as the panel draws it.
 
     Bytes and not percent: the panel has the room to write "212 of 916 GB"
     and a percentage alone answers the wrong question. A drive that cannot
     be read is left out rather than shown as empty, because an empty bar
     reads as plenty of room.
+
+    One entry for each device. A btrfs with subvolumes is mounted several
+    times over, and three rows of the same drive tell nobody anything.
     """
-    out = []
-    for path in [root] + _mount_points(removable):
+    seen, out = set(), []
+    for device, point in mounted(path):
+        if device in seen:
+            continue
+        seen.add(device)
         try:
-            space = os.statvfs(path)
+            space = os.statvfs(point)
         except OSError:
             continue
         total = space.f_blocks * space.f_frsize
-        if total <= 0:
-            continue        # a pseudo filesystem, which is not a drive
+        if total < floor:
+            continue
         out.append({
-            "name": "SSD" if path == root else os.path.basename(path),
+            "name": drive_name(point),
             "total": total,
             # f_bavail and not f_bfree: the second counts the blocks the
             # filesystem keeps for root, which nobody can fill a game into.
             "free": space.f_bavail * space.f_frsize,
         })
+    # The panel has room for three. The big ones are the ones a person
+    # means, so those come first and a small one falls off the end.
+    out.sort(key=lambda one: one["total"], reverse=True)
     return out
 
 
