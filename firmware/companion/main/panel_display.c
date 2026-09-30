@@ -9,7 +9,7 @@
 #include "esp_check.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esp_lvgl_port.h"
-#include "esp_memory_utils.h"
+#include <stdint.h>
 #include "driver/ledc.h"
 
 static lv_display_t *panel_screen;
@@ -23,6 +23,28 @@ static bool is_asleep;
  * the panel at full before anything has been drawn. The long note above
  * backlight_off says why nought is not an option. */
 #define BACKLIGHT_SLEEP_PERCENT 5
+
+/* Two frame buffers, or this display never starts.
+ *
+ * esp_lvgl_port asks the panel for two of them when avoid_tearing is set,
+ * and the panel holds as many as CONFIG_BSP_LCD_RGB_BUFFER_NUMS. The board
+ * support defaults that number to one, with a range of one to three. A one
+ * makes the request for the second buffer fail, and lvgl_port_add_disp_rgb
+ * returns NULL.
+ *
+ * The number is set in firmware/companion/sdkconfig.defaults. Kconfig drops
+ * a name it does not know and the build still passes, so the count is read
+ * here. Then the build stops instead of the panel. */
+_Static_assert(CONFIG_BSP_LCD_RGB_BUFFER_NUMS>=2,
+               "avoid_tearing needs CONFIG_BSP_LCD_RGB_BUFFER_NUMS=2 in "
+               "firmware/companion/sdkconfig.defaults");
+
+/* True if p points inside the block of n bytes at base. */
+static bool within(const void *p,const void *base,size_t n)
+{
+    const uint8_t *at=p,*from=base;
+    return from && at>=from && at<from+n;
+}
 
 /* Keep RGB DMA interrupts and LVGL on core 1. The main task is pinned there
  * by sdkconfig; esp_lcd allocates its interrupts on the calling core.
@@ -60,28 +82,77 @@ lv_display_t *panel_display_start(void)
      * continuous pixel traffic by 25%; actual divider may round downward. */
     ESP_ERROR_CHECK(esp_lcd_rgb_panel_set_pclk(panel,12000000));
 
+    /* LVGL draws into the panel's own frame buffers, and there are two.
+     *
+     * Reported from the board: small tears run through the startup
+     * animation. 24 frames a second changed nothing, so the rate is not
+     * the cause. The cause is the arrangement this replaces. One draw
+     * buffer of 48 rows went row by row into the one frame buffer, and the
+     * display scanned that same buffer out at the same time. The copy and
+     * the scan met somewhere down the screen, and that line was the tear.
+     *
+     * avoid_tearing removes the copy. esp_lvgl_port asks the panel for its
+     * two frame buffers and gives them to LVGL as its draw buffers, so
+     * LVGL draws into the one the display does not read. The flush is then
+     * a pointer and not a copy: esp_lcd_panel_draw_bitmap finds that the
+     * buffer it holds is one of the panel's own, and moves cur_fb_index to
+     * it. The filler behind the bounce buffers reads that at the end of the
+     * frame it is in, where bb_fb_index takes the value of cur_fb_index. So
+     * the display starts on the new buffer at a frame boundary, never in
+     * the middle of one.
+     *
+     * full_refresh and not direct_mode. full_refresh redraws the whole
+     * screen at every refresh, so the buffer LVGL draws into comes out
+     * complete whatever it held two frames back. Direct mode costs less
+     * and asks LVGL to remember what each of the two buffers still lacks.
+     * This panel refreshes when something changes, not at a fixed rate,
+     * and a label every three seconds is most of what changes. The cheaper
+     * mode buys little and goes wrong in ways nobody sees.
+     *
+     * The flush waits for that frame boundary and has no timeout. The wait
+     * ends only while the RGB DMA runs, and it does run this early: the
+     * white flash this board showed before the animation was the display
+     * scanning out a frame buffer with nothing in it, directly out of
+     * bsp_display_new.
+     *
+     * buffer_size, buff_dma and buff_spiram have no effect below.
+     * esp_lvgl_port replaces the size with the whole screen and allocates
+     * nothing, because these buffers belong to the panel and sit in PSRAM.
+     * The values say what happens rather than what is asked for. */
     const lvgl_port_display_cfg_t display={
         .panel_handle=panel,
         /* BSP auto-deletes the ST7701 command IO; RGB needs no IO handle. */
-        .buffer_size=BSP_LCD_H_RES*48,
+        .buffer_size=BSP_LCD_H_RES*BSP_LCD_V_RES,
         .double_buffer=false,
         .hres=BSP_LCD_H_RES,.vres=BSP_LCD_V_RES,
         .color_format=LV_COLOR_FORMAT_RGB565,
-        /* MALLOC_CAP_DMA keeps this buffer in internal SRAM on ESP32-S3.
-         * DEFAULT allocations larger than 16 KiB previously went to PSRAM. */
-        .flags={.buff_dma=true,.buff_spiram=false,.sw_rotate=false},
+        .flags={.buff_dma=false,.buff_spiram=false,.sw_rotate=false,
+                .full_refresh=true},
     };
-    const lvgl_port_display_rgb_cfg_t rgb={.flags={.bb_mode=true,.avoid_tearing=false}};
+    const lvgl_port_display_rgb_cfg_t rgb={.flags={.bb_mode=true,.avoid_tearing=true}};
     lv_display_t *screen=lvgl_port_add_disp_rgb(&display,&rgb);
     ESP_RETURN_ON_FALSE(screen,NULL,tag,"LVGL display allocation failed");
+    /* Proof that the buffer swap really happened.
+     *
+     * A draw buffer outside these two is a flush that copies, and a copy is
+     * the tearing back again with nothing to show that it returned. The
+     * line this replaces demanded internal SRAM, which was right while
+     * LVGL owned the buffer and the driver copied out of it. */
+    void *first=NULL,*second=NULL;
+    ESP_ERROR_CHECK(esp_lcd_rgb_panel_get_frame_buffer(panel,2,&first,&second));
+    const size_t frame=(size_t)BSP_LCD_H_RES*BSP_LCD_V_RES*2;
     lvgl_port_lock(0);
-    lv_draw_buf_t *draw=lv_display_get_buf_active(screen);
-    bool internal=draw && esp_ptr_internal(draw->data);
     /* Black on the panel at the first moment there is a way to put it
-     * there. The frame buffer holds whatever the memory held, and the board
+     * there. A frame buffer holds whatever the memory held, and the board
      * showed that as white. The brightness above keeps it dim; this makes
      * it black, and between the two there is nothing to see until app_main
      * has a screen worth showing.
+     *
+     * Once for each frame buffer, because there are two of them now and
+     * LVGL draws into them in turn. One refresh leaves the other buffer as
+     * the memory left it, and the first real frame swaps to exactly that
+     * one. The invalidate goes before each refresh: a refresh with nothing
+     * invalid draws nothing.
      *
      * One window is left and it is not ours to close. bsp_display_new sets
      * the LEDC duty to 0, which is full brightness on this inverted input,
@@ -91,10 +162,19 @@ lv_display_t *panel_display_start(void)
     if(blank){
         lv_obj_set_style_bg_color(blank,lv_color_black(),0);
         lv_obj_set_style_bg_opa(blank,LV_OPA_COVER,0);
-        lv_refr_now(screen);
+        for(int i=0;i<CONFIG_BSP_LCD_RGB_BUFFER_NUMS;i++){
+            lv_obj_invalidate(blank);
+            lv_refr_now(screen);
+        }
     }
+    /* Read after the refreshes, so this is the buffer LVGL really drew in. */
+    lv_draw_buf_t *draw=lv_display_get_buf_active(screen);
+    bool own=draw && (within(draw->data,first,frame)
+                      || within(draw->data,second,frame));
     lvgl_port_unlock();
-    ESP_RETURN_ON_FALSE(internal,NULL,tag,"Draw buffer must reside in internal SRAM");
+    ESP_RETURN_ON_FALSE(own,NULL,tag,
+                        "LVGL draws outside the panel frame buffers, so the "
+                        "flush copies and the tearing stays");
 
     esp_lcd_touch_handle_t touch=NULL;
     ESP_ERROR_CHECK(bsp_touch_new(NULL,&touch));
@@ -102,8 +182,10 @@ lv_display_t *panel_display_start(void)
     panel_input=lvgl_port_add_touch(&input);
     ESP_RETURN_ON_FALSE(panel_input,NULL,tag,"Touch allocation failed");
     panel_screen=screen;
-    ESP_LOGI(tag,"RGB: requested PCLK=12MHz, bounce=%d rows, SRAM draw=48 rows, core=1",
-             CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_HEIGHT);
+    ESP_LOGI(tag,"RGB: requested PCLK=12MHz, bounce=%d rows, %d frame buffers "
+             "at %p and %p, full refresh, core=1",
+             CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_HEIGHT,
+             CONFIG_BSP_LCD_RGB_BUFFER_NUMS,first,second);
     return screen;
 }
 

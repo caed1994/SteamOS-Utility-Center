@@ -99,40 +99,34 @@ jobs:
           grep -rnE '#define +BSP_[A-Z0-9_]+ +\(?GPIO_NUM' \
             "$bsp" --include='*.h' 2>/dev/null || true
 
-      - name: Record how the panel gets its frame buffers
-        # Reported from the board: small tears run through the startup
-        # animation. Fewer frames did not help, so it is not the rate; it is
-        # one draw buffer of 48 rows copied into a frame buffer while the
-        # display scans that same buffer out.
+      - name: Record what the build did with the frame buffers
+        # The step before this one asked how the panel gets its buffers, and
+        # it answered: num_fbs comes from CONFIG_BSP_LCD_RGB_BUFFER_NUMS, and
+        # esp_lvgl_port asks the panel for two of them when avoid_tearing is
+        # set. sdkconfig.defaults now sets that number to two.
         #
-        # The answer to that is two frame buffers and a swap on the vertical
-        # blank, which esp_lvgl_port calls avoid_tearing. Whether this board
-        # can do it is not ours to decide: bsp_display_new creates the RGB
-        # panel, and the number of frame buffers is set there.
+        # What is left to read is whether the setting took, and what else in
+        # the same menu it depends on. Kconfig drops a name it does not know
+        # without a word, so the generated sdkconfig is the only place that
+        # says what the build really used. A _Static_assert in
+        # main/panel_display.c fails the build on a one, so this step is the
+        # record and not the guard.
         #
-        # So this prints what the board support really does, the way the
-        # backlight step above does. It reads files and changes nothing.
+        # It reads files and changes nothing.
         shell: bash
         run: |
           set -uo pipefail
           bsp=firmware/companion/managed_components/waveshare__esp32_s3_touch_lcd_4b
-          port=firmware/companion/managed_components/espressif__esp_lvgl_port
-          echo "===== how the board support makes the RGB panel ====="
-          sed -n '/esp_lcd_rgb_panel_config_t/,/};/p' \
-            "$bsp"/esp32_s3_touch_lcd_4b.c 2>/dev/null || true
-          echo "===== what a caller can pass to bsp_display_new ====="
-          sed -n '/typedef struct.*{/,/} *bsp_display_config_t;/p' \
-            "$bsp"/include/bsp/esp32_s3_touch_lcd_4b.h 2>/dev/null || true
-          echo "===== every buffer and tearing option the board offers ====="
-          grep -rnE 'BUFFER_NUMS|NUM_FB|num_fbs|bounce_buffer|BOUNCE|double_fb|no_fb' \
-            "$bsp" --include='*.c' --include='*.h' --include='Kconfig*' \
-            2>/dev/null | head -40 || echo "(nothing matched)"
-          echo "===== what esp_lvgl_port does with avoid_tearing ====="
-          grep -rn 'avoid_tearing' "$port" --include='*.c' --include='*.h' \
-            2>/dev/null | head -30 || echo "(nothing matched)"
-          echo "===== and whether it allows it beside a bounce buffer ====="
-          sed -n '/avoid_tearing/,/^    }/p' "$port"/src/lvgl9/esp_lvgl_port_disp.c \
-            2>/dev/null | head -60 || true
+          echo "===== the buffer menu the board offers ====="
+          sed -n '50,100p' "$bsp"/Kconfig 2>/dev/null || echo "(no Kconfig)"
+          echo "===== what the build used ====="
+          grep -E '^(CONFIG_BSP_LCD_RGB|CONFIG_BSP_DISPLAY_LVGL|CONFIG_LCD_RGB)' \
+            firmware/companion/sdkconfig 2>/dev/null \
+            | sort || echo "(no sdkconfig)"
+          echo "===== and the memory the two buffers come out of ====="
+          grep -E '^CONFIG_SPIRAM(_MODE|_SPEED|_TYPE|_SIZE)?[A-Z_]*=' \
+            firmware/companion/sdkconfig 2>/dev/null \
+            | sort || echo "(no sdkconfig)"
 
       - name: Build and run the checks that need LVGL
         # firmware/companion/preview holds the checks of the screen half,

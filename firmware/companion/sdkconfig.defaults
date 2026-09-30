@@ -48,6 +48,13 @@ CONFIG_LV_FONT_MONTSERRAT_14=y
 
 CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_HEIGHT=40
 
+# Two frame buffers, so LVGL draws into one while the display reads the
+# other. Range is one to three and the board default is one. The long note
+# above the display configuration in main/panel_display.c says what one of
+# them cost: the tears in the startup animation. A _Static_assert there
+# fails the build if this line stops taking effect.
+CONFIG_BSP_LCD_RGB_BUFFER_NUMS=2
+
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
 CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
