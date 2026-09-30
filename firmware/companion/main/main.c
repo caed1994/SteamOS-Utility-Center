@@ -45,29 +45,6 @@
 extern const uint8_t boot_animation_start[] asm("_binary_boot_steam_gif_start");
 extern const uint8_t boot_animation_end[] asm("_binary_boot_steam_gif_end");
 
-/* Hold the network back until the animation is over. A MEASUREMENT.
- *
- * Nought, because it has answered its question. A one makes the panel
- * reach the PC about four seconds later, so this is not how it starts.
- *
- * The question was whether the startup animation ran slow because of the
- * Wi-Fi start beside it. The board had reported 57 ms a frame where 40 was
- * asked, and the worst frame of that run sat inside a three second hole in
- * the log where the Wi-Fi driver came up.
- *
- * It did not. The same animation with the network held off came back at
- * 55 ms a frame, the same worst frame, the same count over time. The two
- * simply begin together because both begin at boot.
- *
- * What it was is in the note above the display configuration in
- * panel_display.c: the frames that overwrite the whole square cost about
- * twice what the others do. Drawing only what changed took 16 of those
- * frames off the worst rung of the ladder and left 2.
- *
- * Put it back to one to run the pair again. panel_boot.c prints the
- * numbers either way. */
-#define PANEL_MEASURE_ANIMATION_ALONE 0
-
 static atomic_uint ui_heartbeat_ms;
 static atomic_bool display_asleep;
 static int display_brightness=70; /* Updated only by the LVGL thread after startup. */
@@ -599,23 +576,6 @@ void app_main(void)
     lv_refr_now(NULL);
     bsp_display_unlock();
     setting_set(PANEL_BRIGHTNESS,settings.brightness,false);
-#if PANEL_MEASURE_ANIMATION_ALONE
-    /* A measurement, and it costs the panel time. Read the note above
-     * PANEL_MEASURE_ANIMATION_ALONE before leaving this on. */
-    {
-        uint32_t waited_from=esp_log_timestamp();
-        /* The cap is what stops a bug here from being a panel that never
-         * joins the network. The animation runs about four seconds, and
-         * fifteen is far past anything it has ever taken. */
-        while(panel_boot_playing() &&
-              esp_log_timestamp()-waited_from<15000)
-            vTaskDelay(pdMS_TO_TICKS(25));
-        ESP_LOGW("panel_boot",
-                 "measurement build: the network waited %u ms for the "
-                 "animation. See PANEL_MEASURE_ANIMATION_ALONE in main.c.",
-                 (unsigned)(esp_log_timestamp()-waited_from));
-    }
-#endif
     uint32_t network_began=esp_log_timestamp();
     WIFI_STEP("esp_netif_init",ESP_ERROR_CHECK(esp_netif_init()));
     WIFI_STEP("esp_event_loop_create_default",
