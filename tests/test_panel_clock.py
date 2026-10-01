@@ -112,7 +112,9 @@ class SpeedTest(unittest.TestCase):
         takes in a row hold the full speed through every sleep after."""
         low = body(self.clock(), "void panel_clock_low(bool low)")
         self.assertRegex(low, r"if\(!awake \|\| low==is_low\)return;")
-        self.assertRegex(low, r"is_low=low;\s*\}$")
+        # Kept only once the lock did what was asked: after the return of
+        # a failed call, and not before it.
+        self.assertLess(low.index("return;\n    }"), low.index("is_low=low;"))
 
 
 class MeasureTest(unittest.TestCase):
@@ -143,11 +145,13 @@ class MeasureTest(unittest.TestCase):
         self.assertIn("now - last_us[core] < STRETCH_MAX_US", sample)
 
     def test_the_share_runs_between_the_two_speeds(self):
+        mean = body(self.clock(), "static void mean_of(")
+        self.assertIn("(PANEL_CLOCK_HIGH_MHZ - mean) * 100", mean)
+        self.assertIn("/ (PANEL_CLOCK_HIGH_MHZ - PANEL_CLOCK_LOW_MHZ)", mean)
         average = body(self.clock(),
                        "void panel_clock_average(unsigned *mhz, unsigned *low_percent)")
-        self.assertIn("(PANEL_CLOCK_HIGH_MHZ - mean) * 100", average)
-        self.assertIn("/ (PANEL_CLOCK_HIGH_MHZ - PANEL_CLOCK_LOW_MHZ)", average)
         self.assertIn("sum_cycles = 0;", average)
+        self.assertIn("mean_of(", average)
 
 
 @unittest.skipUnless(compiler(), "no C compiler here")
@@ -178,13 +182,21 @@ class MeanSpeedTest(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.where, ignore_errors=True)
 
-    def averages(self, *commands):
+    def output(self, *commands):
         done = subprocess.run([self.program],
                               input="\n".join(commands) + "\n",
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.splitlines()
+
+    def averages(self, *commands):
         return [tuple(int(n) for n in line.split())
-                for line in done.stdout.splitlines()]
+                for line in self.output(*commands)
+                if re.fullmatch(r"\d+ \d+", line)]
+
+    def sleeps(self, *commands):
+        return [line for line in self.output(*commands)
+                if "The sleep ran" in line]
 
     def loop(self, seconds, mhz, cores=(0,)):
         """The network loop: a reading every 100 ms, from the cores in
@@ -238,6 +250,21 @@ class MeanSpeedTest(unittest.TestCase):
 
     def test_with_no_readings_it_says_nothing(self):
         self.assertEqual(self.averages("average"), [(0, 0)])
+
+    def test_each_sleep_gets_a_line_of_its_own(self):
+        """The health line mixes the end of a sleep with the time awake
+        after it. The line at the wake is the sleep alone: here five
+        seconds awake at 240, then ten asleep with a quarter at 240."""
+        commands = ["init"] + self.loop(5, 240) + ["sample", "low"]
+        for _ in range(100):
+            commands += ["run 25000 240", "run 75000 80", "sample"]
+        commands += ["high"] + self.loop(5, 240)
+        self.assertEqual(self.sleeps(*commands), [
+            "I panel_clock: The sleep ran at a mean of 120 MHz, 75 % of it "
+            "at the low speed, over 10 s"])
+
+    def test_no_sleep_no_line(self):
+        self.assertEqual(self.sleeps("init", *self.loop(5, 240), "high"), [])
 
 
 class SleepTest(unittest.TestCase):

@@ -205,12 +205,17 @@ static int metric(cJSON *object,const char *key,int limit)
  * a line goes out each time the headroom sinks by PANEL_STACK_STEP, with
  * what the panel showed then.
  *
- * Read off the board: 876 bytes were left of sixteen kilobytes, where an
- * earlier firmware had used 11580 of twelve. Something added since needs
- * four kilobytes more, and the health line said only how much, not when.
  * The deepest point falls between two ticks, so the line names what the
  * screen showed at the tick after it. The steps keep it to a few lines
- * over the life of the panel, most of them at the start. */
+ * over the life of the panel, most of them at the start.
+ *
+ * Only from the LVGL timer, which runs in the drawing task. app_main calls
+ * ui_tick once itself, and that call runs on the start task: its reading
+ * was the stack of the start task, 3584 bytes with about 700 left, set
+ * against the stack of the drawing task. Read off the board as 716 of
+ * 24576 "on the first page" at 1.9 s, and as 708 of 12288 at 1.8 s before
+ * that. The number only ever goes down, so that one reading stood on the
+ * health line for good. See ui_tick. */
 #define PANEL_STACK_FLOOR 1024
 #define PANEL_STACK_STEP 1024
 static atomic_uint ui_stack_left;
@@ -281,8 +286,9 @@ static void display_sleeping(bool sleep,bool by_hand)
 
 static void ui_tick(lv_timer_t *timer)
 {
-    (void)timer;
-    watch_stack();
+    /* A call with no timer is the one from app_main, on the start task.
+     * See watch_stack. */
+    if(timer)watch_stack();
     if(panel_power_take_toggle())
         display_sleeping(!atomic_load(&display_asleep),true);
     if(atomic_load(&display_asleep)){
@@ -449,6 +455,10 @@ static esp_err_t collect_data(esp_http_client_event_t *event)
     return ESP_OK;
 }
 
+// How the last attempt ended, for the line that says the PC stopped
+// answering. The network task alone writes and reads it.
+static esp_err_t last_http_error;
+
 // One attempt. The token itself never goes on the wire: what goes is a
 // signature over the method, the path and the body, with the nonce that the
 // service last gave out. See panel_auth.h.
@@ -476,7 +486,15 @@ static int attempt(const char *path, const char *action, response_t *out)
         esp_http_client_set_post_field(client,payload,strlen(payload));
     }
     esp_err_t err=esp_http_client_perform(client);
-    int code=err==ESP_OK && !out->overflow ? esp_http_client_get_status_code(client) : 0;
+    int status=esp_http_client_get_status_code(client);
+    /* A 401 is an answer and not a failure. esp_http_client takes it for
+     * HTTP authentication of its own, finds no header for that and fails
+     * the request (esp_http_client_add_auth in ESP-IDF 5.5.5). Its status
+     * is still the 401 of the service, with the fresh nonce in it, and
+     * request() and the message on the screen are written for exactly
+     * that. Taking the error alone turned it into "no answer". */
+    int code=out->overflow ? 0 : err==ESP_OK || status==401 ? status : 0;
+    last_http_error=err;
     esp_http_client_cleanup(client);
     return code;
 }
@@ -694,6 +712,8 @@ static void network_task(void *arg)
      * and not five seconds after the rest. */
     TickType_t last_battery=xTaskGetTickCount()-pdMS_TO_TICKS(5000);
     bool rest_wanted=false,was_connected=false;
+    /* The answer of the last poll, for the line when it changes. */
+    int answered=-1;
     for (;;) {
         /* A reading of the clock at every turn of this loop, which is ten a
          * second or so. See panel_clock_sample. */
@@ -811,6 +831,26 @@ static void network_task(void *arg)
                 snprintf(state.message,sizeof(state.message),"%s",
                          code==401 ? panel_text(TXT_CHECK_SETUP) : "");
             xSemaphoreGive(lock);
+            /* A line when the answer of the PC changes, and not at every
+             * poll. esp_http_client is quiet now, see app_main, and this
+             * says once what it said at every poll. */
+            if (code!=answered) {
+                answered=code;
+                if (code==200)
+                    ESP_LOGI("panel_pc","The PC answers");
+                else if (code==401)
+                    ESP_LOGW("panel_pc","The PC refuses this panel: the token "
+                             "of the setup does not match");
+                else if (code==0 && !connected())
+                    ESP_LOGI("panel_pc","No network, so no question to the PC");
+                else if (code==0)
+                    ESP_LOGW("panel_pc","The PC does not answer: %s",
+                             last_http_error==ESP_OK
+                                 ? "an answer this panel could not read"
+                                 : esp_err_to_name(last_http_error));
+                else
+                    ESP_LOGW("panel_pc","The PC answers %d",code);
+            }
         }
     }
 }
@@ -1004,6 +1044,16 @@ void app_main(void)
     ESP_LOGI("panel_wifi","network brought up in %u ms, all channels "
              "scanned, strongest AP first",
              (unsigned)(esp_log_timestamp()-network_began));
+    /* esp_http_client writes two lines at every 401, which is how the
+     * service hands out its first nonce, and one at every poll the PC does
+     * not answer. The network task writes a line of its own when the
+     * answer of the PC changes, with the reason. See network_task. */
+    esp_log_level_set("HTTP_CLIENT",ESP_LOG_NONE);
     BaseType_t created=xTaskCreate(network_task,"panel_network",12288,NULL,4,NULL);
     assert(created==pdPASS);
+    /* The start task as well, once, at its end. It is freed when app_main
+     * returns, so its size costs nothing after this. */
+    ESP_LOGI("panel_stack","the start used %u of %u bytes of its stack",
+             (unsigned)(CONFIG_ESP_MAIN_TASK_STACK_SIZE-uxTaskGetStackHighWaterMark(NULL)),
+             (unsigned)CONFIG_ESP_MAIN_TASK_STACK_SIZE);
 }

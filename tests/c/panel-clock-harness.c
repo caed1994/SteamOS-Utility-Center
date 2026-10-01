@@ -11,6 +11,8 @@
 //   run <us> <mhz>       time goes on, and both counters count at that speed
 //   sample               panel_clock_sample
 //   average              panel_clock_average, printed as "<mhz> <low %>"
+//   init                 panel_clock_init
+//   low, high            panel_clock_low(true), panel_clock_low(false)
 //
 // See tests/test_panel_clock.py.
 
@@ -58,6 +60,12 @@ int main(void)
                 counter[i] += (uint32_t)((uint64_t)us * mhz);
         } else if (strncmp(line, "sample", 6) == 0) {
             panel_clock_sample();
+        } else if (strncmp(line, "init", 4) == 0) {
+            panel_clock_init();
+        } else if (strncmp(line, "low", 3) == 0) {
+            panel_clock_low(true);
+        } else if (strncmp(line, "high", 4) == 0) {
+            panel_clock_low(false);
         } else if (strncmp(line, "average", 7) == 0) {
             unsigned mean, low;
             panel_clock_average(&mean, &low);

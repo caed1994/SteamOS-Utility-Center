@@ -182,9 +182,6 @@ class StepTimingTest(unittest.TestCase):
                          r"network brought up in %u ms")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class WeakAPTest(unittest.TestCase):
     """The far AP behind the same name, and why it is not an answer.
@@ -356,3 +353,49 @@ class RadioRestTest(unittest.TestCase):
         self.assertIn("atomic_exchange(&radio_back_ms,0u)", handler)
         self.assertIn("Joined again %u ms after the radio came back", handler)
         self.assertIn("radio_rest=%d", self.source())
+
+
+class AnswerTest(unittest.TestCase):
+    """What the PC said, as the panel reads it.
+
+    Read off the board: two lines of esp_http_client at the first poll of
+    every start, "This request requires authentication" and "Error
+    response". That is the service handing out its first nonce with a 401.
+    esp_http_client takes a 401 for HTTP authentication of its own, finds
+    no header for that and fails the request, so the 401 reached the panel
+    as "no answer": the retry with the fresh nonce never ran, and a token
+    the PC refuses never reached the screen as one."""
+
+    def source(self):
+        return without_comments(read("main.c"))
+
+    def body(self, start):
+        found = re.search(re.escape(start) + r".*?\n\}", self.source(), re.S)
+        self.assertIsNotNone(found, start)
+        return found.group(0)
+
+    def test_a_401_counts_although_the_client_failed_the_request(self):
+        attempt = self.body("static int attempt(")
+        self.assertIn("int status=esp_http_client_get_status_code(client);",
+                      attempt)
+        self.assertRegex(attempt, r"err==ESP_OK \|\| status==401 \? status : 0")
+
+    def test_the_401_is_tried_again_with_the_fresh_nonce(self):
+        self.assertIn("if (code==401) code=attempt(path,action,out);",
+                      self.body("static int request("))
+
+    def test_the_client_is_quiet_and_the_panel_says_it_instead(self):
+        start = self.body("void app_main(void)")
+        self.assertLess(start.index('esp_log_level_set("HTTP_CLIENT",ESP_LOG_NONE);'),
+                        start.index("xTaskCreate(network_task"))
+        task = self.body("static void network_task(void *arg)")
+        self.assertIn("if (code!=answered) {", task)
+        for said in ('"The PC answers"', "The PC refuses this panel",
+                     "No network, so no question to the PC",
+                     "The PC does not answer: %s"):
+            self.assertIn(said, task)
+        self.assertIn("esp_err_to_name(last_http_error)", task)
+
+
+if __name__ == "__main__":
+    unittest.main()

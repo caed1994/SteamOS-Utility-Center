@@ -87,3 +87,9 @@ CONFIG_PM_ENABLE=y
 CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
 
 # CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0 is not set
+
+# The start task, which runs app_main and is freed when it returns. The
+# default of 3584 had about 700 bytes left on the board, read when app_main
+# had brought the screen up and before the network. See the end of app_main,
+# which says what it used.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144

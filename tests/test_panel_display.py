@@ -511,11 +511,10 @@ class DrawingStackTest(unittest.TestCase):
         self.assertRegex(code, r"port\.task_stack\s*=")
         said = re.search(r"#define PANEL_LVGL_STACK \(?(\d+)\s*\*\s*1024", code)
         self.assertIsNotNone(said, "the stack has no size of its own here")
-        # The board measured it: 708 bytes left of 12288, so the task
-        # wanted 11580. Later 876 left of 16384, so it wants 15508. This
-        # asks for room above the deepest that was seen rather than a
-        # number that fits it exactly.
-        self.assertGreaterEqual(int(said.group(1)) * 1024, 15508 + 4096)
+        # Twelve kilobytes is the least that ran on the board without the
+        # overflow coming back. The readings that raised it to sixteen and
+        # then twenty-four were of the start task: see the next rule.
+        self.assertGreaterEqual(int(said.group(1)) * 1024, 12 * 1024)
 
     def test_one_place_holds_the_number(self):
         """The health line prints the headroom against the whole. Two
@@ -538,6 +537,35 @@ class DrawingStackTest(unittest.TestCase):
         self.assertIn("watch_stack()", tick.group(0),
                       "the reading has to be taken from the LVGL timer, "
                       "which is the drawing task")
+
+    def test_the_call_from_app_main_is_not_read(self):
+        """app_main calls ui_tick once itself, on the start task. Read off
+        the board: that one call put 716 of 24576 on the health line, the
+        stack of the start task against the size of this one, and the
+        number only ever goes down."""
+        code = self.main()
+        tick = re.search(r"static void ui_tick\(lv_timer_t \*timer\).*?\n\}",
+                         code, re.S).group(0)
+        self.assertIn("if(timer)watch_stack();", tick)
+        start = re.search(r"void app_main\(void\).*?\n\}", code, re.S).group(0)
+        self.assertIn("ui_tick(NULL);", start,
+                      "the rule above is about this call; without it, it "
+                      "guards nothing")
+
+    def test_the_start_task_has_room_and_says_what_it_used(self):
+        """3584 bytes had about 700 left. It is freed when app_main
+        returns, so a larger one costs nothing after the start."""
+        with open(os.path.join(os.path.dirname(FIRMWARE), "sdkconfig.defaults"),
+                  encoding="utf-8") as handle:
+            defaults = handle.read()
+        found = re.search(r"(?m)^CONFIG_ESP_MAIN_TASK_STACK_SIZE=(\d+)$", defaults)
+        self.assertIsNotNone(found)
+        self.assertGreaterEqual(int(found.group(1)), 3584 + 2048)
+        start = re.search(r"void app_main\(void\).*?\n\}", self.main(),
+                          re.S).group(0)
+        tail = start[start.index("xTaskCreate(network_task"):]
+        self.assertIn("uxTaskGetStackHighWaterMark(NULL)", tail)
+        self.assertIn("CONFIG_ESP_MAIN_TASK_STACK_SIZE", tail)
 
     def test_the_headroom_reaches_the_health_line(self):
         code = self.main()
@@ -573,6 +601,55 @@ class DrawingStackTest(unittest.TestCase):
         self.assertGreater(int(floor.group(1)), 0)
         self.assertIn("ESP_LOGW", re.search(
             r"static void watch_stack\(void\).*?\n\}", code, re.S).group(0))
+
+
+class SleepClockTest(unittest.TestCase):
+    """The pixel clock of the display, lower in a sleep.
+
+    Read off the board: in a button sleep the CPU spent only about 55 % of
+    the time at the low speed. The screen shows black, and an interrupt on
+    the CPU still copies every frame into the bounce buffers. A lower pixel
+    clock is fewer frames to copy."""
+
+    def source(self):
+        with open(os.path.join(FIRMWARE, "panel_display.c"),
+                  encoding="utf-8") as handle:
+            return without_comments(handle.read())
+
+    def standby(self):
+        return re.search(r"esp_err_t panel_display_standby\(bool sleep,int "
+                         r"brightness\).*?\n\}", self.source(), re.S).group(0)
+
+    def number(self, name):
+        found = re.search(r"#define %s\s+(\d+)" % name, self.source())
+        self.assertIsNotNone(found, name)
+        return int(found.group(1))
+
+    def test_the_sleep_clock_is_lower_and_the_awake_one_is_where_it_was(self):
+        self.assertEqual(self.number("PANEL_PCLK_HZ"), 12000000)
+        self.assertLessEqual(self.number("PANEL_PCLK_SLEEP_HZ") * 2,
+                             self.number("PANEL_PCLK_HZ"))
+        self.assertIn("esp_lcd_rgb_panel_set_pclk(panel,PANEL_PCLK_HZ)",
+                      self.source())
+        self.assertIn("panel_rgb=panel;", self.source())
+
+    def test_down_after_the_cover_and_up_before_the_first_frame(self):
+        """The slow frames are black ones, and the first frame after a
+        wake is drawn at the full rate."""
+        code = self.standby()
+        going = code[code.index("if(sleep){"):code.index("}else{")]
+        coming = code[code.index("}else{"):]
+        cover = going.index("panel_ui_sleep(panel_screen,panel_input,true);")
+        down = going.index("esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_SLEEP_HZ)")
+        self.assertLess(cover, down)
+        up = coming.index("esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_HZ)")
+        self.assertLess(up, coming.index("panel_ui_sleep(panel_screen,panel_input,false);"))
+
+    def test_a_wake_that_fails_goes_back_to_the_sleep_clock(self):
+        failed = re.search(r"if\(err!=ESP_OK\)\{(.*?)return err;", self.standby(),
+                           re.S)
+        self.assertIsNotNone(failed)
+        self.assertIn("PANEL_PCLK_SLEEP_HZ", failed.group(1))
 
 
 class SleepTimeoutTest(unittest.TestCase):

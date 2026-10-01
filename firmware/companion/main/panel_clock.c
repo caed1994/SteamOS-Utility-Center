@@ -67,18 +67,6 @@ esp_err_t panel_clock_init(void)
     return esp_pm_configure(&config);
 }
 
-void panel_clock_low(bool low)
-{
-    if(!awake || low==is_low)return;
-    esp_err_t err=low?esp_pm_lock_release(awake):esp_pm_lock_acquire(awake);
-    if(err!=ESP_OK){
-        ESP_LOGW("panel_clock","The clock did not go %s: %s",low?"down":"up",
-                 esp_err_to_name(err));
-        return;
-    }
-    is_low=low;
-}
-
 /* How fast the clock really ran, measured and not asked.
  *
  * Read off the board: the health line said cpu=240MHz while the display
@@ -106,6 +94,11 @@ static portMUX_TYPE readings_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t last_cycles[portNUM_PROCESSORS];
 static int64_t last_us[portNUM_PROCESSORS];
 static uint64_t sum_cycles, sum_us;
+/* The same sums once more, set to nought when the clock goes down and read
+ * when it goes up, so they hold one sleep alone. The health line mixes the
+ * end of a sleep with the start of the time awake, and this says what the
+ * sleep itself did. */
+static uint64_t sleep_cycles, sleep_us;
 
 void panel_clock_sample(void)
 {
@@ -117,21 +110,22 @@ void panel_clock_sample(void)
     int64_t now = esp_timer_get_time();
     if (last_us[core] != 0 && now > last_us[core] &&
         now - last_us[core] < STRETCH_MAX_US) {
-        sum_cycles += (uint32_t)(cycles - last_cycles[core]);
-        sum_us += (uint64_t)(now - last_us[core]);
+        uint32_t stretch_cycles = cycles - last_cycles[core];
+        uint64_t stretch_us = (uint64_t)(now - last_us[core]);
+        sum_cycles += stretch_cycles;
+        sum_us += stretch_us;
+        sleep_cycles += stretch_cycles;
+        sleep_us += stretch_us;
     }
     last_cycles[core] = cycles;
     last_us[core] = now;
     portEXIT_CRITICAL(&readings_lock);
 }
 
-void panel_clock_average(unsigned *mhz, unsigned *low_percent)
+/* The mean of a sum of stretches, and its share at the low speed. */
+static void mean_of(uint64_t cycles, uint64_t us, unsigned *mhz,
+                    unsigned *low_percent)
 {
-    portENTER_CRITICAL(&readings_lock);
-    uint64_t cycles = sum_cycles, us = sum_us;
-    sum_cycles = 0;
-    sum_us = 0;
-    portEXIT_CRITICAL(&readings_lock);
     *mhz = 0;
     *low_percent = 0;
     if (us == 0) return;
@@ -142,4 +136,40 @@ void panel_clock_average(unsigned *mhz, unsigned *low_percent)
     else if (mean < PANEL_CLOCK_HIGH_MHZ)
         *low_percent = (PANEL_CLOCK_HIGH_MHZ - mean) * 100
                      / (PANEL_CLOCK_HIGH_MHZ - PANEL_CLOCK_LOW_MHZ);
+}
+
+void panel_clock_average(unsigned *mhz, unsigned *low_percent)
+{
+    portENTER_CRITICAL(&readings_lock);
+    uint64_t cycles = sum_cycles, us = sum_us;
+    sum_cycles = 0;
+    sum_us = 0;
+    portEXIT_CRITICAL(&readings_lock);
+    mean_of(cycles, us, mhz, low_percent);
+}
+
+void panel_clock_low(bool low)
+{
+    if(!awake || low==is_low)return;
+    esp_err_t err=low?esp_pm_lock_release(awake):esp_pm_lock_acquire(awake);
+    if(err!=ESP_OK){
+        ESP_LOGW("panel_clock","The clock did not go %s: %s",low?"down":"up",
+                 esp_err_to_name(err));
+        return;
+    }
+    is_low=low;
+    /* The sums of the sleep start at the clock going down and are read at
+     * the clock going up, one line for each sleep. */
+    portENTER_CRITICAL(&readings_lock);
+    uint64_t cycles = sleep_cycles, us = sleep_us;
+    sleep_cycles = 0;
+    sleep_us = 0;
+    portEXIT_CRITICAL(&readings_lock);
+    if (!low && us > 0) {
+        unsigned mhz, low_percent;
+        mean_of(cycles, us, &mhz, &low_percent);
+        ESP_LOGI("panel_clock","The sleep ran at a mean of %u MHz, %u %% of "
+                 "it at the low speed, over %u s",mhz,low_percent,
+                 (unsigned)(us/1000000));
+    }
 }

@@ -21,6 +21,20 @@ static lv_indev_t *panel_input;
 static esp_lcd_touch_handle_t panel_touch;
 static bool is_asleep;
 
+/* The pixel clock of the display, awake and in a sleep.
+ *
+ * Awake, see the call in panel_display_start. In a sleep the screen shows
+ * the black cover and nothing else, and the board still scans it out at
+ * the full rate: the bounce buffers are filled by an interrupt on the CPU,
+ * which copies every frame out of PSRAM, and while it copies the clock of
+ * the CPU runs at 240 MHz. Read off the board, the CPU spent only about
+ * 55 % of a sleep at the low speed. A third of the pixel clock is a third
+ * of that copying. The driver takes a new pixel clock at the next VSYNC
+ * (lcd_rgb_panel_try_update_pclk), so neither change cuts a frame. */
+#define PANEL_PCLK_HZ        12000000
+#define PANEL_PCLK_SLEEP_HZ   4000000
+static esp_lcd_panel_handle_t panel_rgb;
+
 /* The lowest brightness this board holds steady, in percent.
  *
  * It has two readers. A sleeping panel goes here because it cannot go dark,
@@ -115,7 +129,8 @@ static void lvgl_log(lv_log_level_t level,const char *text)
         ESP_LOGI("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
 }
 
-/* Twenty-four kilobytes for the drawing task. See panel_display_start. */
+/* Twenty-four kilobytes for the drawing task, until a true reading says
+ * how much it uses. See panel_display_start. */
 #define PANEL_LVGL_STACK (24 * 1024)
 
 size_t panel_display_stack_bytes(void){return PANEL_LVGL_STACK;}
@@ -145,20 +160,14 @@ lv_display_t *panel_display_start(void)
      * ui_tick measures what is really left, from inside this task, and says
      * so. A number here without that is a guess that nobody checks.
      *
-     * And the board answered. Twelve kilobytes stood here first, and the
-     * panel reported 708 bytes left of them, at 1831 ms, which is where
-     * the screen is built and the animation starts. So the task really
-     * wants 11580, and whatever ESP_LVGL_PORT_INIT_CONFIG offered was far
-     * under that: the overflow was not bad luck. Sixteen left about 4800
-     * bytes, which was room for a deeper draw than any this had seen.
-     *
-     * It was not room enough. Later the health line said
-     * ui_stack=876/16384: something added since then needs four
-     * kilobytes more, 15508 in all, and 876 is under the floor watch_stack
-     * warns at. Twenty-four leaves about 9000 above that, and the internal
-     * pool had 104 KiB free in the same line. watch_stack now also says
-     * on which screen the stack went deeper, so the next number comes
-     * with a place. */
+     * Twelve kilobytes stood here first, and the overflow did not come
+     * back. Sixteen and then twenty-four followed, on readings of 708 and
+     * then 716 bytes left. Those were not of this task. app_main calls
+     * ui_tick once itself, on the start task, and the reading of that call
+     * was the 3584 bytes of the start task. watch_stack now reads from the
+     * LVGL timer only, and the next health line says what this task really
+     * uses. Twenty-four stays until it has: then this number comes from
+     * that reading and not from a wrong one. */
     port.task_stack=PANEL_LVGL_STACK;
     ESP_ERROR_CHECK(lvgl_port_init(&port));
     /* After lvgl_port_init, which is what calls lv_init. */
@@ -187,7 +196,8 @@ lv_display_t *panel_display_start(void)
     bsp_display_brightness_set(BACKLIGHT_SLEEP_PERCENT);
     /* Board default is 16 MHz (~60 Hz). 12 MHz requests ~45 Hz and reduces
      * continuous pixel traffic by 25%; actual divider may round downward. */
-    ESP_ERROR_CHECK(esp_lcd_rgb_panel_set_pclk(panel,12000000));
+    ESP_ERROR_CHECK(esp_lcd_rgb_panel_set_pclk(panel,PANEL_PCLK_HZ));
+    panel_rgb=panel;
 
     /* LVGL draws into the panel's own frame buffers, and there are two.
      *
@@ -475,15 +485,22 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
          * visible. */
         panel_ui_sleep(panel_screen,panel_input,true);
         backlight_off();
+        /* After the cover is on the screen, so the slow frames are black
+         * ones. See PANEL_PCLK_SLEEP_HZ. */
+        if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_SLEEP_HZ);
         ESP_LOGI("panel_display",
                  "Display asleep: backlight down to %d%%, which is as dark "
-                 "as this board goes",BACKLIGHT_SLEEP_PERCENT);
+                 "as this board goes, pixel clock %d MHz",BACKLIGHT_SLEEP_PERCENT,
+                 PANEL_PCLK_SLEEP_HZ/1000000);
     }else{
+        /* The full pixel clock before the first frame that shows anything. */
+        if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_HZ);
         panel_ui_sleep(panel_screen,panel_input,false);
         esp_err_t err=backlight_on(brightness);
         if(err!=ESP_OK){
             backlight_off();
             panel_ui_sleep(panel_screen,panel_input,true);
+            if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_SLEEP_HZ);
             return err;
         }
         ESP_LOGI("panel_display","Backlight ON: PWM restored to %d%%",brightness);
