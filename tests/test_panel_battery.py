@@ -10,10 +10,11 @@ worse.
 
 The first rules are the ones that matter most. A power chip decides which
 rails of the board have power, and a wrong write to it can switch off the
-rail the panel runs on. So the reader reads, and writes two fields of the
-charger and nothing else: bit 4 of 0x50, which sets the TS pin apart from
-the charger, and 0x62, the charge current. Its owner allowed exactly those
-two, after the panel charged a cell of 5000 mAh far too slowly.
+rail the panel runs on. So the reader reads, and writes three fields of
+the charger and nothing else: bit 4 of 0x50, which sets the TS pin apart
+from the charger, 0x62, the charge current, and bits 2:0 of 0x69, the CHG
+LED. Its owner allowed the first two after the panel charged a cell of
+5000 mAh far too slowly, and the third for the LED, which stayed dark.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ def read(name):
 
 
 class WriteTest(unittest.TestCase):
-    """Two fields of the charger are written, and nothing else is."""
+    """Three fields of the charger are written, and nothing else is."""
 
     def body(self, code, start):
         found = re.search(re.escape(start) + r".*?\n\}", code, re.S)
@@ -65,7 +66,7 @@ class WriteTest(unittest.TestCase):
         writer = self.body(code, "static esp_err_t write_register(")
         self.assertIn("i2c_master_transmit(", writer)
 
-    def test_only_set_field_writes_and_only_for_the_two_fields(self):
+    def test_only_set_field_writes_and_only_for_the_three_fields(self):
         """A rail of the board is a register too. One more call of
         set_field with another register would switch it as easily."""
         code = read("panel_battery.c")
@@ -78,6 +79,7 @@ class WriteTest(unittest.TestCase):
         self.assertEqual(sorted(fields), [
             ("AXP2101_CHARGE_CURRENT", "CHARGE_CURRENT_MASK",
              "CHARGE_CURRENT_CODE"),
+            ("AXP2101_CHGLED", "CHGLED_MASK", "CHGLED_TYPE_A"),
             ("AXP2101_TS_CONTROL", "TS_APART_MASK", "TS_APART")])
 
     def test_the_fields_are_the_ones_allowed(self):
@@ -86,7 +88,9 @@ class WriteTest(unittest.TestCase):
                             ("CHARGE_CURRENT_MASK", "0x1F"),
                             ("CHARGE_CURRENT_CODE", "0x10"),
                             ("CHARGE_CURRENT_MA", "1000"),
-                            ("PANEL_CELL_MAH", "5000")):
+                            ("PANEL_CELL_MAH", "5000"),
+                            ("CHGLED_MASK", "0x07"),
+                            ("CHGLED_TYPE_A", "0x01")):
             self.assertRegex(code, r"#define %s\s+%s\b" % (name, value))
 
     def test_the_writes_come_once_at_the_start_after_the_type(self):
@@ -236,8 +240,8 @@ class ChargerReportTest(unittest.TestCase):
     def one(self, *commands):
         """The line at the start, with the two registers the start writes
         locked, so the line shows the values the test set."""
-        lines = self.charger(*CHARGING, "lock 50", "lock 62", *commands,
-                             "init")
+        lines = self.charger(*CHARGING, "lock 50", "lock 62", "lock 69",
+                             *commands, "init")
         self.assertEqual(len(lines), 1)
         return lines[0]
 
@@ -323,18 +327,20 @@ class ChargerReportTest(unittest.TestCase):
         self.assertTrue(output[-2].startswith("writes:"), output[-2])
         return output[-2][len("writes:"):].split()
 
-    def test_the_start_writes_the_two_fields_and_keeps_the_rest(self):
+    def test_the_start_writes_the_three_fields_and_keeps_the_rest(self):
         """0x0a in 0x50 is the current source of the TS pin, and it stays.
-        The top three bits of 0x62 are read only in the chip, and stay."""
+        The top three bits of 0x62 are read only in the chip, and stay.
+        Bits 5:4 of 0x69 drive the LED only in the mode this leaves, and
+        stay as well."""
         self.assertEqual(self.writes(*CHARGING, "set 50 0a", "set 62 e9",
-                                     "init"),
-                         ["50=1a*1", "62=f0*1"])
+                                     "set 69 35", "init"),
+                         ["50=1a*1", "62=f0*1", "69=31*1"])
 
     def test_a_field_that_holds_its_value_is_not_written(self):
         """Which is every start after the first, until the cell is
         unplugged."""
         self.assertEqual(self.writes(*CHARGING, "set 50 1a", "set 62 10",
-                                     "init"), ["none"])
+                                     "set 69 01", "init"), ["none"])
 
     def test_readings_write_nothing(self):
         """The writes come at the start, once, and the reading every five
@@ -343,7 +349,8 @@ class ChargerReportTest(unittest.TestCase):
         for second in range(5, 300, 5):
             commands += ["at %d" % second, "read"]
         commands += ["set 01 23", "at 400", "read"]
-        self.assertEqual(self.writes(*commands), ["50=10*1", "62=10*1"])
+        self.assertEqual(self.writes(*commands),
+                         ["50=10*1", "62=10*1", "69=01*1"])
 
     def test_another_chip_gets_nothing_written(self):
         """Something else at 0x34 is not the chip these numbers belong
@@ -360,9 +367,22 @@ class ChargerReportTest(unittest.TestCase):
         self.assertIn("62=00*1", output[-2])
 
     def test_the_line_shows_the_values_the_start_wrote(self):
-        line = self.charger(*CHARGING, "set 50 0a", "set 62 09", "init")[0]
+        line = self.charger(*CHARGING, "set 50 0a", "set 62 09", "set 69 04",
+                            "init")[0]
         self.assertIn("icc=1000 mA", line)
         self.assertIn("apart from the charger", line)
+        self.assertIn("; led shows the charge (type A)", line)
+
+    def test_the_line_names_what_the_led_does(self):
+        """Read before the write, the line says why the LED was dark; the
+        log line of the write says the value it found."""
+        for code, name in ((0x00, "off"), (0x04, "off"),
+                           (0x01, "shows the charge (type A)"),
+                           (0x03, "type B"), (0x05, "for software to switch"),
+                           (0x07, "reserved"), (0x31, "shows the charge")):
+            with self.subTest(code=code):
+                self.assertIn("; led %s" % name,
+                              self.one("set 69 %x" % code))
 
 
 class ChargerRegisterTest(unittest.TestCase):
@@ -383,7 +403,8 @@ class ChargerRegisterTest(unittest.TestCase):
                             ("AXP2101_PRECHARGE", "0x61"),
                             ("AXP2101_CHARGE_CURRENT", "0x62"),
                             ("AXP2101_TERMINATION", "0x63"),
-                            ("AXP2101_CHARGE_VOLTAGE", "0x64")):
+                            ("AXP2101_CHARGE_VOLTAGE", "0x64"),
+                            ("AXP2101_CHGLED", "0x69")):
             self.assertRegex(code, r"#define %s\s+%s\b" % (name, value))
 
 

@@ -6,7 +6,7 @@
 // The 4B carries an AXP2101, which charges a cell and keeps a gauge of it.
 // Nothing in the board support speaks to it, so this does. A power chip
 // decides which rails of the board have power, and one wrong write to it
-// can switch off the rail this code runs on. So it reads, and writes two
+// can switch off the rail this code runs on. So it reads, and writes three
 // fields of the charger and nothing else: see charger_set. The rules in
 // tests/test_panel_battery.py hold that.
 //
@@ -35,9 +35,10 @@
 /* The gauge, in per cent. */
 #define AXP2101_PERCENT  0xA4
 
-/* The charger, read for the line in the log below and never set. The
- * numbers and the bits are those of the AXP2101 datasheet V1.4, chapter
- * 6.13.2, which XPowersLib carries in its datasheet/ directory. */
+/* The charger, read for the line in the log below. charger_set writes a
+ * field of three of them, and only those. The numbers and the bits are
+ * those of the AXP2101 datasheet V1.4, chapter 6.13.2, which XPowersLib
+ * carries in its datasheet/ directory. */
 #define AXP2101_VINDPM          0x15  /* 3:0, 3.88 V and 80 mV a step */
 #define AXP2101_INPUT_LIMIT     0x16  /* 2:0, see input_limit_ma */
 #define AXP2101_CHARGER_ON      0x18  /* bit 1, the cell charger */
@@ -52,6 +53,7 @@
 #define AXP2101_CHARGE_CURRENT  0x62  /* 4:0, see charge_current_ma */
 #define AXP2101_TERMINATION     0x63  /* 3:0, 25 mA a step; bit 4 on */
 #define AXP2101_CHARGE_VOLTAGE  0x64  /* 2:0, see charge_voltage_mv */
+#define AXP2101_CHGLED          0x69  /* bit 0 pin on, 2:1 how, see led_name */
 /* A reading of the TS pin with nothing connected to it. */
 #define AXP2101_TS_OPEN         0x2000
 /* At most one line about the charger in this time, however often its
@@ -60,15 +62,18 @@
 
 /* The cell of this panel, as its owner read it off the cell. */
 #define PANEL_CELL_MAH          5000
-/* The two fields charger_set writes. 1000 mA is the most the chip gives,
- * and a fifth of the cell an hour (0.2 C), well under what a cell of
- * this size takes. Bit 4 of the TS control sets the TS pin apart from the
- * charger. */
+/* The three fields charger_set writes. 1000 mA is the most the chip
+ * gives, and a fifth of the cell an hour (0.2 C), well under what a cell
+ * of this size takes. Bit 4 of the TS control sets the TS pin apart from
+ * the charger. 0x01 in bits 2:0 of the CHGLED control is the pin on, with
+ * the LED of type A. */
 #define CHARGE_CURRENT_MA       1000
 #define CHARGE_CURRENT_CODE     0x10
 #define CHARGE_CURRENT_MASK     0x1F
 #define TS_APART                0x10
 #define TS_APART_MASK           0x10
+#define CHGLED_TYPE_A           0x01
+#define CHGLED_MASK             0x07
 _Static_assert(CHARGE_CURRENT_MA <= PANEL_CELL_MAH / 2,
                "more than half the cell an hour is too fast for it");
 _Static_assert(CHARGE_CURRENT_CODE == 8 + (CHARGE_CURRENT_MA - 200) / 100,
@@ -116,7 +121,7 @@ static void set_field(uint8_t reg, uint8_t mask, uint8_t bits, const char *what)
     ESP_LOGI(tag, "%s: 0x%02x from 0x%02x to 0x%02x", what, reg, before, after);
 }
 
-/* The two settings of the charger that this panel needs, and the only
+/* The three settings of the charger that this panel needs, and the only
  * writes to the chip anywhere in this firmware.
  *
  * Read off the board, before this existed: the panel charged slowly, with
@@ -136,16 +141,29 @@ static void set_field(uint8_t reg, uint8_t mask, uint8_t bits, const char *what)
  * fuse in the chip. That fills a cell of 5000 mAh in most of a day. See
  * CHARGE_CURRENT_MA for the value now.
  *
- * Both keep their values while the chip has power, and the chip has power
- * from the cell when the panel is off. So the panel charges at this speed
- * off as well, until the cell is unplugged. Everything else stays at what
- * the chip came with: the rails, the target voltage, the safety timers. */
+ * The CHG LED beside the USB-OTG port, which its owner found dark. The
+ * chip drives it through its CHGLED pin, in the way bits 2:1 of 0x69
+ * say, and the value of those after a reset comes from a fuse. One of the
+ * ways keeps the LED for software to switch, and dark until then. Type A,
+ * which this sets, lights it while the cell charges, keeps it dark when
+ * the cell is full or nothing charges, and blinks it when the charger has
+ * a fault: 1 Hz for a safety timer that ran out or heat, 4 Hz for too
+ * high a voltage (datasheet V1.4, table 6-4). Its owner allowed this
+ * third write after the first two.
+ *
+ * All three keep their values while the chip has power, and the chip has
+ * power from the cell when the panel is off. So the panel charges at this
+ * speed, and shows it, off as well, until the cell is unplugged.
+ * Everything else stays at what the chip came with: the rails, the target
+ * voltage, the safety timers. */
 static void charger_set(void)
 {
     set_field(AXP2101_TS_CONTROL, TS_APART_MASK, TS_APART,
               "TS pin apart from the charger");
     set_field(AXP2101_CHARGE_CURRENT, CHARGE_CURRENT_MASK, CHARGE_CURRENT_CODE,
               "charge current 1000 mA");
+    set_field(AXP2101_CHGLED, CHGLED_MASK, CHGLED_TYPE_A,
+              "charge LED on while charging");
 }
 
 /* One register for the log line, or -1 when the chip did not answer. */
@@ -198,6 +216,19 @@ static const char *charge_state_name(uint8_t status2)
     }
 }
 
+/* What the CHG LED does, from bits 2:0 of 0x69. */
+static const char *led_name(int code)
+{
+    if (code < 0) return "?";
+    if (!(code & 0x01)) return "off";
+    switch ((code >> 1) & 0x03) {
+    case 0: return "shows the charge (type A)";
+    case 1: return "type B";
+    case 2: return "for software to switch";
+    default: return "reserved";
+    }
+}
+
 /* What the charger does and what it is set to, in one line.
  *
  * Asked about on the board: the panel charges slowly, with a charger and
@@ -205,9 +236,10 @@ static const char *charge_state_name(uint8_t status2)
  * switched on. The speed of a charge is not the charger on the wall here.
  * It is what this chip is set to, and two of its settings are suspects:
  *
- * The charge current and the TS pin, which charger_set writes. This line
- * shows what they hold, and whether the chip holds the current under its
- * setting for a reason of its own: heat, or an input that gives less.
+ * The charge current, the TS pin and the LED, which charger_set writes.
+ * This line shows what they hold, and whether the chip holds the current
+ * under its setting for a reason of its own: heat, or an input that gives
+ * less.
  *
  * Reads only. */
 static void charger_report(uint8_t status1, uint8_t status2)
@@ -240,7 +272,7 @@ static void charger_report(uint8_t status1, uint8_t status2)
 
     ESP_LOGI(tag, "charger: %s, %s, charger %s, vbat=%d mV, held by %s; "
              "set to icc=%d mA pre=%d mA term=%d mA%s cv=%d mV iin=%d mA "
-             "vindpm=%d mV; ts=%s, %s, jeita %s",
+             "vindpm=%d mV; ts=%s, %s, jeita %s; led %s",
              charge_state_name(status2),
              (status1 & (1u << 5)) ? "input good" : "no good input",
              on < 0 ? "?" : (on & 0x02) ? "on" : "off",
@@ -256,7 +288,8 @@ static void charger_report(uint8_t status1, uint8_t status2)
              ts_text,
              ts_control < 0 ? "?" : (ts_control & 0x10)
                  ? "apart from the charger" : "a sensor that can stop the charger",
-             jeita < 0 ? "?" : (jeita & 0x01) ? "on" : "off");
+             jeita < 0 ? "?" : (jeita & 0x01) ? "on" : "off",
+             led_name(read_or_none(AXP2101_CHGLED)));
 }
 
 /* A line at the first reading, and one when the state of the charger
