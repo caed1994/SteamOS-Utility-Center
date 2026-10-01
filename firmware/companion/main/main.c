@@ -62,6 +62,21 @@ static int display_sleep_after;
  * So the reason is kept and not only the state. The button is the only
  * way back from a sleep the button started. */
 static atomic_bool asleep_by_hand;
+/* The radio, at rest while the display sleeps by the button.
+ *
+ * Asked for: a panel switched off by hand spends nothing on the network.
+ * One that went down after the set time stays on it, so its numbers are
+ * current the moment a touch brings it back. The button is the only way
+ * back from the first, and the radio joins again then. That takes some
+ * seconds, and the network mark is red until it has.
+ *
+ * Written by the network task alone, which is the one that stops and
+ * starts the radio. Read by wifi_event on the event task: the disconnect
+ * that esp_wifi_stop causes is no reason to connect again. */
+static atomic_bool radio_resting;
+/* When the radio came back, for the line that says how long the join took
+ * after it. Nought when no join after a rest is under way. */
+static atomic_uint radio_back_ms;
 static QueueHandle_t actions;
 static QueueHandle_t sounds;
 static SemaphoreHandle_t lock;
@@ -224,9 +239,13 @@ static void display_sleeping(bool sleep,bool by_hand)
      * counts the whole sleep as time without a touch and goes straight
      * back down. */
     if(!sleep)lv_display_trigger_activity(NULL);
-    ESP_LOGI("panel_power","Display %s%s; Wi-Fi and PC polling remain active",
-             sleep?"standby":"awake",
-             sleep?(by_hand?" by the button":" after the set time"):"");
+    if(!sleep)ESP_LOGI("panel_power","Display awake");
+    else if(by_hand)
+        ESP_LOGI("panel_power","Display standby by the button; Wi-Fi and PC "
+                 "polling stop until the button wakes it");
+    else
+        ESP_LOGI("panel_power","Display standby after the set time; Wi-Fi "
+                 "and PC polling remain active");
 }
 
 static void ui_tick(lv_timer_t *timer)
@@ -553,12 +572,17 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         ESP_LOGW("panel_wifi","Disconnected, reason=%u: %s",
                  event->reason,wifi_reason_name(event->reason));
         xSemaphoreTake(lock,portMAX_DELAY);
-        state.wifi=false; state.online=false; bool reconnect=!state.setup;
+        state.wifi=false; state.online=false;
+        bool reconnect=!state.setup && !atomic_load(&radio_resting);
         xSemaphoreGive(lock);
         if (reconnect) esp_wifi_connect();
     }
     if (base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {
         xSemaphoreTake(lock,portMAX_DELAY); state.wifi=true; xSemaphoreGive(lock);
+        unsigned back=atomic_exchange(&radio_back_ms,0u);
+        if (back)
+            ESP_LOGI("panel_wifi","Joined again %u ms after the radio came back",
+                     (unsigned)esp_log_timestamp()-back);
     }
 }
 
@@ -573,6 +597,43 @@ static void portal_start(void)
     snprintf(state.setup_ssid,sizeof(state.setup_ssid),"%s",ssid);
     snprintf(state.setup_password,sizeof(state.setup_password),"%s",password);
     xSemaphoreGive(lock);
+}
+
+/* Stop the radio or start it again, from the network task alone.
+ *
+ * esp_wifi_stop and esp_wifi_start wait for the driver, and the task that
+ * draws must not wait. Called once for each change of what is wanted, so a
+ * call that fails writes one warning and not one every turn of the loop.
+ * The configuration stays in the driver over a stop, and the start finds
+ * the same network with the same rules as the first join. */
+static void radio_rest(bool rest)
+{
+    if (rest) {
+        atomic_store(&radio_resting,true);
+        atomic_store(&radio_back_ms,0u);
+        esp_err_t err=esp_wifi_stop();
+        if (err!=ESP_OK) {
+            atomic_store(&radio_resting,false);
+            ESP_LOGW("panel_wifi","The radio did not stop: %s",esp_err_to_name(err));
+            return;
+        }
+        xSemaphoreTake(lock,portMAX_DELAY);
+        state.wifi=false; state.online=false;
+        xSemaphoreGive(lock);
+        ESP_LOGI("panel_wifi","Radio off while the display sleeps by the button");
+        return;
+    }
+    if (!atomic_load(&radio_resting)) return;
+    atomic_store(&radio_resting,false);
+    atomic_store(&radio_back_ms,(unsigned)esp_log_timestamp());
+    esp_err_t err=esp_wifi_start();
+    if (err==ESP_OK) err=esp_wifi_connect();
+    if (err!=ESP_OK) {
+        atomic_store(&radio_back_ms,0u);
+        ESP_LOGW("panel_wifi","The radio did not start again: %s",esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGI("panel_wifi","Radio on again, joining the network");
 }
 
 static void network_task(void *arg)
@@ -592,7 +653,20 @@ static void network_task(void *arg)
     /* Due at once, so the corner of the screen fills at the first turn
      * and not five seconds after the rest. */
     TickType_t last_battery=xTaskGetTickCount()-pdMS_TO_TICKS(5000);
+    bool rest_wanted=false,was_connected=false;
     for (;;) {
+        /* The radio rests while the display sleeps by the button, and not
+         * during the setup: a phone talks to the access point of the setup,
+         * whatever the screen does. */
+        xSemaphoreTake(lock,portMAX_DELAY); bool setup=state.setup; xSemaphoreGive(lock);
+        bool rest=atomic_load(&asleep_by_hand) && !setup;
+        if (rest!=rest_wanted) { rest_wanted=rest; radio_rest(rest); }
+        /* Ask the PC as soon as the network is there, and not up to three
+         * seconds later. After a rest that is the wait somebody sees. */
+        bool now_connected=connected();
+        if (now_connected && !was_connected)
+            last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
+        was_connected=now_connected;
         /* The battery of the panel.
          *
          * Here and not in the LVGL timer. This is an I2C read on the bus
@@ -623,7 +697,7 @@ static void network_task(void *arg)
             xSemaphoreTake(lock,portMAX_DELAY);
             bool wifi=state.wifi,online=state.online;
             xSemaphoreGive(lock);
-            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d key_slowest=%ums",
+            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d radio_rest=%d key_slowest=%ums",
                 now_ms/1000,now_ms-atomic_load(&ui_heartbeat_ms),
                 (unsigned)esp_get_free_heap_size(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
@@ -634,7 +708,7 @@ static void network_task(void *arg)
                  * was given. See watch_stack. */
                 atomic_load(&ui_stack_left),
                 (unsigned)panel_display_stack_bytes(),wifi,online,
-                atomic_load(&display_asleep),
+                atomic_load(&display_asleep),atomic_load(&radio_resting),
                 /* The slowest turn of the key loop since the last line.
                  * The shortest press the panel can see is about twice
                  * this, so a number far above PWRKEY_PERIOD_MS is why a
@@ -667,7 +741,8 @@ static void network_task(void *arg)
                 last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
             }
         }
-        if (xTaskGetTickCount()-last_poll>=pdMS_TO_TICKS(3000)) {
+        if (!atomic_load(&radio_resting) &&
+            xTaskGetTickCount()-last_poll>=pdMS_TO_TICKS(3000)) {
             last_poll=xTaskGetTickCount();
             int code=connected() ? request("/v1/status",NULL) : 0;
             xSemaphoreTake(lock,portMAX_DELAY);

@@ -255,3 +255,88 @@ class LogSharingTest(unittest.TestCase):
         started = code.index("lvgl_port_init(&port)")
         registered = code.index("lv_log_register_print_cb")
         self.assertLess(started, registered)
+
+
+class RadioRestTest(unittest.TestCase):
+    """The radio off while the display sleeps by the button.
+
+    Asked for: a panel switched off with the button spends nothing on the
+    network, and one that went dark after the set time stays on it, so its
+    numbers are current when a touch brings it back. None of this runs
+    here. Each rule below is one way the change breaks without a word.
+    """
+
+    def source(self):
+        return without_comments(read("main.c"))
+
+    def body(self, start):
+        found = re.search(re.escape(start) + r".*?\n\}", self.source(), re.S)
+        self.assertIsNotNone(found, start)
+        return found.group(0)
+
+    def test_the_reason_of_the_sleep_decides_and_the_setup_keeps_its_radio(
+            self):
+        """The button and not the sleep. And not during the setup: a phone
+        talks to the access point of the setup, whatever the screen
+        does."""
+        task = self.body("static void network_task(void *arg)")
+        self.assertRegex(task, r"bool setup=state\.setup;")
+        self.assertRegex(
+            task, r"bool rest=atomic_load\(&asleep_by_hand\)\s*&&\s*!setup;")
+        self.assertRegex(task, r"if \(rest!=rest_wanted\) \{ rest_wanted=rest; "
+                               r"radio_rest\(rest\); \}")
+
+    def test_only_the_network_task_stops_and_starts_the_radio(self):
+        """esp_wifi_stop waits for the driver. In the task that draws, that
+        wait freezes the screen and the key with it."""
+        code = self.source()
+        rest = self.body("static void radio_rest(bool rest)")
+        self.assertEqual(code.count("esp_wifi_stop("), 1)
+        self.assertIn("esp_wifi_stop(", rest)
+        self.assertIn("esp_wifi_start(", rest)
+        callers = re.findall(r"\bradio_rest\(rest\)", code)
+        self.assertEqual(len(callers), 1)
+        self.assertIn("radio_rest(rest)",
+                      self.body("static void network_task(void *arg)"))
+        for start in ("static void ui_tick(lv_timer_t *timer)",
+                      "static void display_sleeping(bool sleep,bool by_hand)"):
+            self.assertNotIn("esp_wifi_", self.body(start), start)
+
+    def test_a_stop_is_no_reason_to_connect_again(self):
+        """The stop disconnects, and the handler of a disconnect connects
+        again. So the rest is marked before the stop, and the handler
+        reads the mark."""
+        handler = self.body("static void wifi_event(")
+        self.assertRegex(handler,
+                         r"bool reconnect=!state\.setup && "
+                         r"!atomic_load\(&radio_resting\);")
+        rest = self.body("static void radio_rest(bool rest)")
+        self.assertLess(rest.index("atomic_store(&radio_resting,true)"),
+                        rest.index("esp_wifi_stop()"))
+
+    def test_nothing_is_asked_of_the_pc_while_the_radio_rests(self):
+        self.assertRegex(
+            self.body("static void network_task(void *arg)"),
+            r"if \(!atomic_load\(&radio_resting\) &&\s*"
+            r"xTaskGetTickCount\(\)-last_poll>=pdMS_TO_TICKS\(3000\)\)")
+
+    def test_the_driver_keeps_what_it_was_given(self):
+        """A deinit drops the configuration: the scan of every channel, the
+        floor under the signal, the retries. A start after it would join
+        with none of them, if it joined at all."""
+        self.assertNotIn("esp_wifi_deinit", self.source())
+
+    def test_the_pc_is_asked_as_soon_as_the_network_is_there(self):
+        """And not up to three seconds later. After a rest that is the
+        wait somebody stands in front of."""
+        self.assertRegex(
+            self.body("static void network_task(void *arg)"),
+            r"if \(now_connected && !was_connected\)\s*"
+            r"last_poll=xTaskGetTickCount\(\)-pdMS_TO_TICKS\(3000\);")
+
+    def test_the_log_says_how_long_the_join_after_a_rest_took(self):
+        """The few seconds this costs are a guess until the board says."""
+        handler = self.body("static void wifi_event(")
+        self.assertIn("atomic_exchange(&radio_back_ms,0u)", handler)
+        self.assertIn("Joined again %u ms after the radio came back", handler)
+        self.assertIn("radio_rest=%d", self.source())
