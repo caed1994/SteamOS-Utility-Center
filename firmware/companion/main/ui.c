@@ -9,6 +9,7 @@
 #include "icons.h"
 #include "panel_text.h"
 #include "panel_ui_sleep.h"
+#include "panel_timer.h"
 
 #define BG 0x0C1721
 #define CARD 0x111F2B
@@ -36,6 +37,22 @@ static void name_show(const char *text);
 static lv_obj_t *drive_rows[PANEL_DRIVES],*drive_names[PANEL_DRIVES];
 static lv_obj_t *drive_bars[PANEL_DRIVES],*drive_free[PANEL_DRIVES];
 static lv_obj_t *no_drives,*band,*esp_power,*wifi_mark;
+/* The fourth page: the clock, and the timer under it. */
+LV_FONT_DECLARE(panel_clock_font);
+static lv_obj_t *clock_digits,*clock_date,*timer_value,*timer_minus,*timer_plus;
+static lv_obj_t *timer_go,*timer_go_label,*timer_reset,*alarm_layer;
+/* The timer itself is not part of the screen. panel_ui_create builds the
+ * screen again when the language changes, and a timer that runs goes on
+ * running through that. */
+static panel_timer_t timer;
+/* When a held + or - last counted on. LVGL repeats a held press every
+ * 100 ms, and the steps of five come every TIMER_HOLD_EVERY_MS of those. */
+static uint32_t hold_counted;
+#define TIMER_HOLD_EVERY_MS 400
+/* The alarm stays audible with the sound turned right down. */
+#define ALARM_LEAST_VOLUME 40
+_Static_assert(TXT_SATURDAY==TXT_SUNDAY+6,"the days of the week in a row, from Sunday as tm_wday counts");
+_Static_assert(TXT_DECEMBER==TXT_JANUARY+11,"the months in a row");
 static panel_action_cb_t send_action;
 static panel_setting_cb_t save_setting;
 static panel_sound_cb_t play_sound;
@@ -313,11 +330,111 @@ const char *panel_ui_where(void)
     if(!band)return "no screen";
     /* Read from where the band stands: a swipe that did not carry far
      * enough left it on the page it was on. */
-    static const char *const pages[]={"the first page","the second page","the third page"};
+    static const char *const pages[PANEL_PAGES]={"the first page","the second page",
+                                                 "the third page","the fourth page"};
     int32_t page=(lv_obj_get_scroll_x(band)+240)/480;
     if(page<0)page=0;
-    if(page>2)page=2;
+    if(page>PANEL_PAGES-1)page=PANEL_PAGES-1;
     return pages[page];
+}
+
+/* A label set only when its text is new. LVGL draws a label again at each
+ * set, and the timer and the clock are asked five times a second. */
+static void set_text(lv_obj_t *label,const char *text)
+{
+    if(label&&strcmp(lv_label_get_text(label),text)!=0)lv_label_set_text(label,text);
+}
+static void enable(lv_obj_t *o,bool on)
+{
+    if(!o)return;
+    if(on)lv_obj_remove_state(o,LV_STATE_DISABLED);else lv_obj_add_state(o,LV_STATE_DISABLED);
+}
+/* What the timer shows: what is left in minutes and seconds, a second
+ * rounded up, so a timer of five minutes starts at 05:00 and reaches 00:00
+ * as it goes off. + and - stay usable while it is idle or paused, and the
+ * start turns into a pause while it runs. */
+static void timer_show(void)
+{
+    if(!timer_value)return;
+    uint32_t left=panel_timer_left_ms(&timer,lv_tick_get());
+    unsigned seconds=(unsigned)((left+999u)/1000u);
+    char text[16];
+    snprintf(text,sizeof text,"%02u:%02u",seconds/60u,seconds%60u);
+    set_text(timer_value,text);
+    bool still=timer.phase==PANEL_TIMER_IDLE||timer.phase==PANEL_TIMER_PAUSED;
+    enable(timer_minus,still&&left>0);
+    enable(timer_plus,still&&left<(uint32_t)PANEL_TIMER_MAX_MIN*60u*1000u);
+    enable(timer_go,timer.phase==PANEL_TIMER_RUNNING||(still&&left>0));
+    set_text(timer_go_label,panel_text(timer.phase==PANEL_TIMER_RUNNING?TXT_PAUSE:TXT_START));
+    enable(timer_reset,timer.phase!=PANEL_TIMER_IDLE||left>0);
+}
+/* + and -, a tap and a press that is held. A tap is SHORT_CLICKED, which
+ * LVGL sends only for a press that did not turn long, so the release of a
+ * held press adds nothing. CLICKED comes after both and is left alone. */
+static void timer_step(lv_event_t *e)
+{
+    lv_event_code_t code=lv_event_get_code(e);
+    int sign=(int)(intptr_t)lv_event_get_user_data(e);
+    int minutes=0;
+    if(code==LV_EVENT_SHORT_CLICKED)minutes=PANEL_TIMER_TAP_MIN;
+    else if(code==LV_EVENT_LONG_PRESSED){
+        minutes=PANEL_TIMER_HOLD_MIN;hold_counted=lv_tick_get();
+    }else if(code==LV_EVENT_LONG_PRESSED_REPEAT&&lv_tick_elaps(hold_counted)>=TIMER_HOLD_EVERY_MS){
+        minutes=PANEL_TIMER_HOLD_MIN;hold_counted=lv_tick_get();
+    }
+    if(minutes&&panel_timer_adjust(&timer,sign*minutes)){feedback();timer_show();}
+}
+static void timer_go_clicked(lv_event_t *e)
+{
+    (void)e;
+    uint32_t now=lv_tick_get();
+    if(timer.phase==PANEL_TIMER_RUNNING)panel_timer_pause(&timer,now);
+    else panel_timer_start(&timer,now);
+    feedback();timer_show();
+}
+static void timer_reset_clicked(lv_event_t *e){(void)e;panel_timer_reset(&timer);feedback();timer_show();}
+static void alarm_hide(void){if(alarm_layer){lv_obj_delete(alarm_layer);alarm_layer=NULL;}}
+static void alarm_clicked(lv_event_t *e){(void)e;panel_ui_timer_stop();}
+/* Over everything else on the screen, the settings and a question too,
+ * because the timer that rings may not be the page somebody is on. A tap
+ * anywhere on it stops it, and so does the button of the panel: see
+ * ui_tick in main.c. */
+static void alarm_show(void)
+{
+    if(alarm_layer)return;
+    alarm_layer=panel(lv_screen_active(),0,0,480,480,BG,false);
+    lv_obj_set_style_bg_opa(alarm_layer,LV_OPA_90,0);
+    lv_obj_add_event_cb(alarm_layer,alarm_clicked,LV_EVENT_CLICKED,NULL);
+    /* The card takes no press of its own, so a press on it reaches the
+     * layer under it. */
+    lv_obj_t *box=panel(alarm_layer,20,112,440,256,CARD,true);
+    lv_obj_remove_flag(box,LV_OBJ_FLAG_CLICKABLE);
+    center_text(text_at(box,panel_text(TXT_TIMER),20,26,400,&lv_font_montserrat_20,MUTED));
+    center_text(text_at(box,panel_text(TXT_TIME_UP),20,64,400,&lv_font_montserrat_32,TEXT));
+    lv_obj_t *stop=button(box,panel_text(TXT_STOP),70,152,300,72,alarm_clicked,0);
+    lv_obj_set_style_bg_color(stop,lv_color_hex(BLUE),0);
+    lv_obj_set_style_text_color(stop,lv_color_hex(BG),0);
+    lv_obj_set_style_text_font(stop,&lv_font_montserrat_24,0);
+}
+panel_timer_news_t panel_ui_timer_tick(void)
+{
+    panel_timer_news_t news=panel_timer_tick(&timer,lv_tick_get());
+    if(news.went_off)alarm_show();
+    if(news.gave_up)alarm_hide();
+    timer_show();
+    return news;
+}
+bool panel_ui_timer_stop(void)
+{
+    if(!panel_timer_stop(&timer))return false;
+    alarm_hide();
+    timer_show();
+    return true;
+}
+bool panel_ui_timer_ringing(void){return timer.phase==PANEL_TIMER_RINGING;}
+int panel_ui_alarm_volume(void)
+{
+    return local.sound_volume>ALARM_LEAST_VOLUME?local.sound_volume:ALARM_LEAST_VOLUME;
 }
 /* How a drive row sits in its card.
  *
@@ -377,6 +494,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * to freed memory, and panel_ui_update writes through these. */
     band=NULL;mode_now=NULL;mode_button=NULL;mode_caption=NULL;
     playing_name=NULL;achievement_count=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
+    clock_digits=NULL;clock_date=NULL;timer_value=NULL;timer_minus=NULL;timer_plus=NULL;
+    timer_go=NULL;timer_go_label=NULL;timer_reset=NULL;alarm_layer=NULL;
     for(int i=0;i<PANEL_DRIVES;i++){
         drive_rows[i]=NULL;drive_names[i]=NULL;
         drive_bars[i]=NULL;drive_free[i]=NULL;
@@ -415,8 +534,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_remove_flag(band,LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_pad_all(band,0,0);
     lv_obj_set_scrollbar_mode(band,LV_SCROLLBAR_MODE_OFF);
-    lv_obj_t *page[3];
-    for(int i=0;i<3;i++){
+    lv_obj_t *page[PANEL_PAGES];
+    for(int i=0;i<PANEL_PAGES;i++){
         page[i]=panel(band,i*480,0,480,300,BG,false);
         lv_obj_set_style_bg_opa(page[i],LV_OPA_TRANSP,0);
         lv_obj_remove_flag(page[i],LV_OBJ_FLAG_CLICKABLE);
@@ -504,6 +623,36 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     center_text(text_at(play_card,panel_text(TXT_ACHIEVEMENTS),20,160,420,&lv_font_montserrat_20,MUTED));
     achievement_count=text_at(play_card,"--",20,196,420,&panel_count_font,TEXT);
     center_text(achievement_count);
+    /* The fourth page: the time of day, and a timer under it.
+     *
+     * The digits of the clock are Montserrat Medium at 96, one more font of
+     * this firmware's own with only what a clock needs. See
+     * panel_clock_font.c. What is left of the timer uses the font of the
+     * achievements, which holds ":" for this. */
+    lv_obj_t *clock_card=panel(page[3],10,0,460,136,CARD,true);
+    clock_digits=text_at(clock_card,"--:--",20,14,420,&panel_clock_font,TEXT);
+    center_text(clock_digits);
+    clock_date=text_at(clock_card,panel_text(TXT_CLOCK_UNSET),20,96,420,&lv_font_montserrat_18,MUTED);
+    center_text(clock_date);
+    lv_obj_t *timer_card=panel(page[3],10,146,460,154,CARD,true);
+    timer_minus=button(timer_card,LV_SYMBOL_MINUS,14,14,84,72,timer_step,-1);
+    timer_plus=button(timer_card,LV_SYMBOL_PLUS,362,14,84,72,timer_step,1);
+    lv_obj_t *steps[]={timer_minus,timer_plus};
+    for(int i=0;i<2;i++){
+        lv_obj_set_style_text_font(steps[i],&lv_font_montserrat_24,0);
+        void *sign=(void *)(intptr_t)(i?1:-1);
+        lv_obj_add_event_cb(steps[i],timer_step,LV_EVENT_SHORT_CLICKED,sign);
+        lv_obj_add_event_cb(steps[i],timer_step,LV_EVENT_LONG_PRESSED,sign);
+        lv_obj_add_event_cb(steps[i],timer_step,LV_EVENT_LONG_PRESSED_REPEAT,sign);
+    }
+    timer_value=text_at(timer_card,"00:00",98,20,264,&panel_count_font,TEXT);
+    center_text(timer_value);
+    timer_go=button(timer_card,panel_text(TXT_START),14,96,212,44,timer_go_clicked,0);
+    timer_go_label=lv_obj_get_child(timer_go,0);
+    timer_reset=button(timer_card,panel_text(TXT_RESET),234,96,212,44,timer_reset_clicked,0);
+    timer_show();
+    /* A new screen for a new language, while the timer rings. */
+    if(timer.phase==PANEL_TIMER_RINGING)alarm_show();
     lv_obj_t *foot=panel(s,10,386,460,48,CARD,true);
     icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&lv_font_montserrat_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&lv_font_montserrat_18,BLUE);
     line(foot,151,9,1,30);icon(foot,&icon_circuit_board,165,12,MUTED);text_at(foot,"GPU",198,6,99,&lv_font_montserrat_12,MUTED);gpu_value=text_at(foot,"-- C",198,22,99,&lv_font_montserrat_18,BLUE);
@@ -722,5 +871,19 @@ void panel_ui_update(const panel_state_t *s)
             lv_label_set_text_fmt(achievement_count,"%d / %d",
                                   s->achievements_done,s->achievements_total);
         else lv_label_set_text(achievement_count,"--");
+    }
+    /* The fourth page: the time, and the date under it, or dashes and a
+     * word until the network has set the clock. */
+    if(clock_digits){
+        bool known=s->clock_set&&s->weekday>=0&&s->weekday<=6&&s->month>=1&&s->month<=12;
+        char text[64];
+        if(known)snprintf(text,sizeof text,"%02d:%02d",s->hour,s->minute);
+        else snprintf(text,sizeof text,"--:--");
+        set_text(clock_digits,text);
+        if(known)snprintf(text,sizeof text,panel_text(TXT_DATE_FORMAT),
+                          panel_text((panel_text_id_t)(TXT_SUNDAY+s->weekday)),s->day,
+                          panel_text((panel_text_id_t)(TXT_JANUARY+s->month-1)));
+        else snprintf(text,sizeof text,"%s",panel_text(TXT_CLOCK_UNSET));
+        set_text(clock_date,text);
     }
 }

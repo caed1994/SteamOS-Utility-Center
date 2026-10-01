@@ -5,6 +5,11 @@
 #include <stdint.h>
 
 #include "panel_text.h"
+#include "panel_timer.h"
+
+/* The band of pages that scrolls sideways: the controls, the session and
+ * the drives, the game that runs, and the clock with the timer. */
+#define PANEL_PAGES 4
 
 typedef enum {
     PANEL_VOLUME_DOWN, PANEL_MUTE, PANEL_VOLUME_UP,
@@ -79,6 +84,11 @@ typedef struct {
     panel_supply_t esp_supply;
     int esp_battery;
     bool esp_charging;
+    /* The time of day for the fourth page, local, as struct tm counts:
+     * weekday from 0 for Sunday, month from 1. clock_set is false until
+     * the network has set the clock. */
+    bool clock_set;
+    int hour, minute, weekday, day, month;
 } panel_state_t;
 
 typedef void (*panel_action_cb_t)(panel_action_t action);
@@ -100,3 +110,13 @@ void panel_ui_confirm(panel_action_t action);
 /* What the screen shows, in a few words for the log: the page of the band,
  * the settings, a question, or the setup. From the LVGL task only. */
 const char *panel_ui_where(void);
+/* The timer of the fourth page, once a tick of the panel, asleep or awake:
+ * it runs on in a sleep. main.c wakes the display and beeps on what this
+ * answers. From the LVGL task only, like everything in this file. */
+panel_timer_news_t panel_ui_timer_tick(void);
+/* Quiet a timer that rings. false when none rang. */
+bool panel_ui_timer_stop(void);
+bool panel_ui_timer_ringing(void);
+/* The volume of the alarm: the volume of the sounds, and never so low that
+ * a timer goes off unheard. */
+int panel_ui_alarm_volume(void);

@@ -38,7 +38,7 @@ static void click(const char *text)
 // The band is the one object on the screen that scrolls sideways.
 static lv_obj_t *find_band(lv_obj_t *root)
 {
-    if(lv_obj_get_scroll_dir(root)==LV_DIR_HOR&&lv_obj_get_child_count(root)==3)return root;
+    if(lv_obj_get_scroll_dir(root)==LV_DIR_HOR&&lv_obj_get_child_count(root)==PANEL_PAGES)return root;
     for(unsigned i=0;i<lv_obj_get_child_count(root);i++){lv_obj_t *f=find_band(lv_obj_get_child(root,i));if(f)return f;}
     return NULL;
 }
@@ -128,10 +128,10 @@ int main(void)
     panel_settings_t settings={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
     panel_ui_create(action,setting,sound,&settings);
 
-    // Three pages, and the band snaps so there is no place between two.
+    // The pages, and the band snaps so there is no place between two.
     lv_obj_t *band=find_band(lv_screen_active());
     assert(band);
-    assert(lv_obj_get_child_count(band)==3);
+    assert(lv_obj_get_child_count(band)==PANEL_PAGES);
     assert(lv_obj_has_flag(band,LV_OBJ_FLAG_SCROLL_ONE));
     // A band that takes a press swallows the one meant for a button on it.
     assert(!lv_obj_has_flag(band,LV_OBJ_FLAG_CLICKABLE));
@@ -288,8 +288,8 @@ int main(void)
     // side of the screen is a page nothing draws.
     lv_obj_t *band_now=find_band(lv_screen_active());
     assert(band_now);
-    assert(lv_obj_get_child_count(band_now)==3);
-    for(unsigned page=0;page<3;page++){
+    assert(lv_obj_get_child_count(band_now)==PANEL_PAGES);
+    for(unsigned page=0;page<PANEL_PAGES;page++){
         lv_obj_scroll_to_view(lv_obj_get_child(band_now,page),LV_ANIM_OFF);
         lv_obj_update_layout(lv_screen_active());
         lv_refr_now(screen);
@@ -505,11 +505,131 @@ int main(void)
         assert(actions==before);
     }
 
-    puts("OK: three pages that snap, the session and its target button, the "
+    // The fourth page: the clock, and the timer under it.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        s=base();
+        panel_ui_update(&s);
+        lv_obj_t *band4=find_band(lv_screen_active());
+        assert(band4);
+        lv_obj_t *page4=lv_obj_get_child(band4,3);
+        lv_obj_scroll_to_view(page4,LV_ANIM_OFF);
+        lv_obj_update_layout(lv_screen_active());
+        assert(strcmp(panel_ui_where(),"the fourth page")==0);
+        // Not set by the network yet: dashes and a word, and no date
+        // made up out of nought.
+        assert(label(page4,"--:--"));
+        assert(label(page4,panel_text(TXT_CLOCK_UNSET)));
+        s.clock_set=true;s.hour=7;s.minute=5;s.weekday=3;s.day=1;s.month=10;
+        panel_ui_update(&s);
+        assert(label(page4,"07:05"));
+        assert(label(page4,"Wednesday, 1 October"));
+        // A month or a day out of its range is a clock that is not set,
+        // and not a read past the end of the table of names.
+        s.month=13;
+        panel_ui_update(&s);
+        assert(label(page4,"--:--"));
+        s.month=10;s.weekday=7;
+        panel_ui_update(&s);
+        assert(label(page4,"--:--"));
+        s.weekday=3;
+
+        // The timer: a tap is a minute, a held press is five at once and
+        // five more every 400 ms, and the release of a held press adds
+        // nothing.
+        lv_obj_t *plus=lv_obj_get_parent(label(page4,LV_SYMBOL_PLUS));
+        lv_obj_t *minus=lv_obj_get_parent(label(page4,LV_SYMBOL_MINUS));
+        assert(lv_obj_check_type(plus,&lv_button_class));
+        assert(lv_obj_check_type(minus,&lv_button_class));
+        assert(label(page4,"00:00"));
+        assert(lv_obj_has_state(minus,LV_STATE_DISABLED));
+        lv_obj_send_event(plus,LV_EVENT_SHORT_CLICKED,NULL);
+        lv_obj_send_event(plus,LV_EVENT_CLICKED,NULL);
+        assert(label(page4,"01:00"));
+        lv_obj_send_event(plus,LV_EVENT_LONG_PRESSED,NULL);
+        assert(label(page4,"06:00"));
+        for(int i=0;i<3;i++){lv_tick_inc(100);lv_obj_send_event(plus,LV_EVENT_LONG_PRESSED_REPEAT,NULL);}
+        assert(label(page4,"06:00"));
+        lv_tick_inc(100);lv_obj_send_event(plus,LV_EVENT_LONG_PRESSED_REPEAT,NULL);
+        assert(label(page4,"11:00"));
+        lv_obj_send_event(plus,LV_EVENT_CLICKED,NULL);
+        assert(label(page4,"11:00"));
+        lv_obj_send_event(minus,LV_EVENT_SHORT_CLICKED,NULL);
+        assert(label(page4,"10:00"));
+
+        // Start: + and - wait, and the start is a pause now.
+        click(panel_text(TXT_START));
+        assert(label(page4,panel_text(TXT_PAUSE)));
+        assert(lv_obj_has_state(plus,LV_STATE_DISABLED));
+        assert(lv_obj_has_state(minus,LV_STATE_DISABLED));
+        lv_tick_inc(61*1000);
+        panel_ui_timer_tick();
+        assert(label(page4,"08:59"));
+        click(panel_text(TXT_PAUSE));
+        assert(label(page4,panel_text(TXT_START)));
+        assert(!lv_obj_has_state(plus,LV_STATE_DISABLED));
+        click(panel_text(TXT_RESET));
+        assert(label(page4,"10:00"));
+
+        // To the end: it rings over the whole screen, a tap anywhere on it
+        // stops it, and the timer is set up again as it was started.
+        assert(!panel_ui_timer_stop());
+        click(panel_text(TXT_START));
+        lv_tick_inc(10*60*1000);
+        panel_timer_news_t news=panel_ui_timer_tick();
+        assert(news.went_off&&news.beep&&!news.gave_up);
+        assert(panel_ui_timer_ringing());
+        lv_obj_t *up=label(lv_screen_active(),panel_text(TXT_TIME_UP));
+        assert(up);
+        lv_obj_t *layer=lv_obj_get_parent(lv_obj_get_parent(up));
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_width(layer)==480&&lv_obj_get_height(layer)==480);
+        assert(lv_obj_get_parent(layer)==lv_screen_active());
+        assert(lv_obj_get_index(layer)==(int32_t)lv_obj_get_child_count(lv_screen_active())-1);
+        // A new screen for a new language keeps the timer, and the alarm
+        // on it.
+        panel_settings_t german={.brightness=70,.sound_volume=30,.language=PANEL_GERMAN};
+        panel_ui_create(action,setting,sound,&german);
+        panel_ui_update(&s);
+        up=label(lv_screen_active(),panel_text(TXT_TIME_UP));
+        assert(up);
+        layer=lv_obj_get_parent(lv_obj_get_parent(up));
+        lv_obj_send_event(layer,LV_EVENT_CLICKED,NULL);
+        assert(!panel_ui_timer_ringing());
+        assert(!label(lv_screen_active(),panel_text(TXT_TIME_UP)));
+        band4=find_band(lv_screen_active());
+        page4=lv_obj_get_child(band4,3);
+        assert(label(page4,"10:00"));
+        assert(label(page4,"Mittwoch, 1. Oktober"));
+
+        // The alarm stays audible with the sound turned right down, and
+        // follows the volume above that.
+        panel_settings_t quiet={.brightness=70,.sound_volume=5,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&quiet);
+        assert(panel_ui_alarm_volume()==40);
+        panel_settings_t loud={.brightness=70,.sound_volume=80,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&loud);
+        assert(panel_ui_alarm_volume()==80);
+
+        // Nobody stops it: a minute of ringing, and it gives up.
+        click(panel_text(TXT_START));
+        lv_tick_inc(10*60*1000);
+        news=panel_ui_timer_tick();
+        assert(news.went_off);
+        lv_tick_inc(60*1000);
+        news=panel_ui_timer_tick();
+        assert(news.gave_up&&!panel_ui_timer_ringing());
+        assert(!label(lv_screen_active(),panel_text(TXT_TIME_UP)));
+        lv_refr_now(screen);
+        assert(complaints==0);
+    }
+
+    puts("OK: four pages that snap, the session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
          "them drawn with nothing for LVGL to complain about, the battery of "
          "the panel in the corner with the network mark against it, the "
-         "achievements of the game under its name, and room under both "
-         "display sliders.");
+         "achievements of the game under its name, room under both "
+         "display sliders, and the clock with a timer that rings.");
     return 0;
 }

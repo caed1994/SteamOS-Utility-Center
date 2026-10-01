@@ -700,10 +700,13 @@ class SleepTimeoutTest(unittest.TestCase):
             "the reason has to be read before a touch wakes anything")
 
     def test_the_button_says_it_was_the_button(self):
-        """One door for both, so the state and the reason cannot drift."""
+        """One door for both, so the state and the reason cannot drift.
+        The press goes to a timer that rings first, and to the display
+        when none rings: see tests/test_panel_time.py."""
         tick = self.tick()
-        self.assertRegex(tick, r"panel_power_take_toggle\(\)\s*\)?\s*\n?\s*"
-                               r"display_sleeping\(.*?,true\)")
+        press = tick[tick.index("if(panel_power_take_toggle()){"):]
+        self.assertRegex(press[:press.index("\n    }")],
+                         r"else display_sleeping\(!atomic_load\(&display_asleep\),true\);")
 
     def test_the_clock_starts_again_at_the_moment_of_waking(self):
         """Without this the panel counts the whole sleep as time with no

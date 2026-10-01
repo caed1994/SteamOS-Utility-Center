@@ -39,6 +39,7 @@
 #include "panel_boot.h"
 #include "panel_wol.h"
 #include "panel_clock.h"
+#include "panel_time.h"
 
 /* The startup animation, put in the image by main/CMakeLists.txt. It
  * belongs to Valve and not to this project; assets/ORIGIN-BOOT-ANIMATION
@@ -284,27 +285,66 @@ static void display_sleeping(bool sleep,bool by_hand)
                  "and PC polling remain active");
 }
 
+/* Whether the timer that rings woke the display, and from which sleep.
+ * A timer nobody stopped puts the display back where it found it: nobody
+ * is there to look. The LVGL task alone reads and writes these. */
+static bool alarm_woke,alarm_woke_by_hand;
+
 static void ui_tick(lv_timer_t *timer)
 {
     /* A call with no timer is the one from app_main, on the start task.
      * See watch_stack. */
     if(timer)watch_stack();
-    if(panel_power_take_toggle())
-        display_sleeping(!atomic_load(&display_asleep),true);
+    /* The timer of the fourth page, first and in a sleep as well: it runs
+     * on while the display is dark, and its end wakes the display, from
+     * the sleep of the button too. The wake ends the rest of the radio on
+     * its own: asleep_by_hand goes false with it. */
+    panel_timer_news_t news=panel_ui_timer_tick();
+    if(news.went_off){
+        alarm_woke=atomic_load(&display_asleep);
+        alarm_woke_by_hand=atomic_load(&asleep_by_hand);
+        display_sleeping(false,false);
+        ESP_LOGI("panel_timer","The timer went off%s",
+                 alarm_woke?", and woke the display":"");
+    }
+    if(news.beep)sound_send(panel_ui_alarm_volume());
+    if(news.gave_up){
+        ESP_LOGI("panel_timer","Nobody stopped the timer, so it is quiet again");
+        if(alarm_woke)display_sleeping(true,alarm_woke_by_hand);
+        alarm_woke=false;
+    }
+    if(panel_power_take_toggle()){
+        /* The button stops a timer that rings, and does nothing else then:
+         * the hand that reaches for it wants the noise to end. */
+        if(panel_ui_timer_stop()){
+            alarm_woke=false;
+            ESP_LOGI("panel_timer","Stopped by the button");
+        }else display_sleeping(!atomic_load(&display_asleep),true);
+    }
     if(atomic_load(&display_asleep)){
         /* A touch brings back a display that went down on its own, and
          * leaves one that the button switched off where it is. */
         if(!atomic_load(&asleep_by_hand) && panel_display_touched())
             display_sleeping(false,false);
-    }else if(display_sleep_after>0 &&
+    }else if(display_sleep_after>0 && !panel_ui_timer_ringing() &&
              lv_display_get_inactive_time(NULL)
                  >= (uint32_t)display_sleep_after*60u*1000u){
+        /* Not while it rings: a minute of no touch is a minute of ringing
+         * too, and the display would go dark under the alarm. */
         display_sleeping(true,false);
     }
     atomic_store(&ui_heartbeat_ms,(uint32_t)(esp_timer_get_time()/1000));
     if(atomic_load(&display_asleep))return;
     panel_state_t copy;
     xSemaphoreTake(lock,portMAX_DELAY); copy=state; xSemaphoreGive(lock);
+    /* The time of day, read here and not kept in state: it is the clock of
+     * this chip, and nothing else writes it. */
+    struct tm now;
+    copy.clock_set=panel_time_now(&now);
+    if(copy.clock_set){
+        copy.hour=now.tm_hour;copy.minute=now.tm_min;
+        copy.weekday=now.tm_wday;copy.day=now.tm_mday;copy.month=now.tm_mon+1;
+    }
     panel_ui_update(&copy);
 }
 
@@ -976,6 +1016,9 @@ void app_main(void)
               ESP_ERROR_CHECK(esp_event_loop_create_default()));
     WIFI_STEP("esp_netif_create_default_wifi_sta",
               esp_netif_create_default_wifi_sta());
+    /* After the event loop, which it hangs a handler on, and before the
+     * radio joins: it asks DHCP for a time server. See panel_time.c. */
+    panel_time_init();
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
     WIFI_STEP("esp_wifi_init",ESP_ERROR_CHECK(esp_wifi_init(&init)));
     WIFI_STEP("esp_wifi_set_storage",

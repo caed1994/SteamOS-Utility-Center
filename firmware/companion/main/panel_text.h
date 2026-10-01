@@ -117,7 +117,34 @@
     X(TXT_FREE,            "free", "frei") \
     X(TXT_PLAYING,         "Now playing", "Laeuft gerade") \
     X(TXT_NOTHING_PLAYING, "No game running", "Es laeuft kein Spiel") \
-    X(TXT_ACHIEVEMENTS,    "ACHIEVEMENTS",          "ERRUNGENSCHAFTEN")
+    X(TXT_ACHIEVEMENTS,    "ACHIEVEMENTS",          "ERRUNGENSCHAFTEN") \
+    X(TXT_CLOCK_UNSET,     "No time yet",           "Noch keine Uhrzeit") \
+    X(TXT_DATE_FORMAT,     "%s, %d %s",             "%s, %d. %s") \
+    X(TXT_SUNDAY,          "Sunday",                "Sonntag") \
+    X(TXT_MONDAY,          "Monday",                "Montag") \
+    X(TXT_TUESDAY,         "Tuesday",               "Dienstag") \
+    X(TXT_WEDNESDAY,       "Wednesday",             "Mittwoch") \
+    X(TXT_THURSDAY,        "Thursday",              "Donnerstag") \
+    X(TXT_FRIDAY,          "Friday",                "Freitag") \
+    X(TXT_SATURDAY,        "Saturday",              "Samstag") \
+    X(TXT_JANUARY,         "January",               "Januar") \
+    X(TXT_FEBRUARY,        "February",              "Februar") \
+    X(TXT_MARCH,           "March",                 "Maerz") \
+    X(TXT_APRIL,           "April",                 "April") \
+    X(TXT_MAY,             "May",                   "Mai") \
+    X(TXT_JUNE,            "June",                  "Juni") \
+    X(TXT_JULY,            "July",                  "Juli") \
+    X(TXT_AUGUST,          "August",                "August") \
+    X(TXT_SEPTEMBER,       "September",             "September") \
+    X(TXT_OCTOBER,         "October",               "Oktober") \
+    X(TXT_NOVEMBER,        "November",              "November") \
+    X(TXT_DECEMBER,        "December",              "Dezember") \
+    X(TXT_TIMER,           "TIMER",                 "TIMER") \
+    X(TXT_START,           "Start",                 "Start") \
+    X(TXT_PAUSE,           "Pause",                 "Pause") \
+    X(TXT_RESET,           "Reset",                 "Zuruecksetzen") \
+    X(TXT_TIME_UP,         "Time is up",            "Die Zeit ist um") \
+    X(TXT_STOP,            "Stop",                  "Stopp")
 
 typedef enum {
 #define PANEL_TEXT_AS_ENUM(name, english, german) name,

@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2011 The Montserrat Project Authors
 // SPDX-License-Identifier: OFL-1.1
 //
-// The large number on the third page: how many achievements are unlocked.
+// The large numbers: how many achievements are unlocked on the third page,
+// and what is left of the timer on the fourth.
 //
 // Generated, not written. Montserrat Medium is the face every other text on
 // this panel uses, from the same file LVGL makes its built-in fonts out of:
 // managed_components/lvgl__lvgl/scripts/built_in_font/Montserrat-Medium.ttf.
 // The options below are the ones LVGL gives its own fonts, at a size LVGL
-// does not ship. Only a space, the digits, "-" and "/" are in it, which is
-// all a count and a dash need, so it costs a few kilobytes and not the
-// hundred a whole alphabet at this size would.
+// does not ship. Only a space, the digits, "-", "/" and ":" are in it,
+// which is all a count, a dash and a time need, so it costs a few kilobytes
+// and not the hundred a whole alphabet at this size would.
 //
 // To make it again, with lv_font_conv 1.5.2 from npm, give it the options on
 // the "Opts" line below. Those are on one line on purpose: a backslash at the
@@ -21,7 +22,7 @@
 /*******************************************************************************
  * Size: 64 px
  * Bpp: 4
- * Opts: --no-compress --no-prefilter --bpp 4 --size 64 --font Montserrat-Medium.ttf -r 0x20,0x2D,0x2F,0x30-0x39 --format lvgl --force-fast-kern-format --lv-include lvgl.h -o panel_count_font.c
+ * Opts: --no-compress --no-prefilter --bpp 4 --size 64 --font Montserrat-Medium.ttf -r 0x20,0x2D,0x2F,0x30-0x3A --format lvgl --force-fast-kern-format --lv-include lvgl.h -o panel_count_font.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
@@ -1162,7 +1163,31 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
     0xff, 0xff, 0xff, 0xfe, 0xb6, 0x10, 0x0, 0x0,
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
     0x1, 0x35, 0x67, 0x76, 0x64, 0x10, 0x0, 0x0,
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+
+    /* U+003A ":" */
+    0x0, 0x19, 0xef, 0xd6, 0x0, 0x1, 0xef, 0xff,
+    0xff, 0x80, 0xa, 0xff, 0xff, 0xff, 0xf2, 0xf,
+    0xff, 0xff, 0xff, 0xf6, 0xf, 0xff, 0xff, 0xff,
+    0xf7, 0xe, 0xff, 0xff, 0xff, 0xf5, 0x7, 0xff,
+    0xff, 0xff, 0xe0, 0x0, 0xaf, 0xff, 0xff, 0x30,
+    0x0, 0x5, 0x9a, 0x81, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x4, 0x9a,
+    0x82, 0x0, 0x0, 0xaf, 0xff, 0xff, 0x40, 0x7,
+    0xff, 0xff, 0xff, 0xe1, 0xe, 0xff, 0xff, 0xff,
+    0xf5, 0xf, 0xff, 0xff, 0xff, 0xf7, 0xf, 0xff,
+    0xff, 0xff, 0xf6, 0xa, 0xff, 0xff, 0xff, 0xf2,
+    0x1, 0xef, 0xff, 0xff, 0x70, 0x0, 0x19, 0xef,
+    0xc5, 0x0
 };
 
 
@@ -1184,7 +1209,8 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
     {.bitmap_index = 5409, .adv_w = 632, .box_w = 35, .box_h = 47, .ofs_x = 3, .ofs_y = -1},
     {.bitmap_index = 6232, .adv_w = 612, .box_w = 35, .box_h = 45, .ofs_x = 1, .ofs_y = 0},
     {.bitmap_index = 7020, .adv_w = 659, .box_w = 37, .box_h = 47, .ofs_x = 2, .ofs_y = -1},
-    {.bitmap_index = 7890, .adv_w = 632, .box_w = 36, .box_h = 47, .ofs_x = 1, .ofs_y = -1}
+    {.bitmap_index = 7890, .adv_w = 632, .box_w = 36, .box_h = 47, .ofs_x = 1, .ofs_y = -1},
+    {.bitmap_index = 8736, .adv_w = 232, .box_w = 10, .box_h = 34, .ofs_x = 2, .ofs_y = 0}
 };
 
 /*---------------------
@@ -1203,7 +1229,7 @@ static const lv_font_fmt_txt_cmap_t cmaps[] =
         .unicode_list = unicode_list_0, .glyph_id_ofs_list = NULL, .list_length = 2, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
     },
     {
-        .range_start = 47, .range_length = 11, .glyph_id_start = 3,
+        .range_start = 47, .range_length = 12, .glyph_id_start = 3,
         .unicode_list = NULL, .glyph_id_ofs_list = NULL, .list_length = 0, .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY
     }
 };
@@ -1217,32 +1243,34 @@ static const lv_font_fmt_txt_cmap_t cmaps[] =
 static const uint8_t kern_left_class_mapping[] =
 {
     0, 0, 1, 2, 3, 0, 4, 5,
-    6, 7, 8, 9, 0, 3
+    6, 7, 8, 9, 0, 3, 10
 };
 
 /*Map glyph_ids to kern right classes*/
 static const uint8_t kern_right_class_mapping[] =
 {
     0, 0, 1, 2, 3, 4, 5, 6,
-    7, 8, 3, 9, 10, 11
+    7, 8, 3, 9, 10, 11, 12
 };
 
 /*Kern values between classes*/
 static const int8_t kern_class_values[] =
 {
     3, 0, 7, -18, -13, -20, 7, 0,
-    -10, 0, 0, -70, -70, -20, 31, 0,
-    0, -69, 0, 12, -24, 0, 7, -20,
-    0, -3, -3, -10, 0, 0, -7, 0,
-    0, -7, 10, -3, 0, 0, 0, -19,
-    0, -3, 0, 0, 0, 0, 0, 0,
-    -5, -5, 0, -10, -12, 0, 0, 10,
-    28, 0, -26, -3, -12, 0, -3, -48,
-    10, -7, 0, 0, 0, 0, -5, -5,
-    0, -5, -13, 0, 0, 5, 10, 0,
-    0, 0, 0, 0, 0, -7, 0, 0,
+    -10, 0, 0, 0, -70, -70, -20, 31,
+    0, 0, -69, 0, 12, -24, 0, -15,
+    7, -20, 0, -3, -3, -10, 0, 0,
+    -7, 0, 0, 0, -7, 10, -3, 0,
+    0, 0, -19, 0, -3, 0, 0, 0,
+    0, 0, 0, 0, -5, -5, 0, -10,
+    -12, 0, 0, 0, 10, 28, 0, -26,
+    -3, -12, 0, -3, -48, 10, -7, 7,
+    0, 0, 0, 0, -5, -5, 0, -5,
+    -13, 0, 0, 0, 5, 10, 0, 0,
+    0, 0, 0, 0, -7, 0, 0, 0,
     -51, -43, -20, 10, 0, -8, -67, -18,
-    0, -18, 0
+    0, -18, 0, -20, 0, 49, 0, 0,
+    0, 0, 0, 0, 7, 0, 0, 0
 };
 
 
@@ -1252,8 +1280,8 @@ static const lv_font_fmt_txt_kern_classes_t kern_classes =
     .class_pair_values   = kern_class_values,
     .left_class_mapping  = kern_left_class_mapping,
     .right_class_mapping = kern_right_class_mapping,
-    .left_class_cnt      = 9,
-    .right_class_cnt     = 11,
+    .left_class_cnt      = 10,
+    .right_class_cnt     = 12,
 };
 
 /*--------------------

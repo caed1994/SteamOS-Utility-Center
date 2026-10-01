@@ -53,6 +53,9 @@ MADE_FROM_OTHERS = {
     "firmware/companion/main/panel_count_font.c":
         ("OFL-1.1", "firmware/companion/third-party-licenses/Montserrat-OFL.txt",
          "SIL OPEN FONT LICENSE Version 1.1"),
+    "firmware/companion/main/panel_clock_font.c":
+        ("OFL-1.1", "firmware/companion/third-party-licenses/Montserrat-OFL.txt",
+         "SIL OPEN FONT LICENSE Version 1.1"),
 }
 
 

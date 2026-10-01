@@ -6,10 +6,10 @@
 #include "ui.h"
 static uint8_t pixels[480*480*4];
 static void flush(lv_display_t *display,const lv_area_t *area,uint8_t *data){(void)area;(void)data;lv_display_flush_ready(display);}
-/* The band is the one object that scrolls sideways and holds three pages. */
+/* The band is the one object that scrolls sideways and holds the pages. */
 static lv_obj_t *band_in(lv_obj_t *root)
 {
-    if(lv_obj_get_scroll_dir(root)==LV_DIR_HOR&&lv_obj_get_child_count(root)==3)return root;
+    if(lv_obj_get_scroll_dir(root)==LV_DIR_HOR&&lv_obj_get_child_count(root)==PANEL_PAGES)return root;
     for(unsigned i=0;i<lv_obj_get_child_count(root);i++){
         lv_obj_t *f=band_in(lv_obj_get_child(root,i));if(f)return f;
     }
@@ -46,12 +46,41 @@ int main(int argc,char **argv)
         strcpy(s.playing,"DragonSword : Awakening");
         s.achievements_done=49;s.achievements_total=60;
     }
+    /* The fourth page, on a Wednesday at 18:42, with a timer of 25
+     * minutes set. "timer" has it running for 90 seconds, "alarm" has it
+     * ringing, and "noclock" is a panel the network has not set yet. */
+    bool clock=argc>2&&(strcmp(argv[2],"clock")==0||strcmp(argv[2],"timer")==0||
+                        strcmp(argv[2],"alarm")==0||strcmp(argv[2],"noclock")==0);
+    if(clock&&strcmp(argv[2],"noclock")!=0){
+        s.clock_set=true;s.hour=18;s.minute=42;s.weekday=3;s.day=1;s.month=10;
+    }
     panel_ui_update(&s);
     if(argc>2&&strcmp(argv[2],"playing")==0){
         lv_obj_t *band=band_in(lv_screen_active());
         if(band){
             lv_obj_update_layout(band);
             lv_obj_scroll_to_view(lv_obj_get_child(band,2),LV_ANIM_OFF);
+        }
+    }
+    if(clock){
+        lv_obj_t *band=band_in(lv_screen_active());
+        if(band){
+            lv_obj_update_layout(band);
+            lv_obj_scroll_to_view(lv_obj_get_child(band,3),LV_ANIM_OFF);
+        }
+        /* The + of the timer, pressed by its events: 5, then 4 times 5. */
+        lv_obj_t *card=lv_obj_get_child(lv_obj_get_child(band,3),1);
+        lv_obj_t *plus=lv_obj_get_child(card,1);
+        lv_obj_send_event(plus,LV_EVENT_LONG_PRESSED,NULL);
+        for(int i=0;i<16;i++){lv_tick_inc(100);lv_obj_send_event(plus,LV_EVENT_LONG_PRESSED_REPEAT,NULL);}
+        if(strcmp(argv[2],"timer")==0||strcmp(argv[2],"alarm")==0){
+            lv_obj_send_event(lv_obj_get_child(card,3),LV_EVENT_CLICKED,NULL);
+            lv_tick_inc(90*1000);
+            panel_ui_timer_tick();
+        }
+        if(strcmp(argv[2],"alarm")==0){
+            lv_tick_inc(25*60*1000);
+            panel_ui_timer_tick();
         }
     }
     if(argc>2&&strcmp(argv[2],"confirm")==0)panel_ui_confirm(PANEL_POWEROFF);
