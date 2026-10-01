@@ -37,7 +37,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import desktop, steamapps, temperature
+from . import desktop, steamapps, steamcontroller, temperature
 
 # The port, and the file that holds the shared secret.
 #
@@ -573,7 +573,10 @@ def status():
     """Everything one GET answers with."""
     return {
         "host": os.uname().nodename,
-        "controllers": controllers(),
+        # The Steam Controller of 2026 first, because the panel shows the
+        # first one and the kernel never reports that controller while Steam
+        # runs. See steamcontroller.py.
+        "controllers": steamcontroller.batteries() + controllers(),
         "audio": audio(),
         "telemetry": telemetry(),
         # For the Wake button. None where this machine has no wired card,
