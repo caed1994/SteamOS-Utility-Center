@@ -35,7 +35,7 @@ LV_FONT_DECLARE(panel_count_font);
 static void name_show(const char *text);
 static lv_obj_t *drive_rows[PANEL_DRIVES],*drive_names[PANEL_DRIVES];
 static lv_obj_t *drive_bars[PANEL_DRIVES],*drive_free[PANEL_DRIVES];
-static lv_obj_t *no_drives,*band,*dots[3],*esp_power,*wifi_mark;
+static lv_obj_t *no_drives,*band,*esp_power,*wifi_mark;
 static panel_action_cb_t send_action;
 static panel_setting_cb_t save_setting;
 static panel_sound_cb_t play_sound;
@@ -305,22 +305,6 @@ void panel_ui_settings_open(void)
     text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,648,440,&lv_font_montserrat_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
-/* Which of the three marks under the band is lit.
- *
- * Read from where the band stopped and not counted from the swipes: a
- * swipe that does not carry far enough leaves the band where it was, and a
- * count would then be one ahead of the screen for good. */
-static void band_scrolled(lv_event_t *e)
-{
-    (void)e;
-    if(!band)return;
-    int32_t at=lv_obj_get_scroll_x(band);
-    int page=(at+240)/480;
-    if(page<0)page=0;
-    if(page>2)page=2;
-    for(int i=0;i<3;i++)
-        if(dots[i])lv_obj_set_style_bg_color(dots[i],lv_color_hex(i==page?BLUE:EDGE),0);
-}
 /* How a drive row sits in its card.
  *
  * The card is 460 across. The icon and the line above it stand 14 in from
@@ -376,10 +360,9 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     settings_drop();
     /* The band and everything on the second and third pages are children
      * of this screen too. A pointer kept past the clean above is a pointer
-     * to freed memory, and band_scrolled runs from a touch. */
+     * to freed memory, and panel_ui_update writes through these. */
     band=NULL;mode_now=NULL;mode_button=NULL;mode_caption=NULL;
     playing_name=NULL;achievement_count=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
-    for(int i=0;i<3;i++)dots[i]=NULL;
     for(int i=0;i<PANEL_DRIVES;i++){
         drive_rows[i]=NULL;drive_names[i]=NULL;
         drive_bars[i]=NULL;drive_free[i]=NULL;
@@ -424,16 +407,9 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
         lv_obj_set_style_bg_opa(page[i],LV_OPA_TRANSP,0);
         lv_obj_remove_flag(page[i],LV_OBJ_FLAG_CLICKABLE);
     }
-    /* Which page is on the screen. Three of them and no words: the band
-     * is the only thing that moves, so a row of marks under it is read
-     * without anybody being told what it means. */
-    for(int i=0;i<3;i++){
-        dots[i]=panel(s,222+i*18,376,8,8,EDGE,false);
-        lv_obj_set_style_radius(dots[i],LV_RADIUS_CIRCLE,0);
-        lv_obj_remove_flag(dots[i],LV_OBJ_FLAG_CLICKABLE);
-    }
-    lv_obj_add_event_cb(band,band_scrolled,LV_EVENT_SCROLL_END,NULL);
-    lv_obj_set_style_bg_color(dots[0],lv_color_hex(BLUE),0);
+    /* No marks under the band for the page on the screen. There were
+     * three, and its owner found them of no use and not good to look at.
+     * check_pages holds the room between the band and the sensors empty. */
     lv_obj_t *left=panel(page[0],10,0,222,300,CARD,true);
     lv_obj_t *right=panel(page[0],244,0,226,300,CARD,true);
     icon(left,&icon_volume_2,12,26,MUTED);text_at(left,panel_text(TXT_PC_AUDIO),70,19,78,&lv_font_montserrat_12,MUTED);

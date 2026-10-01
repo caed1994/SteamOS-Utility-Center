@@ -129,7 +129,7 @@ class BandTest(unittest.TestCase):
                          code, re.S)
         self.assertIsNotNone(kept)
         for name in ("band", "mode_now", "mode_button", "mode_caption",
-                     "playing_name", "no_drives", "dots", "drive_rows",
+                     "playing_name", "no_drives", "drive_rows",
                      "drive_names", "drive_bars", "drive_free"):
             self.assertIn(name, kept.group(1),
                           "%s outlives the clean that freed it" % name)

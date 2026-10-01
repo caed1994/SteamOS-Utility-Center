@@ -135,6 +135,28 @@ int main(void)
     assert(lv_obj_has_flag(band,LV_OBJ_FLAG_SCROLL_ONE));
     // A band that takes a press swallows the one meant for a button on it.
     assert(!lv_obj_has_flag(band,LV_OBJ_FLAG_CLICKABLE));
+    // Nothing between the band and the row of sensors under it. Three
+    // marks for the page stood there, and its owner had them taken out.
+    {
+        lv_obj_update_layout(lv_screen_active());
+        lv_obj_t *screen=lv_screen_active();
+        int32_t band_end=lv_obj_get_y(band)+lv_obj_get_height(band);
+        // The row of sensors: the first object under the band that is as
+        // wide as most of the screen.
+        int32_t foot=LV_COORD_MAX;
+        for(unsigned i=0;i<lv_obj_get_child_count(screen);i++){
+            lv_obj_t *c=lv_obj_get_child(screen,i);
+            if(lv_obj_get_y(c)>=band_end&&lv_obj_get_width(c)>=240
+               &&lv_obj_get_y(c)<foot)foot=lv_obj_get_y(c);
+        }
+        assert(foot!=LV_COORD_MAX&&foot>band_end);
+        for(unsigned i=0;i<lv_obj_get_child_count(screen);i++){
+            lv_obj_t *c=lv_obj_get_child(screen,i);
+            if(lv_obj_has_flag(c,LV_OBJ_FLAG_HIDDEN))continue;
+            int32_t top=lv_obj_get_y(c),end=top+lv_obj_get_height(c);
+            assert(top>=foot||end<=band_end);
+        }
+    }
 
     // Nothing playing is the ordinary case, and it says so.
     panel_state_t s=base();
