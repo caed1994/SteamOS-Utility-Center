@@ -57,6 +57,13 @@ MADE_FROM_OTHERS = {
         ("OFL-1.1", "firmware/companion/third-party-licenses/Montserrat-OFL.txt",
          "SIL OPEN FONT LICENSE Version 1.1"),
 }
+# The fonts of the panel's text: Montserrat and the symbols of Font
+# Awesome, both under the OFL. See firmware/companion/main/panel_fonts.h.
+for _size in (12, 14, 16, 18, 20, 24, 26, 32):
+    MADE_FROM_OTHERS["firmware/companion/main/panel_font_%d.c" % _size] = (
+        "OFL-1.1",
+        "firmware/companion/third-party-licenses/FontAwesome5-LICENSE.txt",
+        "SIL OPEN FONT LICENSE")
 
 
 def tracked():

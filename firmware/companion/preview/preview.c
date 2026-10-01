@@ -22,7 +22,9 @@ int main(int argc,char **argv)
     lv_display_set_color_format(d,LV_COLOR_FORMAT_XRGB8888);
     lv_display_set_buffers(d,pixels,NULL,sizeof(pixels),LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(d,flush);
-    panel_settings_t settings={.brightness=70,.sound_volume=30,.touch_tones=false};
+    /* A third word "de" draws the screen in German. */
+    panel_settings_t settings={.brightness=70,.sound_volume=30,.touch_tones=false,
+                               .language=argc>3&&strcmp(argv[3],"de")==0?PANEL_GERMAN:PANEL_ENGLISH};
     panel_ui_create(NULL,NULL,NULL,&settings);
     panel_state_t s={.wifi=true,.online=true,.volume=42,.cpu_temp=49,.gpu_temp=56,.gpu_watts=78};
     strcpy(s.host,"FractalMachine");

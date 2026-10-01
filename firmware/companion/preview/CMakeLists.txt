@@ -31,7 +31,11 @@ add_subdirectory(../managed_components/lvgl__lvgl lvgl)
 # .github/workflows/companion-firmware.yml builds and runs them now.
 set(PANEL_UI_SOURCES ../main/ui.c ../main/icons.c ../main/panel_text.c
                      ../main/panel_ui_sleep.c ../main/panel_count_font.c
-                     ../main/panel_clock_font.c ../main/panel_timer.c)
+                     ../main/panel_clock_font.c ../main/panel_timer.c
+                     ../main/panel_font_12.c ../main/panel_font_14.c
+                     ../main/panel_font_16.c ../main/panel_font_18.c
+                     ../main/panel_font_20.c ../main/panel_font_24.c
+                     ../main/panel_font_26.c ../main/panel_font_32.c)
 # The firmware build makes each warning of -Wall an error. These are its own
 # sources, so this build holds them to the same rule, and a fault that stops
 # the board build shows here first. A backslash at the end of a line comment

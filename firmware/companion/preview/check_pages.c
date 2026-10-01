@@ -11,6 +11,7 @@
 #include <string.h>
 #include "lvgl.h"
 #include "ui.h"
+#include "panel_fonts.h"
 static unsigned actions;
 static panel_action_t last_action;
 static void action(panel_action_t a){actions++;last_action=a;}
@@ -656,7 +657,7 @@ int main(void)
         assert(mark);
         lv_area_t icon_box,value_box;
         lv_obj_get_coords(mark,&icon_box);
-        int32_t font_high=lv_font_get_line_height(&lv_font_montserrat_16);
+        int32_t font_high=lv_font_get_line_height(&panel_font_16);
         lv_obj_get_coords(first,&value_box);
         int32_t icon_middle=(icon_box.y1+icon_box.y2+1)/2;
         int32_t value_middle=value_box.y1+font_high/2;
@@ -674,7 +675,7 @@ int main(void)
         assert(one.x1>234&&two.x1>one.x2&&two.x2<480);
         assert(one.y1==two.y1);
         lv_point_t room;
-        lv_text_get_size(&room,charged,&lv_font_montserrat_16,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+        lv_text_get_size(&room,charged,&panel_font_16,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
         assert(room.x<=lv_obj_get_width(second));
         // Four: the head still shows two, and the page all four.
         c.pad_count=4;
@@ -743,11 +744,11 @@ int main(void)
         panel_ui_update(&c);
         panel_ui_pads_open();
         assert(label(lv_screen_active(),"Controller"));
-        assert(label(lv_screen_active(),"Kein Akkuwert"));
+        assert(label(lv_screen_active(),"Kein Akkustand"));
         // The setup takes the page away, as it does the settings.
         c.setup=true;
         panel_ui_update(&c);
-        assert(!label(lv_screen_active(),"Kein Akkuwert"));
+        assert(!label(lv_screen_active(),"Kein Akkustand"));
         c.setup=false;
         panel_ui_create(action,setting,sound,&english);
         lv_refr_now(screen);

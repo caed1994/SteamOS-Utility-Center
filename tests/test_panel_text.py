@@ -27,10 +27,31 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIRMWARE = os.path.join(REPO, "firmware", "companion", "main")
 HARNESS = os.path.join(REPO, "tests", "c", "panel-text-harness.c")
 
-# The fonts built into the firmware are a subset of Montserrat. A character
-# outside it draws as an empty box, so the German is written as "Bestaetigen"
-# and not "Bestätigen". Degree and the ASCII range are what the panel uses.
-ALLOWED_OUTSIDE_ASCII = "°"
+# The fonts of the panel's text, and the letters of Montserrat that each one
+# holds. A letter outside them is not drawn at all, so every text of the
+# table is held to them. See panel_fonts.h.
+FONT_SIZES = (12, 14, 16, 18, 20, 24, 26, 32)
+FONT_FILES = [os.path.join(FIRMWARE, "panel_font_%d.c" % size)
+              for size in FONT_SIZES]
+
+
+def font_letters(path):
+    """The letters of Montserrat in one font file, from its "Opts" line.
+
+    lv_font_conv writes the command that made the file at its top. The
+    range after the Montserrat face is the one of letters; the range after
+    Font Awesome is the symbols.
+    """
+    with open(path, encoding="utf-8") as handle:
+        head = handle.read(4096)
+    found = re.search(r"--font Montserrat-Medium\.ttf -r (\S+)", head)
+    assert found, "no Montserrat range in %s" % path
+    letters = set()
+    for part in found.group(1).split(","):
+        low, _, high = part.partition("-")
+        for code in range(int(low, 16), int(high or low, 16) + 1):
+            letters.add(chr(code))
+    return letters
 
 
 def compiler():
@@ -86,12 +107,28 @@ class PanelTextTest(unittest.TestCase):
                              re.findall(r"%[a-zA-Z]", german[key]),
                              "text %d" % key)
 
-    def test_the_german_stays_inside_the_font(self):
-        """"Bestaetigen" and not "Bestätigen". See ALLOWED_OUTSIDE_ASCII."""
-        for value in self.table(1).values():
-            outside = [one for one in value
-                       if ord(one) > 127 and one not in ALLOWED_OUTSIDE_ASCII]
-            self.assertEqual(outside, [], value)
+    def test_every_text_stays_inside_the_fonts(self):
+        """"Bestätigen" draws, and a letter none of the fonts holds would
+        not. A line break is no letter."""
+        letters = font_letters(FONT_FILES[0])
+        for language in (0, 1):
+            for value in self.table(language).values():
+                outside = [one for one in value
+                           if one != "\n" and one not in letters]
+                self.assertEqual(outside, [], value)
+
+    def test_the_german_has_its_own_letters(self):
+        """The table once spelt "Bestaetigen", because the fonts had no
+        umlaut. The panel shows the German as it is written now."""
+        german = " ".join(self.table(1).values())
+        for letter in "äöüÄß":
+            self.assertIn(letter, german)
+        for spelt in ("Bestaetigen", "Zurueck", "oeffnen", "Beruehrung",
+                      "ausser", "Tastentoene", "Lautstaerke", "verfuegbar",
+                      "Aenderungen", "LAUTSTAERKE", "ueber", "pruefen",
+                      "ungueltig", "enthaelt", "Datentraeger", "aeuft",
+                      "Maerz"):
+            self.assertNotIn(spelt, german)
 
     def test_an_id_outside_the_table_is_not_a_null_pointer(self):
         outside = [row[2] for row in self.rows if row[0] == "range"]
@@ -122,7 +159,9 @@ class NoGermanInTheCodeTest(unittest.TestCase):
     WORDS = ("Bitte", "Aenderungen", "Einstellungen", "Lautstaerke",
              "Zurueck", "Abbrechen", "Bestaetigen", "Einrichten",
              "Verbinde", "Tastentoene", "Helligkeit", "Ausschalten",
-             "Neustart", "Stumm", "gespeichert", "Lautsprecher")
+             "Neustart", "Stumm", "gespeichert", "Lautsprecher",
+             "Änderungen", "Lautstärke", "Zurück", "Bestätigen",
+             "Tastentöne", "Berührung")
 
     def source(self, name):
         with open(os.path.join(FIRMWARE, name)) as handle:
@@ -151,6 +190,47 @@ class NoGermanInTheCodeTest(unittest.TestCase):
         cmake = self.source("CMakeLists.txt")
         self.assertIn("panel_text.c", cmake)
         self.assertIn("setup-de.html", cmake)
+
+
+class FontTest(unittest.TestCase):
+    """The text of the panel is drawn with its own fonts, and only those."""
+
+    def source(self, name):
+        with open(os.path.join(FIRMWARE, name), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_the_screen_names_no_built_in_font(self):
+        """lv_font_montserrat_16 has no ä. One label that names it draws
+        "Zurück" as "Zurck"."""
+        self.assertNotIn("lv_font_montserrat", self.source("ui.c"))
+
+    def test_a_label_that_names_no_font_gets_a_panel_font(self):
+        self.assertRegex(self.source("ui.c"),
+                         r"lv_obj_set_style_text_font\(s,&panel_font_16,0\)")
+
+    def test_the_eight_fonts_hold_the_same_letters(self):
+        first = font_letters(FONT_FILES[0])
+        for path in FONT_FILES[1:]:
+            self.assertEqual(font_letters(path), first, path)
+
+    def test_they_hold_the_german_letters_and_no_cedilla(self):
+        """The tail of a cedilla goes lower than any other letter, and a
+        font that holds it is a line taller. See panel_font_16.c."""
+        letters = font_letters(FONT_FILES[0])
+        for letter in "ÄÖÜäöüßé°":
+            self.assertIn(letter, letters)
+        self.assertNotIn("ç", letters)
+
+    def test_every_font_is_in_both_builds(self):
+        main = self.source("CMakeLists.txt")
+        with open(os.path.join(FIRMWARE, "..", "preview", "CMakeLists.txt"),
+                  encoding="utf-8") as handle:
+            preview = handle.read()
+        for size in FONT_SIZES:
+            self.assertIn("panel_font_%d.c" % size, main)
+            self.assertIn("panel_font_%d.c" % size, preview)
+            self.assertIn("LV_FONT_DECLARE(panel_font_%d)" % size,
+                          self.source("panel_fonts.h"))
 
 
 if __name__ == "__main__":

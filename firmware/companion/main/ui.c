@@ -10,6 +10,7 @@
 #include "panel_text.h"
 #include "panel_ui_sleep.h"
 #include "panel_timer.h"
+#include "panel_fonts.h"
 
 #define BG 0x0C1721
 #define CARD 0x111F2B
@@ -31,7 +32,7 @@ static lv_obj_t *mode_now,*mode_button,*mode_caption,*playing_name,*achievement_
  * playing" at 44 to the line over the achievements. */
 #define NAME_TOP 45
 #define NAME_ROOM 71
-#define NAME_FONT (&lv_font_montserrat_26)
+#define NAME_FONT (&panel_font_26)
 LV_FONT_DECLARE(panel_count_font);
 static void name_show(const char *text);
 static lv_obj_t *drive_rows[PANEL_DRIVES],*drive_names[PANEL_DRIVES];
@@ -112,7 +113,7 @@ static lv_obj_t *button(lv_obj_t *parent,const char *caption,int x,int y,int w,i
 {
     lv_obj_t *b=lv_button_create(parent);lv_obj_set_pos(b,x,y);lv_obj_set_size(b,w,h);
     lv_obj_set_style_bg_color(b,lv_color_hex(0x1B2B3C),0);
-    lv_obj_set_style_text_color(b,lv_color_hex(TEXT),0);lv_obj_set_style_text_font(b,&lv_font_montserrat_16,0);
+    lv_obj_set_style_text_color(b,lv_color_hex(TEXT),0);lv_obj_set_style_text_font(b,&panel_font_16,0);
     lv_obj_set_style_radius(b,5,0);lv_obj_set_style_border_width(b,1,0);lv_obj_set_style_border_color(b,lv_color_hex(EDGE),0);
     lv_obj_set_style_shadow_width(b,0,0);lv_obj_set_style_pad_all(b,0,0);
     lv_obj_set_style_opa(b,LV_OPA_40,LV_STATE_DISABLED);
@@ -132,7 +133,7 @@ void panel_ui_confirm(panel_action_t action)
     overlay=panel(lv_screen_active(),0,0,480,480,BG,false);lv_obj_set_style_bg_opa(overlay,LV_OPA_90,0);
     const char *caption=action==PANEL_SUSPEND?panel_text(TXT_CONFIRM_SUSPEND):action==PANEL_REBOOT?panel_text(TXT_CONFIRM_REBOOT):action==PANEL_POWEROFF?panel_text(TXT_CONFIRM_OFF):(action==PANEL_DESKTOP_MODE||action==PANEL_GAME_MODE)?panel_text(TXT_CONFIRM_MODE):panel_text(TXT_CONFIRM_SETUP);
     lv_obj_t *box=panel(overlay,20,132,440,216,CARD,true);
-    text_at(box,caption,20,26,400,&lv_font_montserrat_20,TEXT);
+    text_at(box,caption,20,26,400,&panel_font_20,TEXT);
     /* A second line only where there is something to say. Switching the
      * session says it in the question, and a sentence under it that
      * repeats the obvious is a sentence somebody reads once and then
@@ -140,7 +141,7 @@ void panel_ui_confirm(panel_action_t action)
     const char *what=action==PANEL_SETUP?panel_text(TXT_SETUP_WHAT)
         :(action==PANEL_DESKTOP_MODE||action==PANEL_GAME_MODE)?""
         :panel_text(TXT_CONFIRM_HERE);
-    if(what[0])text_at(box,what,20,66,400,&lv_font_montserrat_16,MUTED);
+    if(what[0])text_at(box,what,20,66,400,&panel_font_16,MUTED);
     button(box,panel_text(TXT_CANCEL),20,126,192,62,confirmation,0);
     lv_obj_t *yes=button(box,panel_text(TXT_CONFIRM),228,126,192,62,confirmation,1);lv_obj_set_style_bg_color(yes,lv_color_hex(BLUE),0);
     lv_obj_set_style_text_color(yes,lv_color_hex(BG),0);
@@ -276,7 +277,7 @@ void panel_ui_settings_open(void)
     last_state_valid=false;
     settings_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
     button(settings_screen,panel_text(TXT_BACK),12,8,112,44,settings_close,0);
-    text_at(settings_screen,panel_text(TXT_SETTINGS_TITLE),136,20,200,&lv_font_montserrat_20,TEXT);
+    text_at(settings_screen,panel_text(TXT_SETTINGS_TITLE),136,20,200,&panel_font_20,TEXT);
     // The name of the other language, written in that language. Somebody
     // who cannot read the one on the screen still finds their own.
     button(settings_screen,panel_language_name(panel_text_language()==PANEL_ENGLISH?PANEL_GERMAN:PANEL_ENGLISH),
@@ -297,38 +298,38 @@ void panel_ui_settings_open(void)
      * equal. */
     lv_obj_t *display=panel(settings_screen,20,78,440,228,CARD,true);
     icon(display,&icon_sun,16,18,MUTED);
-    text_at(display,panel_text(TXT_BRIGHTNESS),62,16,268,&lv_font_montserrat_18,TEXT);
-    brightness_label=text_at(display,"",338,16,88,&lv_font_montserrat_18,BLUE);
+    text_at(display,panel_text(TXT_BRIGHTNESS),62,16,268,&panel_font_18,TEXT);
+    brightness_label=text_at(display,"",338,16,88,&panel_font_18,BLUE);
     lv_label_set_text_fmt(brightness_label,"%d %%",local.brightness);
-    text_at(display,panel_text(TXT_BRIGHTNESS_WHAT),62,43,350,&lv_font_montserrat_12,MUTED);
+    text_at(display,panel_text(TXT_BRIGHTNESS_WHAT),62,43,350,&panel_font_12,MUTED);
     slider_at(display,88,5,local.brightness,PANEL_BRIGHTNESS);
     line(display,18,112,402,1);
-    text_at(display,panel_text(TXT_SLEEP_AFTER),20,128,268,&lv_font_montserrat_18,TEXT);
-    sleep_label=text_at(display,"",318,128,108,&lv_font_montserrat_18,BLUE);
+    text_at(display,panel_text(TXT_SLEEP_AFTER),20,128,268,&panel_font_18,TEXT);
+    sleep_label=text_at(display,"",318,128,108,&panel_font_18,BLUE);
     {
         char said[24];
         sleep_words(said,sizeof said,local.sleep_after);
         lv_label_set_text(sleep_label,said);
     }
-    text_at(display,panel_text(TXT_SLEEP_AFTER_WHAT),20,155,404,&lv_font_montserrat_12,MUTED);
+    text_at(display,panel_text(TXT_SLEEP_AFTER_WHAT),20,155,404,&panel_font_12,MUTED);
     slider_range(display,200,0,SLEEP_CHOICES-1,sleep_index(local.sleep_after),
                  PANEL_SLEEP_AFTER);
     lv_obj_t *sound=panel(settings_screen,20,320,440,216,CARD,true);
     icon(sound,&icon_volume_2,12,12,MUTED);
-    text_at(sound,panel_text(TXT_TONES),70,16,240,&lv_font_montserrat_18,TEXT);
-    text_at(sound,panel_text(TXT_TONES_WHAT),70,44,340,&lv_font_montserrat_12,MUTED);
+    text_at(sound,panel_text(TXT_TONES),70,16,240,&panel_font_18,TEXT);
+    text_at(sound,panel_text(TXT_TONES_WHAT),70,44,340,&panel_font_12,MUTED);
     lv_obj_t *sw=lv_switch_create(sound);lv_obj_set_pos(sw,358,17);lv_obj_set_size(sw,58,30);
     lv_obj_set_style_bg_color(sw,lv_color_hex(BLUE),LV_PART_INDICATOR|LV_STATE_CHECKED);
     lv_obj_set_ext_click_area(sw,8);
     if(local.touch_tones)lv_obj_add_state(sw,LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw,tones_changed,LV_EVENT_VALUE_CHANGED,NULL);
     line(sound,18,76,402,1);
-    text_at(sound,panel_text(TXT_ESP_VOLUME),20,92,296,&lv_font_montserrat_16,TEXT);
-    sound_value=text_at(sound,"",338,92,88,&lv_font_montserrat_18,BLUE);
+    text_at(sound,panel_text(TXT_ESP_VOLUME),20,92,296,&panel_font_16,TEXT);
+    sound_value=text_at(sound,"",338,92,88,&panel_font_18,BLUE);
     lv_label_set_text_fmt(sound_value,"%d %%",local.sound_volume);
     slider_at(sound,138,0,local.sound_volume,PANEL_SOUND_VOLUME);
     button(sound,panel_text(TXT_TEST_TONE),276,164,144,44,test_sound,0);
-    sound_status=text_at(sound,panel_text(TXT_SPEAKER),20,176,248,&lv_font_montserrat_12,MUTED);
+    sound_status=text_at(sound,panel_text(TXT_SPEAKER),20,176,248,&panel_font_12,MUTED);
     /* The setup, which used to stand in a corner of the main screen.
      *
      * It is not an everyday button. It takes the panel off the network
@@ -337,10 +338,10 @@ void panel_ui_settings_open(void)
      * question as before, and the setup screen that follows closes this
      * one: see settings_forget in panel_ui_update. */
     lv_obj_t *link=panel(settings_screen,20,550,440,84,CARD,true);
-    text_at(link,panel_text(TXT_CONNECTION),20,16,240,&lv_font_montserrat_18,TEXT);
-    text_at(link,panel_text(TXT_SETUP_WHAT),20,44,240,&lv_font_montserrat_12,MUTED);
+    text_at(link,panel_text(TXT_CONNECTION),20,16,240,&panel_font_18,TEXT);
+    text_at(link,panel_text(TXT_SETUP_WHAT),20,44,240,&panel_font_12,MUTED);
     button(link,panel_text(TXT_SETUP),276,20,144,44,clicked,PANEL_SETUP);
-    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,648,440,&lv_font_montserrat_12,MUTED);
+    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,648,440,&panel_font_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
 /* What a controller says in the head and on its card: the battery, the
@@ -427,17 +428,17 @@ void panel_ui_pads_open(void)
     if(pads_screen||settings_screen||setup_screen)return;
     pads_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
     button(pads_screen,panel_text(TXT_BACK),12,8,112,44,pads_close,0);
-    text_at(pads_screen,panel_text(TXT_CONTROLLERS),136,20,200,&lv_font_montserrat_20,TEXT);
+    text_at(pads_screen,panel_text(TXT_CONTROLLERS),136,20,200,&panel_font_20,TEXT);
     line(pads_screen,0,62,480,1);
-    pads_none=text_at(pads_screen,"",20,220,440,&lv_font_montserrat_18,MUTED);
+    pads_none=text_at(pads_screen,"",20,220,440,&panel_font_18,MUTED);
     center_text(pads_none);
     for(int i=0;i<PANEL_PADS;i++){
         lv_obj_t *card=panel(pads_screen,20,PAD_CARD_TOP+i*PAD_CARD_STEP,440,PAD_CARD_HEIGHT,CARD,true);
         lv_obj_remove_flag(card,LV_OBJ_FLAG_CLICKABLE);
         pad_cards[i]=card;
         icon(card,&icon_gamepad_2,16,16,MUTED);
-        pad_names[i]=text_at(card,"",56,16,250,&lv_font_montserrat_18,TEXT);
-        pad_levels[i]=text_at(card,"",306,16,118,&lv_font_montserrat_18,BLUE);
+        pad_names[i]=text_at(card,"",56,16,250,&panel_font_18,TEXT);
+        pad_levels[i]=text_at(card,"",306,16,118,&panel_font_18,BLUE);
         lv_obj_set_style_text_align(pad_levels[i],LV_TEXT_ALIGN_RIGHT,0);
         pad_tracks[i]=panel(card,PAD_BAR_LEFT,54,PAD_BAR_WIDTH,10,EDGE,false);
         lv_obj_set_style_radius(pad_tracks[i],LV_RADIUS_CIRCLE,0);
@@ -445,7 +446,7 @@ void panel_ui_pads_open(void)
         pad_bars[i]=panel(pad_tracks[i],0,0,0,10,BLUE,false);
         lv_obj_set_style_radius(pad_bars[i],LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(pad_bars[i],LV_OBJ_FLAG_CLICKABLE);
-        pad_unknown[i]=text_at(card,panel_text(TXT_NO_BATTERY),PAD_BAR_LEFT,50,PAD_BAR_WIDTH,&lv_font_montserrat_14,MUTED);
+        pad_unknown[i]=text_at(card,panel_text(TXT_NO_BATTERY),PAD_BAR_LEFT,50,PAD_BAR_WIDTH,&panel_font_14,MUTED);
         lv_obj_add_flag(card,LV_OBJ_FLAG_HIDDEN);
     }
     /* What the last update said, at once. panel_ui_update draws nothing
@@ -541,12 +542,12 @@ static void alarm_show(void)
      * layer under it. */
     lv_obj_t *box=panel(alarm_layer,20,112,440,256,CARD,true);
     lv_obj_remove_flag(box,LV_OBJ_FLAG_CLICKABLE);
-    center_text(text_at(box,panel_text(TXT_TIMER),20,26,400,&lv_font_montserrat_20,MUTED));
-    center_text(text_at(box,panel_text(TXT_TIME_UP),20,64,400,&lv_font_montserrat_32,TEXT));
+    center_text(text_at(box,panel_text(TXT_TIMER),20,26,400,&panel_font_20,MUTED));
+    center_text(text_at(box,panel_text(TXT_TIME_UP),20,64,400,&panel_font_32,TEXT));
     lv_obj_t *stop=button(box,panel_text(TXT_STOP),70,152,300,72,alarm_clicked,0);
     lv_obj_set_style_bg_color(stop,lv_color_hex(BLUE),0);
     lv_obj_set_style_text_color(stop,lv_color_hex(BG),0);
-    lv_obj_set_style_text_font(stop,&lv_font_montserrat_24,0);
+    lv_obj_set_style_text_font(stop,&panel_font_24,0);
 }
 panel_timer_news_t panel_ui_timer_tick(void)
 {
@@ -586,8 +587,8 @@ static void drive_row(lv_obj_t *parent,int index,int y)
     drive_rows[index]=panel(parent,DRIVE_MARGIN,y,DRIVE_BAR_WIDTH,44,CARD,false);
     lv_obj_set_style_bg_opa(drive_rows[index],LV_OPA_TRANSP,0);
     lv_obj_remove_flag(drive_rows[index],LV_OBJ_FLAG_CLICKABLE);
-    drive_names[index]=text_at(drive_rows[index],"",0,0,150,&lv_font_montserrat_16,TEXT);
-    drive_free[index]=text_at(drive_rows[index],"",152,0,DRIVE_BAR_WIDTH-152,&lv_font_montserrat_14,MUTED);
+    drive_names[index]=text_at(drive_rows[index],"",0,0,150,&panel_font_16,TEXT);
+    drive_free[index]=text_at(drive_rows[index],"",152,0,DRIVE_BAR_WIDTH-152,&panel_font_14,MUTED);
     lv_obj_set_style_text_align(drive_free[index],LV_TEXT_ALIGN_RIGHT,0);
     lv_obj_t *track=panel(drive_rows[index],0,26,DRIVE_BAR_WIDTH,10,EDGE,false);
     lv_obj_set_style_radius(track,LV_RADIUS_CIRCLE,0);
@@ -602,7 +603,7 @@ static lv_obj_t *power_button(lv_obj_t *parent,const char *caption,const lv_imag
     lv_obj_t *b=button(parent,"",14,y,196,56,clicked,action);
     uint32_t color=action==PANEL_POWEROFF?RED:MUTED;
     icon(b,source,14,14,color);
-    text_at(b,caption,54,18,136,&lv_font_montserrat_16,color);
+    text_at(b,caption,54,18,136,&panel_font_16,color);
     if(action==PANEL_POWEROFF){lv_obj_set_style_bg_color(b,lv_color_hex(0x2C202B),0);lv_obj_set_style_border_color(b,lv_color_hex(0xA54757),0);}
     return b;
 }
@@ -640,8 +641,11 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_remove_style_all(s);lv_obj_remove_flag(s,LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(s,lv_color_hex(BG),0);lv_obj_set_style_bg_opa(s,LV_OPA_COVER,0);
     lv_obj_set_style_text_color(s,lv_color_hex(TEXT),0);
+    /* The font of a label that names none, so that no text on this screen
+     * falls back to a built-in font without the German letters. */
+    lv_obj_set_style_text_font(s,&panel_font_16,0);
     icon(s,&icon_monitor,14,19,MUTED);line(s,50,16,1,28);
-    connection=text_at(s,panel_text(TXT_PC_OFFLINE),62,22,140,&lv_font_montserrat_14,TEXT);
+    connection=text_at(s,panel_text(TXT_PC_OFFLINE),62,22,140,&panel_font_14,TEXT);
     dot=panel(s,202,26,9,9,0x60758A,false);lv_obj_set_style_radius(dot,LV_RADIUS_CIRCLE,0);
     line(s,234,16,1,28);
     /* The controllers, two side by side over the whole right of the head,
@@ -654,12 +658,12 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_set_style_bg_opa(pad_area,LV_OPA_40,LV_STATE_PRESSED);
     lv_obj_add_event_cb(pad_area,pads_clicked,LV_EVENT_CLICKED,NULL);
     {
-        int32_t high=lv_font_get_line_height(&lv_font_montserrat_16);
+        int32_t high=lv_font_get_line_height(&panel_font_16);
         for(int i=0;i<PAD_HEAD;i++){
             int x=PAD_HEAD_X+i*PAD_HEAD_STEP;
             pad_icons[i]=icon(pad_area,&icon_gamepad_2,x,19,MUTED);
             lv_obj_remove_flag(pad_icons[i],LV_OBJ_FLAG_CLICKABLE);
-            pad_values[i]=text_at(pad_area,"-- %",x+32,19+12-high/2,PAD_VALUE_WIDTH,&lv_font_montserrat_16,TEXT);
+            pad_values[i]=text_at(pad_area,"-- %",x+32,19+12-high/2,PAD_VALUE_WIDTH,&panel_font_16,TEXT);
             lv_obj_remove_flag(pad_values[i],LV_OBJ_FLAG_CLICKABLE);
         }
         lv_obj_add_flag(pad_icons[1],LV_OBJ_FLAG_HIDDEN);
@@ -698,16 +702,16 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * check_pages holds the room between the band and the sensors empty. */
     lv_obj_t *left=panel(page[0],10,0,222,300,CARD,true);
     lv_obj_t *right=panel(page[0],244,0,226,300,CARD,true);
-    icon(left,&icon_volume_2,12,26,MUTED);text_at(left,panel_text(TXT_PC_AUDIO),70,19,78,&lv_font_montserrat_12,MUTED);
-    audio_status=text_at(left,"--",70,40,82,&lv_font_montserrat_18,TEXT);
+    icon(left,&icon_volume_2,12,26,MUTED);text_at(left,panel_text(TXT_PC_AUDIO),70,19,78,&panel_font_12,MUTED);
+    audio_status=text_at(left,"--",70,40,82,&panel_font_18,TEXT);
     audio_toggle=button(left,"",154,24,54,48,clicked,PANEL_MUTE);controls[PANEL_MUTE]=audio_toggle;
     lv_obj_set_style_bg_opa(audio_toggle,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(audio_toggle,0,0);
     lv_obj_t *track=panel(audio_toggle,0,10,52,28,BLUE,false);lv_obj_remove_flag(track,LV_OBJ_FLAG_CLICKABLE);lv_obj_set_style_radius(track,LV_RADIUS_CIRCLE,0);
     audio_knob=panel(track,27,3,22,22,TEXT,false);lv_obj_remove_flag(audio_knob,LV_OBJ_FLAG_CLICKABLE);lv_obj_set_style_radius(audio_knob,LV_RADIUS_CIRCLE,0);
     lv_obj_set_user_data(audio_toggle,track);
     line(left,16,108,190,1);
-    center_text(text_at(left,panel_text(TXT_PC_VOLUME),12,131,196,&lv_font_montserrat_14,MUTED));
-    volume=text_at(left,"-- %",12,162,196,&lv_font_montserrat_32,TEXT);center_text(volume);
+    center_text(text_at(left,panel_text(TXT_PC_VOLUME),12,131,196,&panel_font_14,MUTED));
+    volume=text_at(left,"-- %",12,162,196,&panel_font_32,TEXT);center_text(volume);
     /* Two buttons over the width of the card, and nothing between them.
      * The number was there twice: once in the big label above, and once
      * again in a box between these two, which said the same thing in a
@@ -715,10 +719,10 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * one grew with it. */
     controls[PANEL_VOLUME_DOWN]=button(left,LV_SYMBOL_MINUS,12,228,92,56,clicked,PANEL_VOLUME_DOWN);
     controls[PANEL_VOLUME_UP]=button(left,LV_SYMBOL_PLUS,116,228,92,56,clicked,PANEL_VOLUME_UP);
-    lv_obj_set_style_text_font(controls[PANEL_VOLUME_DOWN],&lv_font_montserrat_24,0);
-    lv_obj_set_style_text_font(controls[PANEL_VOLUME_UP],&lv_font_montserrat_24,0);
+    lv_obj_set_style_text_font(controls[PANEL_VOLUME_DOWN],&panel_font_24,0);
+    lv_obj_set_style_text_font(controls[PANEL_VOLUME_UP],&panel_font_24,0);
     icon(right,&icon_monitor,22,19,MUTED);
-    text_at(right,panel_text(TXT_PC_CONTROL),60,23,160,&lv_font_montserrat_14,MUTED);
+    text_at(right,panel_text(TXT_PC_CONTROL),60,23,160,&panel_font_14,MUTED);
     line(right,14,64,196,1);
     controls[PANEL_SUSPEND]=power_button(right,panel_text(TXT_SUSPEND),&icon_moon,82,PANEL_SUSPEND);
     controls[PANEL_REBOOT]=power_button(right,panel_text(TXT_REBOOT),&icon_rotate_cw,156,PANEL_REBOOT);
@@ -728,7 +732,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * already off, so the card shows this instead of three buttons that
      * cannot do anything. */
     wake_button=power_button(right,panel_text(TXT_WAKE),&icon_power,82,PANEL_WAKE);
-    wake_what=text_at(right,panel_text(TXT_WAKE_WHAT),16,152,192,&lv_font_montserrat_12,MUTED);
+    wake_what=text_at(right,panel_text(TXT_WAKE_WHAT),16,152,192,&panel_font_12,MUTED);
     lv_label_set_long_mode(wake_what,LV_LABEL_LONG_WRAP);
     lv_obj_add_flag(wake_button,LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(wake_what,LV_OBJ_FLAG_HIDDEN);
@@ -737,24 +741,24 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * is why they share a page. */
     lv_obj_t *mode_card=panel(page[1],10,0,460,104,CARD,true);
     icon(mode_card,&icon_monitor,14,18,MUTED);
-    text_at(mode_card,panel_text(TXT_MODE),52,14,180,&lv_font_montserrat_12,MUTED);
-    mode_now=text_at(mode_card,"--",52,34,180,&lv_font_montserrat_24,TEXT);
+    text_at(mode_card,panel_text(TXT_MODE),52,14,180,&panel_font_12,MUTED);
+    mode_now=text_at(mode_card,"--",52,34,180,&panel_font_24,TEXT);
     mode_button=button(mode_card,"",236,20,208,64,clicked,PANEL_DESKTOP_MODE);
-    mode_caption=text_at(mode_button,"",10,22,188,&lv_font_montserrat_16,TEXT);
+    mode_caption=text_at(mode_button,"",10,22,188,&panel_font_16,TEXT);
     center_text(mode_caption);
     lv_obj_t *disk_card=panel(page[1],10,116,460,184,CARD,true);
     icon(disk_card,&icon_circuit_board,14,14,MUTED);
-    text_at(disk_card,panel_text(TXT_DRIVES),52,16,240,&lv_font_montserrat_14,MUTED);
+    text_at(disk_card,panel_text(TXT_DRIVES),52,16,240,&panel_font_14,MUTED);
     line(disk_card,14,44,432,1);
     for(int i=0;i<PANEL_DRIVES;i++)drive_row(disk_card,i,58+i*46);
-    no_drives=text_at(disk_card,panel_text(TXT_NO_DRIVES),DRIVE_MARGIN,70,DRIVE_BAR_WIDTH,&lv_font_montserrat_14,MUTED);
+    no_drives=text_at(disk_card,panel_text(TXT_NO_DRIVES),DRIVE_MARGIN,70,DRIVE_BAR_WIDTH,&panel_font_14,MUTED);
     lv_obj_add_flag(no_drives,LV_OBJ_FLAG_HIDDEN);
     /* The third page: what is on the machine. One card and one name, and
      * the room under it is deliberate: the picture Steam already keeps for
      * every game goes there, and that is a step of its own. */
     lv_obj_t *play_card=panel(page[2],10,0,460,300,CARD,true);
     icon(play_card,&icon_gamepad_2,14,14,MUTED);
-    text_at(play_card,panel_text(TXT_PLAYING),52,16,240,&lv_font_montserrat_14,MUTED);
+    text_at(play_card,panel_text(TXT_PLAYING),52,16,240,&panel_font_14,MUTED);
     line(play_card,14,44,432,1);
     /* The name of the game, in the middle of the room between the two
      * lines. See name_show, which also keeps it to two lines. */
@@ -773,7 +777,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * font is one of this firmware's own, with only the glyphs a count
      * needs. See panel_count_font.c. */
     line(play_card,14,NAME_TOP+NAME_ROOM,432,1);
-    center_text(text_at(play_card,panel_text(TXT_ACHIEVEMENTS),20,160,420,&lv_font_montserrat_20,MUTED));
+    center_text(text_at(play_card,panel_text(TXT_ACHIEVEMENTS),20,160,420,&panel_font_20,MUTED));
     achievement_count=text_at(play_card,"--",20,196,420,&panel_count_font,TEXT);
     center_text(achievement_count);
     /* The fourth page: the time of day, and a timer under it.
@@ -785,14 +789,14 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_t *clock_card=panel(page[3],10,0,460,136,CARD,true);
     clock_digits=text_at(clock_card,"--:--",20,14,420,&panel_clock_font,TEXT);
     center_text(clock_digits);
-    clock_date=text_at(clock_card,panel_text(TXT_CLOCK_UNSET),20,96,420,&lv_font_montserrat_18,MUTED);
+    clock_date=text_at(clock_card,panel_text(TXT_CLOCK_UNSET),20,96,420,&panel_font_18,MUTED);
     center_text(clock_date);
     lv_obj_t *timer_card=panel(page[3],10,146,460,154,CARD,true);
     timer_minus=button(timer_card,LV_SYMBOL_MINUS,14,14,84,72,timer_step,-1);
     timer_plus=button(timer_card,LV_SYMBOL_PLUS,362,14,84,72,timer_step,1);
     lv_obj_t *steps[]={timer_minus,timer_plus};
     for(int i=0;i<2;i++){
-        lv_obj_set_style_text_font(steps[i],&lv_font_montserrat_24,0);
+        lv_obj_set_style_text_font(steps[i],&panel_font_24,0);
         void *sign=(void *)(intptr_t)(i?1:-1);
         lv_obj_add_event_cb(steps[i],timer_step,LV_EVENT_SHORT_CLICKED,sign);
         lv_obj_add_event_cb(steps[i],timer_step,LV_EVENT_LONG_PRESSED,sign);
@@ -807,9 +811,9 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     /* A new screen for a new language, while the timer rings. */
     if(timer.phase==PANEL_TIMER_RINGING)alarm_show();
     lv_obj_t *foot=panel(s,10,386,460,48,CARD,true);
-    icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&lv_font_montserrat_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&lv_font_montserrat_18,BLUE);
-    line(foot,151,9,1,30);icon(foot,&icon_circuit_board,165,12,MUTED);text_at(foot,"GPU",198,6,99,&lv_font_montserrat_12,MUTED);gpu_value=text_at(foot,"-- C",198,22,99,&lv_font_montserrat_18,BLUE);
-    line(foot,304,9,1,30);icon(foot,&icon_zap,318,12,MUTED);text_at(foot,"GPU-WATT",350,6,98,&lv_font_montserrat_12,MUTED);power_value=text_at(foot,"-- W",350,22,98,&lv_font_montserrat_18,BLUE);
+    icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&panel_font_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&panel_font_18,BLUE);
+    line(foot,151,9,1,30);icon(foot,&icon_circuit_board,165,12,MUTED);text_at(foot,"GPU",198,6,99,&panel_font_12,MUTED);gpu_value=text_at(foot,"-- C",198,22,99,&panel_font_18,BLUE);
+    line(foot,304,9,1,30);icon(foot,&icon_zap,318,12,MUTED);text_at(foot,"GPU-WATT",350,6,98,&panel_font_12,MUTED);power_value=text_at(foot,"-- W",350,22,98,&panel_font_18,BLUE);
     /* The bottom row: the settings on the left, what the panel has to
      * say in the middle, and the state of the panel itself on the right.
      *
@@ -818,12 +822,12 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * the edge of the card above it. */
     lv_obj_t *settings_button=button(s,panel_text(TXT_SETTINGS),0,436,150,44,settings_clicked,0);
     lv_obj_set_style_bg_opa(settings_button,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(settings_button,0,0);
-    lv_obj_set_style_text_font(settings_button,&lv_font_montserrat_14,0);
+    lv_obj_set_style_text_font(settings_button,&panel_font_14,0);
     lv_obj_align(lv_obj_get_child(settings_button,0),LV_ALIGN_LEFT_MID,12,0);
     /* Empty unless there is something to say. See the poll in main.c:
      * the state of the connection is the mark on the right now, and what
      * reaches this line is what a mark cannot say. */
-    message=text_at(s,"",150,451,180,&lv_font_montserrat_12,MUTED);
+    message=text_at(s,"",150,451,180,&panel_font_12,MUTED);
     lv_obj_set_height(message,18);
     lv_obj_set_style_text_align(message,LV_TEXT_ALIGN_CENTER,0);
     lv_label_set_long_mode(message,LV_LABEL_LONG_DOT);
@@ -845,7 +849,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_set_style_pad_column(status,10,0);
     wifi_mark=lv_label_create(status);
     lv_label_set_text(wifi_mark,LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_font(wifi_mark,&lv_font_montserrat_14,0);
+    lv_obj_set_style_text_font(wifi_mark,&panel_font_14,0);
     /* Red until the network is joined, which is the one state of it that
      * asks for a look. */
     lv_obj_set_style_text_color(wifi_mark,lv_color_hex(RED),0);
@@ -853,7 +857,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * its place at the top. Hidden until the power chip answers. */
     esp_power=lv_label_create(status);
     lv_label_set_text(esp_power,"");
-    lv_obj_set_style_text_font(esp_power,&lv_font_montserrat_14,0);
+    lv_obj_set_style_text_font(esp_power,&panel_font_14,0);
     lv_obj_set_style_text_color(esp_power,lv_color_hex(MUTED),0);
     lv_obj_add_flag(esp_power,LV_OBJ_FLAG_HIDDEN);
 }
@@ -934,9 +938,9 @@ void panel_ui_update(const panel_state_t *s)
         if(!setup_screen){
             if(overlay){lv_obj_delete(overlay);overlay=NULL;}
             setup_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
-            text_at(setup_screen,panel_text(TXT_SETUP_TITLE),24,28,432,&lv_font_montserrat_24,BLUE);
-            setup_text=text_at(setup_screen,"",24,96,432,&lv_font_montserrat_18,TEXT);lv_label_set_long_mode(setup_text,LV_LABEL_LONG_WRAP);
-            text_at(setup_screen,panel_text(TXT_SETUP_STOP),24,428,432,&lv_font_montserrat_16,MUTED);
+            text_at(setup_screen,panel_text(TXT_SETUP_TITLE),24,28,432,&panel_font_24,BLUE);
+            setup_text=text_at(setup_screen,"",24,96,432,&panel_font_18,TEXT);lv_label_set_long_mode(setup_text,LV_LABEL_LONG_WRAP);
+            text_at(setup_screen,panel_text(TXT_SETUP_STOP),24,428,432,&panel_font_16,MUTED);
         }
         lv_label_set_text_fmt(setup_text,panel_text(TXT_SETUP_STEPS),s->setup_ssid,s->setup_password);return;
     }
