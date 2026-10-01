@@ -15,11 +15,22 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COMPANION = os.path.join(REPO, "firmware", "companion")
 FIRMWARE = os.path.join(COMPANION, "main")
+
+
+HARNESS = os.path.join(REPO, "tests", "c", "panel-clock-harness.c")
+STUBS = os.path.join(REPO, "tests", "c", "stubs")
+
+
+def compiler():
+    return shutil.which("cc") or shutil.which("gcc")
 
 
 def read(*parts):
@@ -104,6 +115,131 @@ class SpeedTest(unittest.TestCase):
         self.assertRegex(low, r"is_low=low;\s*\}$")
 
 
+class MeasureTest(unittest.TestCase):
+    """The mean speed of the clock, from the cycle counters."""
+
+    def clock(self):
+        return without_comments(read("main", "panel_clock.c"))
+
+    def test_a_stretch_counts_only_on_one_core(self):
+        """Each core has a counter of its own, and the network task moves
+        between them. A stretch from one counter to the other is a number
+        about neither."""
+        sample = body(self.clock(), "void panel_clock_sample(void)")
+        self.assertIn("int core = esp_cpu_get_core_id();", sample)
+        self.assertIn("last_cycles[core]", sample)
+        self.assertIn("last_us[core]", sample)
+        self.assertLess(sample.index("portENTER_CRITICAL(&readings_lock);"),
+                        sample.index("esp_cpu_get_core_id()"))
+
+    def test_a_stretch_is_shorter_than_the_counter_turns_over(self):
+        """32 bits at 240 MHz turn over after 17.9 seconds."""
+        found = re.search(r"#define STRETCH_MAX_US \((\d+) \* 1000 \* 1000\)",
+                          self.clock())
+        self.assertIsNotNone(found)
+        self.assertLess(int(found.group(1)) * 1000 * 1000,
+                        (1 << 32) / 240)
+        sample = body(self.clock(), "void panel_clock_sample(void)")
+        self.assertIn("now - last_us[core] < STRETCH_MAX_US", sample)
+
+    def test_the_share_runs_between_the_two_speeds(self):
+        average = body(self.clock(),
+                       "void panel_clock_average(unsigned *mhz, unsigned *low_percent)")
+        self.assertIn("(PANEL_CLOCK_HIGH_MHZ - mean) * 100", average)
+        self.assertIn("/ (PANEL_CLOCK_HIGH_MHZ - PANEL_CLOCK_LOW_MHZ)", average)
+        self.assertIn("sum_cycles = 0;", average)
+
+
+@unittest.skipUnless(compiler(), "no C compiler here")
+class MeanSpeedTest(unittest.TestCase):
+    """The measurement, built and driven with two made-up counters.
+
+    The counters of the two cores start far apart, and the one of the
+    second core close to where 32 bits turn over, so a stretch from one
+    core to the other or across the turn shows as a wrong speed."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.where = tempfile.mkdtemp()
+        cls.program = os.path.join(cls.where, "panel-clock")
+        done = subprocess.run(
+            [compiler(), "-std=gnu17", "-Wall", "-Wextra", "-Werror",
+             "-I", STUBS, "-I", FIRMWARE, "-o", cls.program, HARNESS,
+             os.path.join(FIRMWARE, "panel_clock.c")],
+            capture_output=True, text=True)
+        # A failure and not a skip: the stubs are plain C, so a build that
+        # fails is a fault in the file.
+        if done.returncode != 0:
+            shutil.rmtree(cls.where, ignore_errors=True)
+            raise AssertionError("panel_clock.c did not build here:\n"
+                                 + done.stderr.strip()[:500])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.where, ignore_errors=True)
+
+    def averages(self, *commands):
+        done = subprocess.run([self.program],
+                              input="\n".join(commands) + "\n",
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return [tuple(int(n) for n in line.split())
+                for line in done.stdout.splitlines()]
+
+    def loop(self, seconds, mhz, cores=(0,)):
+        """The network loop: a reading every 100 ms, from the cores in
+        turn."""
+        commands = []
+        for step in range(int(seconds * 10)):
+            commands += ["on %d" % cores[step % len(cores)], "sample",
+                         "run 100000 %d" % mhz]
+        return commands
+
+    def test_awake_it_is_the_full_speed(self):
+        self.assertEqual(self.averages(*self.loop(5, 240), "sample",
+                                       "average"), [(240, 0)])
+
+    def test_asleep_and_idle_it_is_the_low_speed(self):
+        self.assertEqual(self.averages(*self.loop(5, 80), "sample",
+                                       "average"), [(80, 100)])
+
+    def test_a_mix_comes_out_as_its_share(self):
+        """A quarter of the time at 240 and the rest at 80 is a mean of
+        120, and three quarters low."""
+        commands = ["sample"]
+        for _ in range(10):
+            commands += ["run 25000 240", "run 75000 80", "sample"]
+        self.assertEqual(self.averages(*commands, "average"), [(120, 75)])
+
+    def test_two_cores_in_turn_still_measure_right(self):
+        """The counters of the two cores are four thousand million apart
+        here. A stretch from one to the other would say nonsense."""
+        self.assertEqual(self.averages(*self.loop(6, 240, cores=(0, 1)),
+                                       "on 0", "sample", "average"),
+                         [(240, 0)])
+
+    def test_the_counter_turning_over_is_not_a_fault(self):
+        """The counter of the second core turns over in the first few
+        seconds of this."""
+        self.assertEqual(self.averages(*self.loop(30, 240, cores=(1,)),
+                                       "on 1", "sample", "average"),
+                         [(240, 0)])
+
+    def test_a_stretch_too_long_to_trust_is_dropped(self):
+        """Twenty seconds at 240 MHz is more cycles than 32 bits hold, so
+        nothing is said about it, rather than something wrong."""
+        self.assertEqual(self.averages("sample", "run 20000000 240",
+                                       "sample", "average"), [(0, 0)])
+
+    def test_each_average_starts_again(self):
+        commands = self.loop(2, 240) + ["sample", "average"]
+        commands += self.loop(2, 80) + ["sample", "average"]
+        self.assertEqual(self.averages(*commands), [(240, 0), (80, 100)])
+
+    def test_with_no_readings_it_says_nothing(self):
+        self.assertEqual(self.averages("average"), [(0, 0)])
+
+
 class SleepTest(unittest.TestCase):
     def main(self):
         return without_comments(read("main", "main.c"))
@@ -134,10 +270,25 @@ class SleepTest(unittest.TestCase):
         self.assertLess(start.index("panel_clock_init()"),
                         start.index("panel_display_start()"))
 
-    def test_the_health_line_says_the_speed(self):
-        """The one way to see on the board that the clock went down."""
-        self.assertIn("cpu=%uMHz", self.main())
-        self.assertIn("panel_clock_mhz()", self.main())
+    def test_the_health_line_says_the_measured_speed(self):
+        """The one way to see on the board that the clock went down.
+
+        Read off the board: cpu=240MHz in a sleep. That reading asked
+        esp_clk_cpu_freq, which says 240 from any code that runs, because
+        esp_pm holds the full speed while a core is not idle. The line now
+        carries the mean of the cycles counted over the time between, and
+        the share of that time at the low speed."""
+        code = self.main()
+        self.assertIn("cpu_avg=%uMHz low=%u%%", code)
+        self.assertIn("panel_clock_average(&clock_mhz,&clock_low);", code)
+        self.assertNotIn("esp_clk_cpu_freq", without_comments(
+            read("main", "panel_clock.c")))
+
+    def test_the_clock_is_read_at_every_turn_of_the_network_loop(self):
+        task = body(self.main(), "static void network_task(void *arg)")
+        loop = task[task.index("for (;;) {"):]
+        self.assertLess(loop.index("panel_clock_sample();"),
+                        loop.index("if (rest!=rest_wanted)"))
 
 
 if __name__ == "__main__":

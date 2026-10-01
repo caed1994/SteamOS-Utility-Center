@@ -97,3 +97,6 @@ void panel_ui_create(panel_action_cb_t callback, panel_setting_cb_t setting_cb, 
 void panel_ui_settings_open(void);
 void panel_ui_update(const panel_state_t *state);
 void panel_ui_confirm(panel_action_t action);
+/* What the screen shows, in a few words for the log: the page of the band,
+ * the settings, a question, or the setup. From the LVGL task only. */
+const char *panel_ui_where(void);

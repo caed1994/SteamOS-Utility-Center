@@ -305,6 +305,20 @@ void panel_ui_settings_open(void)
     text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,648,440,&lv_font_montserrat_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
+const char *panel_ui_where(void)
+{
+    if(setup_screen)return "the setup";
+    if(overlay)return "a question";
+    if(settings_screen)return "the settings";
+    if(!band)return "no screen";
+    /* Read from where the band stands: a swipe that did not carry far
+     * enough left it on the page it was on. */
+    static const char *const pages[]={"the first page","the second page","the third page"};
+    int32_t page=(lv_obj_get_scroll_x(band)+240)/480;
+    if(page<0)page=0;
+    if(page>2)page=2;
+    return pages[page];
+}
 /* How a drive row sits in its card.
  *
  * The card is 460 across. The icon and the line above it stand 14 in from

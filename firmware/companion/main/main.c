@@ -201,22 +201,46 @@ static int metric(cJSON *object,const char *key,int limit)
  * asked this without its handle, so the reading is taken here and left in
  * a number the health line reads.
  *
- * A warning goes out only once the headroom passes below the floor. Above
- * it the number rides along on the health line and says nothing on its
- * own. */
+ * A warning goes out once the headroom passes below the floor. Above it,
+ * a line goes out each time the headroom sinks by PANEL_STACK_STEP, with
+ * what the panel showed then.
+ *
+ * Read off the board: 876 bytes were left of sixteen kilobytes, where an
+ * earlier firmware had used 11580 of twelve. Something added since needs
+ * four kilobytes more, and the health line said only how much, not when.
+ * The deepest point falls between two ticks, so the line names what the
+ * screen showed at the tick after it. The steps keep it to a few lines
+ * over the life of the panel, most of them at the start. */
 #define PANEL_STACK_FLOOR 1024
+#define PANEL_STACK_STEP 1024
 static atomic_uint ui_stack_left;
+
+static const char *panel_place(void)
+{
+    if (panel_boot_playing()) return "the startup animation";
+    if (atomic_load(&display_asleep)) return "the standby";
+    return panel_ui_where();
+}
 
 static void watch_stack(void)
 {
+    static unsigned logged;
     UBaseType_t left=uxTaskGetStackHighWaterMark(NULL);
     unsigned was=atomic_load(&ui_stack_left);
     if (was!=0 && (unsigned)left>=was) return;
     atomic_store(&ui_stack_left,(unsigned)left);
     if ((unsigned)left<PANEL_STACK_FLOOR)
         ESP_LOGW("panel_stack",
-                 "the drawing task is down to %u of %u bytes of stack",
-                 (unsigned)left,(unsigned)panel_display_stack_bytes());
+                 "the drawing task is down to %u of %u bytes of stack, on %s",
+                 (unsigned)left,(unsigned)panel_display_stack_bytes(),
+                 panel_place());
+    else if (logged==0 || logged-(unsigned)left>=PANEL_STACK_STEP) {
+        logged=(unsigned)left;
+        ESP_LOGI("panel_stack",
+                 "the drawing task has had %u of %u bytes of stack left at "
+                 "the least, on %s",(unsigned)left,
+                 (unsigned)panel_display_stack_bytes(),panel_place());
+    }
 }
 
 /* Put the display down or bring it back, and remember why.
@@ -557,7 +581,10 @@ static const char *wifi_reason_name(uint8_t reason)
 {
     switch (reason) {
     case 4:   return "the AP dropped an idle station";
-    case 8:   return "the AP is leaving";
+    /* The sender leaves the network. Read off the board, it is the panel
+     * itself when it stops its radio for the rest, and wifi_event says so
+     * without a warning then. */
+    case 8:   return "the sender left the network";
     case 15:  return "the four way handshake timed out";
     case 16:  return "the group key update timed out";
     case 23:  return "802.1X refused it";
@@ -576,8 +603,14 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     (void)arg;
     if (base==WIFI_EVENT && id==WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *event=data;
-        ESP_LOGW("panel_wifi","Disconnected, reason=%u: %s",
-                 event->reason,wifi_reason_name(event->reason));
+        /* The disconnect of a radio rest is the panel leaving on purpose,
+         * and the board showed it as a warning. */
+        if (atomic_load(&radio_resting))
+            ESP_LOGI("panel_wifi","Disconnected for the radio rest, reason=%u: %s",
+                     event->reason,wifi_reason_name(event->reason));
+        else
+            ESP_LOGW("panel_wifi","Disconnected, reason=%u: %s",
+                     event->reason,wifi_reason_name(event->reason));
         xSemaphoreTake(lock,portMAX_DELAY);
         state.wifi=false; state.online=false;
         bool reconnect=!state.setup && !atomic_load(&radio_resting);
@@ -662,6 +695,9 @@ static void network_task(void *arg)
     TickType_t last_battery=xTaskGetTickCount()-pdMS_TO_TICKS(5000);
     bool rest_wanted=false,was_connected=false;
     for (;;) {
+        /* A reading of the clock at every turn of this loop, which is ten a
+         * second or so. See panel_clock_sample. */
+        panel_clock_sample();
         /* The radio rests while the display sleeps by the button, and not
          * during the setup: a phone talks to the access point of the setup,
          * whatever the screen does. */
@@ -701,10 +737,12 @@ static void network_task(void *arg)
         if(xTaskGetTickCount()-last_health>=pdMS_TO_TICKS(30000)){
             last_health=xTaskGetTickCount();
             uint32_t now_ms=(uint32_t)(esp_timer_get_time()/1000);
+            unsigned clock_mhz=0,clock_low=0;
+            panel_clock_average(&clock_mhz,&clock_low);
             xSemaphoreTake(lock,portMAX_DELAY);
             bool wifi=state.wifi,online=state.online;
             xSemaphoreGive(lock);
-            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d radio_rest=%d cpu=%uMHz key_slowest=%ums",
+            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d radio_rest=%d cpu_avg=%uMHz low=%u%% key_slowest=%ums",
                 now_ms/1000,now_ms-atomic_load(&ui_heartbeat_ms),
                 (unsigned)esp_get_free_heap_size(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
@@ -716,7 +754,10 @@ static void network_task(void *arg)
                 atomic_load(&ui_stack_left),
                 (unsigned)panel_display_stack_bytes(),wifi,online,
                 atomic_load(&display_asleep),atomic_load(&radio_resting),
-                panel_clock_mhz(),
+                /* The mean speed of the clock since the last line, and the
+                 * share of that time at the low speed. See
+                 * panel_clock_average. */
+                clock_mhz,clock_low,
                 /* The slowest turn of the key loop since the last line.
                  * The shortest press the panel can see is about twice
                  * this, so a number far above PWRKEY_PERIOD_MS is why a

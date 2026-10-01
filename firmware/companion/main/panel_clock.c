@@ -37,7 +37,9 @@
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include "esp_pm.h"
-#include "esp_private/esp_clk.h"
+#include "esp_cpu.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
 
 #if !CONFIG_PM_ENABLE
 #error "CONFIG_PM_ENABLE is off, so esp_pm cannot change the clock. See sdkconfig.defaults."
@@ -77,7 +79,67 @@ void panel_clock_low(bool low)
     is_low=low;
 }
 
-unsigned panel_clock_mhz(void)
+/* How fast the clock really ran, measured and not asked.
+ *
+ * Read off the board: the health line said cpu=240MHz while the display
+ * slept. It asked esp_clk_cpu_freq, and that answer is always 240 from
+ * code that runs. esp_pm holds a lock for the full speed on each core for
+ * as long as that core is not idle, and lets it go only in the idle task
+ * (rtos0 and rtos1 in components/esp_pm/pm_impl.c). The low speed is the
+ * speed of the pauses, and a question asked from inside a task is never
+ * asked in a pause.
+ *
+ * The cycle counter of a core counts at whatever speed the clock has, in
+ * the pauses as well. So the cycles between two readings, over the time
+ * between them, is the mean speed of that stretch. While the display is
+ * awake, panel_awake holds the full speed in the pauses too, and the mean
+ * is then 240: a check of the measurement that comes for free.
+ *
+ * Each core has a counter of its own, and the task that reads them is not
+ * pinned to one. So each core keeps its last reading, and a stretch counts
+ * only between two readings of the same core. The counter is 32 bits wide
+ * and turns over after 17.9 seconds at 240 MHz, so a stretch longer than
+ * STRETCH_MAX_US is dropped and not guessed at. */
+#define STRETCH_MAX_US (10 * 1000 * 1000)
+
+static portMUX_TYPE readings_lock = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t last_cycles[portNUM_PROCESSORS];
+static int64_t last_us[portNUM_PROCESSORS];
+static uint64_t sum_cycles, sum_us;
+
+void panel_clock_sample(void)
 {
-    return (unsigned)(esp_clk_cpu_freq()/1000000);
+    /* One core, the counter and the time read together: no other task
+     * runs on this core in between, so the three belong to one moment. */
+    portENTER_CRITICAL(&readings_lock);
+    int core = esp_cpu_get_core_id();
+    uint32_t cycles = esp_cpu_get_cycle_count();
+    int64_t now = esp_timer_get_time();
+    if (last_us[core] != 0 && now > last_us[core] &&
+        now - last_us[core] < STRETCH_MAX_US) {
+        sum_cycles += (uint32_t)(cycles - last_cycles[core]);
+        sum_us += (uint64_t)(now - last_us[core]);
+    }
+    last_cycles[core] = cycles;
+    last_us[core] = now;
+    portEXIT_CRITICAL(&readings_lock);
+}
+
+void panel_clock_average(unsigned *mhz, unsigned *low_percent)
+{
+    portENTER_CRITICAL(&readings_lock);
+    uint64_t cycles = sum_cycles, us = sum_us;
+    sum_cycles = 0;
+    sum_us = 0;
+    portEXIT_CRITICAL(&readings_lock);
+    *mhz = 0;
+    *low_percent = 0;
+    if (us == 0) return;
+    unsigned mean = (unsigned)(cycles / us);
+    *mhz = mean;
+    /* Between the two speeds, the mean says how much of the time was low. */
+    if (mean <= PANEL_CLOCK_LOW_MHZ) *low_percent = 100;
+    else if (mean < PANEL_CLOCK_HIGH_MHZ)
+        *low_percent = (PANEL_CLOCK_HIGH_MHZ - mean) * 100
+                     / (PANEL_CLOCK_HIGH_MHZ - PANEL_CLOCK_LOW_MHZ);
 }

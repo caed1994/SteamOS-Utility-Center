@@ -115,8 +115,8 @@ static void lvgl_log(lv_log_level_t level,const char *text)
         ESP_LOGI("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
 }
 
-/* Sixteen kilobytes for the drawing task. See panel_display_start. */
-#define PANEL_LVGL_STACK (16 * 1024)
+/* Twenty-four kilobytes for the drawing task. See panel_display_start. */
+#define PANEL_LVGL_STACK (24 * 1024)
 
 size_t panel_display_stack_bytes(void){return PANEL_LVGL_STACK;}
 
@@ -149,9 +149,16 @@ lv_display_t *panel_display_start(void)
      * panel reported 708 bytes left of them, at 1831 ms, which is where
      * the screen is built and the animation starts. So the task really
      * wants 11580, and whatever ESP_LVGL_PORT_INIT_CONFIG offered was far
-     * under that: the overflow was not bad luck. Sixteen leaves about
-     * 4800 bytes, which is room for a deeper draw than any this has seen
-     * rather than a number that only just fits. */
+     * under that: the overflow was not bad luck. Sixteen left about 4800
+     * bytes, which was room for a deeper draw than any this had seen.
+     *
+     * It was not room enough. Later the health line said
+     * ui_stack=876/16384: something added since then needs four
+     * kilobytes more, 15508 in all, and 876 is under the floor watch_stack
+     * warns at. Twenty-four leaves about 9000 above that, and the internal
+     * pool had 104 KiB free in the same line. watch_stack now also says
+     * on which screen the stack went deeper, so the next number comes
+     * with a place. */
     port.task_stack=PANEL_LVGL_STACK;
     ESP_ERROR_CHECK(lvgl_port_init(&port));
     /* After lvgl_port_init, which is what calls lv_init. */

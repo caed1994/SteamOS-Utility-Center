@@ -512,9 +512,10 @@ class DrawingStackTest(unittest.TestCase):
         said = re.search(r"#define PANEL_LVGL_STACK \(?(\d+)\s*\*\s*1024", code)
         self.assertIsNotNone(said, "the stack has no size of its own here")
         # The board measured it: 708 bytes left of 12288, so the task
-        # wants 11580. Twelve only just held, and this asks for room
-        # above what was seen rather than a number that fits it exactly.
-        self.assertGreaterEqual(int(said.group(1)) * 1024, 11580 + 2048)
+        # wanted 11580. Later 876 left of 16384, so it wants 15508. This
+        # asks for room above the deepest that was seen rather than a
+        # number that fits it exactly.
+        self.assertGreaterEqual(int(said.group(1)) * 1024, 15508 + 4096)
 
     def test_one_place_holds_the_number(self):
         """The health line prints the headroom against the whole. Two
@@ -543,6 +544,25 @@ class DrawingStackTest(unittest.TestCase):
         said = re.search(r'ESP_LOGI\("panel_health"[^;]*;', code, re.S)
         self.assertIsNotNone(said)
         self.assertIn("ui_stack=", said.group(0))
+
+    def test_a_deeper_stack_says_where_the_panel_was(self):
+        """The health line said how deep, never when. Each new low by a
+        step goes to the log with what the screen showed, so the place
+        that needs the stack can be found."""
+        code = self.main()
+        watch = re.search(r"static void watch_stack\(void\).*?\n\}", code,
+                          re.S).group(0)
+        self.assertRegex(code, r"#define PANEL_STACK_STEP \d+")
+        self.assertIn("PANEL_STACK_STEP", watch)
+        self.assertEqual(watch.count("panel_place()"), 2,
+                         "the warning and the line above the floor both "
+                         "name the place")
+        place = re.search(r"static const char \*panel_place\(void\).*?\n\}",
+                          code, re.S)
+        self.assertIsNotNone(place)
+        for source in ("panel_boot_playing()", "display_asleep",
+                       "panel_ui_where()"):
+            self.assertIn(source, place.group(0))
 
     def test_it_says_so_before_it_runs_out(self):
         """A floor above nought. FreeRTOS reports an overflow once the

@@ -15,5 +15,11 @@ esp_err_t panel_clock_init(void);
  * with the same value does nothing. */
 void panel_clock_low(bool low);
 
-/* The speed of the CPU now, in MHz, for the health line. */
-unsigned panel_clock_mhz(void);
+/* One reading of the cycle counter of the core this runs on. Call it
+ * often, a few times a second at least: see panel_clock.c. */
+void panel_clock_sample(void);
+
+/* The mean speed of the clock since the last call, in MHz, and the share of
+ * that time at the low speed, in per cent. Nought for both when no two
+ * readings came from the same core in between. */
+void panel_clock_average(unsigned *mhz, unsigned *low_percent);

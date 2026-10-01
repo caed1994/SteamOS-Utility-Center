@@ -334,6 +334,22 @@ class RadioRestTest(unittest.TestCase):
             r"if \(now_connected && !was_connected\)\s*"
             r"last_poll=xTaskGetTickCount\(\)-pdMS_TO_TICKS\(3000\);")
 
+    def test_the_disconnect_of_a_rest_is_not_a_warning(self):
+        """Read off the board: the rest wrote "Disconnected, reason=8" as a
+        warning, and a warning for what the panel did on purpose teaches
+        a reader to skip warnings."""
+        handler = self.body("static void wifi_event(")
+        rest = handler.index("if (atomic_load(&radio_resting))")
+        self.assertLess(rest, handler.index(
+            'ESP_LOGI("panel_wifi","Disconnected for the radio rest'))
+        self.assertLess(rest, handler.index(
+            'ESP_LOGW("panel_wifi","Disconnected, reason'))
+        table = re.search(r"wifi_reason_name\(uint8_t reason\)\s*\{.*?\n\}",
+                          self.source(), re.S).group(0)
+        self.assertNotIn("the AP is leaving", table,
+                         "reason 8 is the sender leaving, and on the board "
+                         "the sender was the panel")
+
     def test_the_log_says_how_long_the_join_after_a_rest_took(self):
         """The few seconds this costs are a guess until the board says."""
         handler = self.body("static void wifi_event(")
