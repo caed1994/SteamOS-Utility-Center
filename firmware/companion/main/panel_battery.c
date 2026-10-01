@@ -4,11 +4,11 @@
 // The battery of the panel, read off its power chip.
 //
 // The 4B carries an AXP2101, which charges a cell and keeps a gauge of it.
-// Nothing in the board support speaks to it, so this does, and it only
-// reads. A power chip decides which rails of the board have power, and one
-// wrong write to it can switch off the rail this code runs on. None of the
-// registers below is written, and the rule in tests/test_panel_battery.py
-// holds that.
+// Nothing in the board support speaks to it, so this does. A power chip
+// decides which rails of the board have power, and one wrong write to it
+// can switch off the rail this code runs on. So it reads, and writes two
+// fields of the charger and nothing else: see charger_set. The rules in
+// tests/test_panel_battery.py hold that.
 //
 // The addresses and the bits are those of XPowersLib, the driver that the
 // makers of these boards use themselves:
@@ -58,6 +58,22 @@
  * state changes. A change in the hold is written at the end of it. */
 #define CHARGER_HOLD_MS         30000
 
+/* The cell of this panel, as its owner read it off the cell. */
+#define PANEL_CELL_MAH          5000
+/* The two fields charger_set writes. 1000 mA is the most the chip gives,
+ * and a fifth of the cell an hour (0.2 C), well under what a cell of
+ * this size takes. Bit 4 of the TS control sets the TS pin apart from the
+ * charger. */
+#define CHARGE_CURRENT_MA       1000
+#define CHARGE_CURRENT_CODE     0x10
+#define CHARGE_CURRENT_MASK     0x1F
+#define TS_APART                0x10
+#define TS_APART_MASK           0x10
+_Static_assert(CHARGE_CURRENT_MA <= PANEL_CELL_MAH / 2,
+               "more than half the cell an hour is too fast for it");
+_Static_assert(CHARGE_CURRENT_CODE == 8 + (CHARGE_CURRENT_MA - 200) / 100,
+               "REG 62 counts 100 mA a step above 200 mA");
+
 /* Short, because the bus is shared with the touch, the codec and the key.
  * A chip that does not answer in this time is a reading skipped, and the
  * next one comes a few seconds later. */
@@ -70,6 +86,66 @@ static esp_err_t read_register(uint8_t reg, uint8_t *value)
 {
     return i2c_master_transmit_receive(chip, &reg, 1, value, 1,
                                        READ_TIMEOUT_MS);
+}
+
+static esp_err_t write_register(uint8_t reg, uint8_t value)
+{
+    const uint8_t data[2] = {reg, value};
+    return i2c_master_transmit(chip, data, 2, READ_TIMEOUT_MS);
+}
+
+/* One field of one register to the value given, and the rest of the
+ * register as it was. Read first, so a field that already holds the value
+ * is not written at all, and read back after, so a write that did not
+ * take says so. */
+static void set_field(uint8_t reg, uint8_t mask, uint8_t bits, const char *what)
+{
+    uint8_t before = 0, after = 0;
+    if (read_register(reg, &before) != ESP_OK) {
+        ESP_LOGW(tag, "%s: 0x%02x did not answer, nothing written", what, reg);
+        return;
+    }
+    if ((before & mask) == bits) return;
+    esp_err_t err = write_register(reg, (uint8_t)((before & ~mask) | bits));
+    if (err == ESP_OK) err = read_register(reg, &after);
+    if (err != ESP_OK || (after & mask) != bits) {
+        ESP_LOGW(tag, "%s: 0x%02x did not take it (0x%02x, %s)", what, reg,
+                 after, esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGI(tag, "%s: 0x%02x from 0x%02x to 0x%02x", what, reg, before, after);
+}
+
+/* The two settings of the charger that this panel needs, and the only
+ * writes to the chip anywhere in this firmware.
+ *
+ * Read off the board, before this existed: the panel charged slowly, with
+ * a charger and a cable that charge a Switch 2 fast, and off as slowly as
+ * on. The chip charges at what it is set to, and the charger on the wall
+ * does not change that.
+ *
+ * The TS pin. The chip can read a sensor in the cell through it, and stop
+ * or slow the charge when the sensor says too cold or too hot. The cell of
+ * this panel has no sensor; its plug has two pins. The example of the
+ * maker of the board sets the pin apart from the charger, with the note
+ * that a board without the sensor otherwise charges abnormally
+ * (examples/esp-idf/01_AXP2101/main/port_axp2101.cpp in
+ * waveshareteam/ESP32-S3-Touch-LCD-4B).
+ *
+ * The charge current. The datasheet gives 300 mA after a reset, from a
+ * fuse in the chip. That fills a cell of 5000 mAh in most of a day. See
+ * CHARGE_CURRENT_MA for the value now.
+ *
+ * Both keep their values while the chip has power, and the chip has power
+ * from the cell when the panel is off. So the panel charges at this speed
+ * off as well, until the cell is unplugged. Everything else stays at what
+ * the chip came with: the rails, the target voltage, the safety timers. */
+static void charger_set(void)
+{
+    set_field(AXP2101_TS_CONTROL, TS_APART_MASK, TS_APART,
+              "TS pin apart from the charger");
+    set_field(AXP2101_CHARGE_CURRENT, CHARGE_CURRENT_MASK, CHARGE_CURRENT_CODE,
+              "charge current 1000 mA");
 }
 
 /* One register for the log line, or -1 when the chip did not answer. */
@@ -129,19 +205,11 @@ static const char *charge_state_name(uint8_t status2)
  * switched on. The speed of a charge is not the charger on the wall here.
  * It is what this chip is set to, and two of its settings are suspects:
  *
- * The charge current. The datasheet gives 300 mA, and the value after a
- * reset comes from a fuse in the chip, so only a reading says what this
- * one holds.
+ * The charge current and the TS pin, which charger_set writes. This line
+ * shows what they hold, and whether the chip holds the current under its
+ * setting for a reason of its own: heat, or an input that gives less.
  *
- * The TS pin. The chip can read a sensor in the cell through it, and stop
- * or slow the charge when the sensor says too cold or too hot. The example
- * of the maker of this board for this chip turns that off, with the note
- * that a board without the sensor otherwise charges abnormally
- * (examples/esp-idf/01_AXP2101/main/port_axp2101.cpp in
- * waveshareteam/ESP32-S3-Touch-LCD-4B). This firmware writes nothing to
- * the chip, so it is on whenever the fuse says on.
- *
- * Reads only, like everything else in this file. */
+ * Reads only. */
 static void charger_report(uint8_t status1, uint8_t status2)
 {
     int ts_control = read_or_none(AXP2101_TS_CONTROL);
@@ -245,6 +313,10 @@ esp_err_t panel_battery_init(void)
         chip = NULL;
         return err != ESP_OK ? err : ESP_ERR_NOT_FOUND;
     }
+
+    /* Only after the type, so no other chip is written to, and before the
+     * first reading, so the line about the charger shows the new values. */
+    charger_set();
 
     /* What the board really says, once, in the log. This is the one
      * reading of these registers anybody has off a real 4B. */

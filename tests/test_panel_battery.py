@@ -8,9 +8,12 @@ firmware/companion/main/panel_battery.c does, and none of this can run
 here: the rules hold the shape, because each way this breaks is quiet or
 worse.
 
-The first rule is the one that matters most. A power chip decides which
+The first rules are the ones that matter most. A power chip decides which
 rails of the board have power, and a wrong write to it can switch off the
-rail the panel runs on. So the reader reads and never writes.
+rail the panel runs on. So the reader reads, and writes two fields of the
+charger and nothing else: bit 4 of 0x50, which sets the TS pin apart from
+the charger, and 0x62, the charge current. Its owner allowed exactly those
+two, after the panel charged a cell of 5000 mAh far too slowly.
 """
 
 from __future__ import annotations
@@ -38,28 +41,78 @@ def read(name):
         return without_comments(handle.read())
 
 
-class ReadOnlyTest(unittest.TestCase):
-    def test_nothing_is_ever_written_to_the_chip(self):
+class WriteTest(unittest.TestCase):
+    """Two fields of the charger are written, and nothing else is."""
+
+    def body(self, code, start):
+        found = re.search(re.escape(start) + r".*?\n\}", code, re.S)
+        self.assertIsNotNone(found, start)
+        return found.group(0)
+
+    def test_the_calls_are_reads_and_one_write(self):
         """transmit_receive sends the number of a register and reads it
-        back, which is a read. A transmit on its own is a write."""
+        back, which is a read. A transmit on its own is a write, and there
+        is one, in write_register."""
         code = read("panel_battery.c")
         calls = re.findall(r"\bi2c_master_\w+\(", code)
         self.assertTrue(calls, "the reader reads nothing at all")
-        allowed = {"i2c_master_transmit_receive(", "i2c_master_probe(",
-                   "i2c_master_bus_add_device(", "i2c_master_bus_rm_device("}
+        allowed = {"i2c_master_transmit_receive(", "i2c_master_transmit(",
+                   "i2c_master_probe(", "i2c_master_bus_add_device(",
+                   "i2c_master_bus_rm_device("}
         for call in calls:
-            self.assertIn(call, allowed,
-                          "%s is not a read, and this chip decides which "
-                          "rails of the board have power" % call)
+            self.assertIn(call, allowed, call)
+        self.assertEqual(calls.count("i2c_master_transmit("), 1)
+        writer = self.body(code, "static esp_err_t write_register(")
+        self.assertIn("i2c_master_transmit(", writer)
 
-    def test_each_transfer_sends_one_byte_the_number_of_a_register(self):
-        """A longer send in a transmit_receive would carry a value after
-        the register, which is a write dressed as a read."""
+    def test_only_set_field_writes_and_only_for_the_two_fields(self):
+        """A rail of the board is a register too. One more call of
+        set_field with another register would switch it as easily."""
+        code = read("panel_battery.c")
+        self.assertEqual(len(re.findall(r"\bwrite_register\(", code)), 2,
+                         "the definition and the one call in set_field")
+        self.assertIn("write_register(",
+                      self.body(code, "static void set_field("))
+        fields = re.findall(r"\bset_field\(\s*(\w+),\s*(\w+),\s*(\w+),",
+                            code)
+        self.assertEqual(sorted(fields), [
+            ("AXP2101_CHARGE_CURRENT", "CHARGE_CURRENT_MASK",
+             "CHARGE_CURRENT_CODE"),
+            ("AXP2101_TS_CONTROL", "TS_APART_MASK", "TS_APART")])
+
+    def test_the_fields_are_the_ones_allowed(self):
+        code = read("panel_battery.c")
+        for name, value in (("TS_APART_MASK", "0x10"), ("TS_APART", "0x10"),
+                            ("CHARGE_CURRENT_MASK", "0x1F"),
+                            ("CHARGE_CURRENT_CODE", "0x10"),
+                            ("CHARGE_CURRENT_MA", "1000"),
+                            ("PANEL_CELL_MAH", "5000")):
+            self.assertRegex(code, r"#define %s\s+%s\b" % (name, value))
+
+    def test_the_writes_come_once_at_the_start_after_the_type(self):
+        """Not at every reading, and never to a chip that is not this
+        one."""
+        code = read("panel_battery.c")
+        start = self.body(code, "esp_err_t panel_battery_init(void)")
+        self.assertLess(start.index("AXP2101_CHIP_ID"),
+                        start.index("charger_set();"))
+        self.assertLess(start.index("charger_set();"),
+                        start.index("panel_battery_read("))
+        self.assertEqual(code.count("charger_set();"), 1,
+                         "one call, at the start")
+
+    def test_each_transfer_has_the_size_of_its_kind(self):
+        """One byte out for a read: a longer send in a transmit_receive
+        would carry a value after the register, which is a write dressed as
+        a read. Two bytes for the write: a register and its value."""
         code = read("panel_battery.c")
         for found in re.finditer(r"i2c_master_transmit_receive\(([^;]*)\);",
                                  code):
             args = [part.strip() for part in found.group(1).split(",")]
             self.assertEqual(args[2], "1", found.group(0))
+        for found in re.finditer(r"i2c_master_transmit\(([^;]*)\);", code):
+            args = [part.strip() for part in found.group(1).split(",")]
+            self.assertEqual(args[2], "2", found.group(0))
 
 
 class RegisterTest(unittest.TestCase):
@@ -181,7 +234,10 @@ class ChargerReportTest(unittest.TestCase):
                 if line.startswith("I panel_battery: charger:")]
 
     def one(self, *commands):
-        lines = self.charger(*CHARGING, *commands, "init")
+        """The line at the start, with the two registers the start writes
+        locked, so the line shows the values the test set."""
+        lines = self.charger(*CHARGING, "lock 50", "lock 62", *commands,
+                             "init")
         self.assertEqual(len(lines), 1)
         return lines[0]
 
@@ -261,9 +317,52 @@ class ChargerReportTest(unittest.TestCase):
     def test_without_a_cell_there_is_no_line_about_a_charge(self):
         self.assertEqual(self.charger("set 00 20", "init", "read"), [])
 
-    def test_nothing_is_written_to_the_chip(self):
-        output = self.output(*CHARGING, "init", "at 40", "set 01 23", "read")
+    def writes(self, *commands):
+        output = self.output(*commands)
         self.assertEqual(output[-1], "not a read: 0")
+        self.assertTrue(output[-2].startswith("writes:"), output[-2])
+        return output[-2][len("writes:"):].split()
+
+    def test_the_start_writes_the_two_fields_and_keeps_the_rest(self):
+        """0x0a in 0x50 is the current source of the TS pin, and it stays.
+        The top three bits of 0x62 are read only in the chip, and stay."""
+        self.assertEqual(self.writes(*CHARGING, "set 50 0a", "set 62 e9",
+                                     "init"),
+                         ["50=1a*1", "62=f0*1"])
+
+    def test_a_field_that_holds_its_value_is_not_written(self):
+        """Which is every start after the first, until the cell is
+        unplugged."""
+        self.assertEqual(self.writes(*CHARGING, "set 50 1a", "set 62 10",
+                                     "init"), ["none"])
+
+    def test_readings_write_nothing(self):
+        """The writes come at the start, once, and the reading every five
+        seconds after that only reads."""
+        commands = list(CHARGING) + ["init"]
+        for second in range(5, 300, 5):
+            commands += ["at %d" % second, "read"]
+        commands += ["set 01 23", "at 400", "read"]
+        self.assertEqual(self.writes(*commands), ["50=10*1", "62=10*1"])
+
+    def test_another_chip_gets_nothing_written(self):
+        """Something else at 0x34 is not the chip these numbers belong
+        to."""
+        self.assertEqual(self.writes(*CHARGING, "type 47", "init"), ["none"])
+
+    def test_a_write_that_does_not_take_says_so_and_is_not_repeated(self):
+        output = self.output(*CHARGING, "lock 62", "init", "at 40", "read",
+                             "at 80", "read")
+        warnings = [line for line in output if line.startswith("W ")]
+        self.assertEqual(len(warnings), 1, output)
+        self.assertIn("charge current 1000 mA: 0x62 did not take it",
+                      warnings[0])
+        self.assertIn("62=00*1", output[-2])
+
+    def test_the_line_shows_the_values_the_start_wrote(self):
+        line = self.charger(*CHARGING, "set 50 0a", "set 62 09", "init")[0]
+        self.assertIn("icc=1000 mA", line)
+        self.assertIn("apart from the charger", line)
 
 
 class ChargerRegisterTest(unittest.TestCase):

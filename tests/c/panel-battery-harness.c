@@ -7,13 +7,15 @@
 // Commands on standard input, one to a line:
 //
 //   set <register> <value>   both in hexadecimal
+//   lock <register>          writes to it are taken and change nothing
+//   type <value>             what the type register answers
 //   at <seconds>             the clock of esp_timer_get_time
 //   init                     panel_battery_init
 //   read                     panel_battery_read
 //
-// The registers start as an AXP2101 with no cell. Every transfer that is
-// not a read of one register is counted, and the count is printed at the
-// end, so a write the source makes shows here as well. See
+// The registers start as an AXP2101 with no cell. Every write is counted
+// by register, and every transfer that is neither a read of one register
+// nor a write of one, and both are printed at the end. See
 // tests/test_panel_battery.py.
 
 #include <stdio.h>
@@ -26,6 +28,8 @@
 #include "panel_battery.h"
 
 static uint8_t registers[256];
+static int writes[256];
+static int locked[256];
 static int64_t clock_us;
 static int not_a_read;
 
@@ -47,6 +51,20 @@ esp_err_t i2c_master_transmit_receive(i2c_master_dev_handle_t device,
         return ESP_FAIL;
     }
     *read = registers[*write];
+    return ESP_OK;
+}
+
+esp_err_t i2c_master_transmit(i2c_master_dev_handle_t device,
+                              const uint8_t *write, size_t write_size,
+                              int timeout_ms)
+{
+    (void)device; (void)timeout_ms;
+    if (write_size != 2) {
+        not_a_read++;
+        return ESP_FAIL;
+    }
+    writes[write[0]]++;
+    if (!locked[write[0]]) registers[write[0]] = write[1];
     return ESP_OK;
 }
 
@@ -81,6 +99,10 @@ int main(void)
         double seconds;
         if (sscanf(line, "set %x %x", &reg, &value) == 2) {
             registers[reg & 0xFF] = (uint8_t)value;
+        } else if (sscanf(line, "lock %x", &reg) == 1) {
+            locked[reg & 0xFF] = 1;
+        } else if (sscanf(line, "type %x", &value) == 1) {
+            registers[0x03] = (uint8_t)value;
         } else if (sscanf(line, "at %lf", &seconds) == 1) {
             clock_us = (int64_t)(seconds * 1e6);
         } else if (strncmp(line, "init", 4) == 0) {
@@ -92,6 +114,15 @@ int main(void)
             panel_battery_read(&supply, &percent, &charging);
         }
     }
+    printf("writes:");
+    int none = 1;
+    for (int reg = 0; reg < 256; reg++) {
+        if (writes[reg]) {
+            printf(" %02x=%02x*%d", reg, registers[reg], writes[reg]);
+            none = 0;
+        }
+    }
+    printf("%s\n", none ? " none" : "");
     printf("not a read: %d\n", not_a_read);
     return 0;
 }

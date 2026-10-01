@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 caed1994
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// The I2C master calls that panel_battery.c makes, and no others. A call
-// to i2c_master_transmit, which is a write, does not build against this.
-// See tests/c/stubs/esp_err.h.
+// The I2C master calls that panel_battery.c makes, and no others. The
+// harness counts each transmit, which is a write, by register. See
+// tests/c/stubs/esp_err.h.
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -20,6 +20,9 @@ esp_err_t i2c_master_transmit_receive(i2c_master_dev_handle_t device,
                                       const uint8_t *write, size_t write_size,
                                       uint8_t *read, size_t read_size,
                                       int timeout_ms);
+esp_err_t i2c_master_transmit(i2c_master_dev_handle_t device,
+                              const uint8_t *write, size_t write_size,
+                              int timeout_ms);
 esp_err_t i2c_master_probe(i2c_master_bus_handle_t bus, uint16_t address,
                            int timeout_ms);
 esp_err_t i2c_master_bus_add_device(i2c_master_bus_handle_t bus,
