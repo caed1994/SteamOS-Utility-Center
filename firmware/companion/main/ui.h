@@ -41,6 +41,20 @@ typedef struct {
     uint64_t total, free;
 } panel_drive_t;
 
+/* One controller, as the head and the page of the controllers draw it.
+ *
+ * The head has room for two and the page for four, so the panel keeps
+ * four. battery is a percentage, or -1 for a controller whose battery
+ * nobody reports: a controller on a cable, for one. Such a controller is
+ * on the list all the same, with "--" in place of a number. */
+#define PANEL_PADS 4
+#define PANEL_PAD_NAME 48
+typedef struct {
+    char name[PANEL_PAD_NAME];
+    int battery;
+    bool charging;
+} panel_pad_t;
+
 /* What powers this panel, as its own power chip answers.
  *
  * Three answers and not two. A board whose chip did not answer says
@@ -54,17 +68,20 @@ typedef enum {
 } panel_supply_t;
 
 typedef struct {
-    // charging is a flag and not a word any more. It was the text that the
-    // service sends, translated into German before it was stored, and the
-    // screen compared it against that German to pick the charge symbol. A
-    // second language would have made that comparison fail in silence.
-    bool wifi, online, muted, setup, sound_error, charging;
+    bool wifi, online, muted, setup, sound_error;
     /* Whether the panel knows an address to wake the PC at. The screen
      * offers the button only then, because a button that cannot work is
      * worse than no button. */
     bool can_wake;
-    int battery, volume, cpu_temp, gpu_temp, gpu_watts;
-    char host[48], controller[64], message[80];
+    int volume, cpu_temp, gpu_temp, gpu_watts;
+    char host[48], message[80];
+    /* The controllers, in the order the service sends them. Each charging
+     * is a flag and not a word. It was the text that the service sends,
+     * translated into German before it was stored, and the screen compared
+     * it against that German to pick the charge symbol. A second language
+     * would have made that comparison fail in silence. */
+    panel_pad_t pads[PANEL_PADS];
+    int pad_count;
     char setup_ssid[32], setup_password[32];
     /* The second page. game_mode says which session runs, playing holds
      * the name of the game or nothing at all, and the drives are however
@@ -78,9 +95,8 @@ typedef struct {
     int achievements_done, achievements_total;
     panel_drive_t drives[PANEL_DRIVES];
     int drive_count;
-    /* The panel itself, and not the controller that battery and charging
-     * above belong to. esp_battery is a percentage and means something
-     * only for PANEL_SUPPLY_BATTERY. */
+    /* The panel itself, and not the controllers above. esp_battery is a
+     * percentage and means something only for PANEL_SUPPLY_BATTERY. */
     panel_supply_t esp_supply;
     int esp_battery;
     bool esp_charging;
@@ -105,6 +121,8 @@ typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);
 void panel_ui_create(panel_action_cb_t callback, panel_setting_cb_t setting_cb, panel_sound_cb_t sound_cb, const panel_settings_t *settings);
 void panel_ui_settings_open(void);
+/* The page of the controllers, which a tap on the head opens. */
+void panel_ui_pads_open(void);
 void panel_ui_update(const panel_state_t *state);
 void panel_ui_confirm(panel_action_t action);
 /* What the screen shows, in a few words for the log: the page of the band,

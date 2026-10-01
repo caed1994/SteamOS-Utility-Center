@@ -24,12 +24,17 @@ int main(int argc,char **argv)
     lv_display_set_flush_cb(d,flush);
     panel_settings_t settings={.brightness=70,.sound_volume=30,.touch_tones=false};
     panel_ui_create(NULL,NULL,NULL,&settings);
-    panel_state_t s={.wifi=true,.online=true,.battery=85,.volume=42,.cpu_temp=49,.gpu_temp=56,.gpu_watts=78};
-    /* charging is a flag and not a word any more, and this still wrote a
-     * word into it. Nothing built this file, so nothing said so. The job in
-     * .github/workflows/companion-firmware.yml builds and runs it now. */
-    s.charging=false;
-    strcpy(s.host,"FractalMachine");strcpy(s.controller,"PlayStation Controller");
+    panel_state_t s={.wifi=true,.online=true,.volume=42,.cpu_temp=49,.gpu_temp=56,.gpu_watts=78};
+    strcpy(s.host,"FractalMachine");
+    /* Two controllers in the head, and four on their page: one charges and
+     * one has no battery that anybody reports. "pads" opens that page, and
+     * "pad" is the head with one controller. */
+    static const panel_pad_t pads[]={{"Steam Controller 1",93,false},
+                                      {"PlayStation Controller",100,true},
+                                      {"Steam Controller 2",8,false},
+                                      {"Xbox Controller",-1,false}};
+    memcpy(s.pads,pads,sizeof pads);s.pad_count=4;
+    if(argc>2&&strcmp(argv[2],"pad")==0)s.pad_count=1;
     /* The battery of the panel itself, for the corner of the main screen.
      * A real board shows this only once its power chip answers. */
     s.esp_supply=PANEL_SUPPLY_BATTERY;s.esp_battery=87;
@@ -83,6 +88,7 @@ int main(int argc,char **argv)
             panel_ui_timer_tick();
         }
     }
+    if(argc>2&&strcmp(argv[2],"pads")==0)panel_ui_pads_open();
     if(argc>2&&strcmp(argv[2],"confirm")==0)panel_ui_confirm(PANEL_POWEROFF);
     if(argc>2&&strncmp(argv[2],"settings",8)==0)panel_ui_settings_open();
     /* The settings scroll, and the end of them is a page of its own to

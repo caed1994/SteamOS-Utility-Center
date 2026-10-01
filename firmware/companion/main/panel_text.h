@@ -55,7 +55,10 @@
                            "Die Beschriftung dieses Panels") \
     X(TXT_AUTOSAVE,        "Changes save themselves.", \
                            "Aenderungen werden automatisch gespeichert.") \
-    X(TXT_CONTROLLER,      "CONTROLLER",            "CONTROLLER") \
+    X(TXT_CONTROLLERS,     "Controllers",           "Controller") \
+    X(TXT_NO_PADS,         "No controller connected", \
+                           "Kein Controller verbunden") \
+    X(TXT_NO_BATTERY,      "No battery reading",    "Kein Akkuwert") \
     X(TXT_PC_AUDIO,        "PC AUDIO",              "PC-TON") \
     X(TXT_PC_VOLUME,       "PC VOLUME",             "PC-LAUTSTAERKE") \
     X(TXT_PC_CONTROL,      "PC CONTROL",            "PC-STEUERUNG") \

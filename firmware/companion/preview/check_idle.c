@@ -18,7 +18,7 @@ int main(void)
     lv_display_set_flush_cb(display,flush);
     panel_settings_t settings={.brightness=70,.sound_volume=30};
     panel_ui_create(NULL,NULL,NULL,&settings);
-    panel_state_t state={.online=true,.wifi=true,.battery=85,.volume=42,.cpu_temp=49,.gpu_temp=56,.gpu_watts=78};
+    panel_state_t state={.online=true,.wifi=true,.volume=42,.cpu_temp=49,.gpu_temp=56,.gpu_watts=78};
     strcpy(state.message,"Status aktuell");
     panel_ui_update(&state);lv_refr_now(display);
     lv_display_add_event_cb(display,invalidated,LV_EVENT_INVALIDATE_AREA,NULL);

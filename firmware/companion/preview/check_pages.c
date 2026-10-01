@@ -111,7 +111,7 @@ static lv_obj_t *name_above(lv_obj_t *card,lv_obj_t *between)
 }
 static panel_state_t base(void)
 {
-    panel_state_t s={.online=true,.wifi=true,.battery=50,.volume=30,
+    panel_state_t s={.online=true,.wifi=true,.volume=30,
                      .cpu_temp=40,.gpu_temp=45,.gpu_watts=60};
     return s;
 }
@@ -625,11 +625,141 @@ int main(void)
         assert(complaints==0);
     }
 
+    // The controllers: two in the head with no caption, and a page of four
+    // that a tap on the head opens.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        static const panel_pad_t four[]={{"Steam Controller 1",93,false},
+                                          {"PlayStation Controller",100,true},
+                                          {"Steam Controller 2",8,false},
+                                          {"Xbox Controller",-1,false}};
+        const char *charged="100 % " LV_SYMBOL_CHARGE;
+        panel_state_t c=base();
+        memcpy(c.pads,four,sizeof four);
+        c.pad_count=1;
+        panel_ui_update(&c);
+        lv_obj_t *screen_now=lv_screen_active();
+        assert(!label(screen_now,"CONTROLLER")&&!label(screen_now,panel_text(TXT_CONTROLLERS)));
+        // One controller: one value, at the height of the middle of its
+        // icon, and no second place.
+        lv_obj_t *first=label(screen_now,"93 %");
+        assert(first);
+        assert(!label(screen_now,"-- %"));
+        lv_obj_t *head=lv_obj_get_parent(first);
+        lv_obj_update_layout(screen_now);
+        lv_obj_t *mark=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(head);i++){
+            lv_obj_t *o=lv_obj_get_child(head,i);
+            if(lv_obj_check_type(o,&lv_image_class)){mark=o;break;}
+        }
+        assert(mark);
+        lv_area_t icon_box,value_box;
+        lv_obj_get_coords(mark,&icon_box);
+        int32_t font_high=lv_font_get_line_height(&lv_font_montserrat_16);
+        lv_obj_get_coords(first,&value_box);
+        int32_t icon_middle=(icon_box.y1+icon_box.y2+1)/2;
+        int32_t value_middle=value_box.y1+font_high/2;
+        assert(value_middle-icon_middle<=1&&icon_middle-value_middle<=1);
+        // Two: side by side, both in the head, right of the line at 234,
+        // and the longest value fits its room.
+        c.pad_count=2;
+        panel_ui_update(&c);
+        lv_obj_t *second=label(screen_now,charged);
+        assert(label(screen_now,"93 %")&&second);
+        lv_obj_update_layout(screen_now);
+        lv_area_t one,two;
+        lv_obj_get_coords(label(screen_now,"93 %"),&one);
+        lv_obj_get_coords(second,&two);
+        assert(one.x1>234&&two.x1>one.x2&&two.x2<480);
+        assert(one.y1==two.y1);
+        lv_point_t room;
+        lv_text_get_size(&room,charged,&lv_font_montserrat_16,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+        assert(room.x<=lv_obj_get_width(second));
+        // Four: the head still shows two, and the page all four.
+        c.pad_count=4;
+        panel_ui_update(&c);
+        assert(!label(screen_now,"8 %")&&!label(screen_now,"Steam Controller 1"));
+        // None, and a PC that does not answer: "--" in the first place.
+        c.pad_count=0;
+        panel_ui_update(&c);
+        assert(label(screen_now,"-- %")&&!label(screen_now,"93 %"));
+        c.pad_count=4;c.online=false;
+        panel_ui_update(&c);
+        assert(label(screen_now,"-- %")&&!label(screen_now,"93 %"));
+        c.online=true;
+        panel_ui_update(&c);
+        // A tap anywhere on the head opens the page.
+        lv_obj_send_event(head,LV_EVENT_CLICKED,NULL);
+        assert(label(screen_now,panel_text(TXT_CONTROLLERS)));
+        assert(strcmp(panel_ui_where(),"the controllers")==0);
+        for(int i=0;i<4;i++)assert(label(screen_now,four[i].name));
+        assert(label(screen_now,"8 %")&&label(screen_now,charged));
+        assert(label(screen_now,"-- %")&&label(screen_now,panel_text(TXT_NO_BATTERY)));
+        assert(!label(screen_now,panel_text(TXT_NO_PADS)));
+        lv_refr_now(screen);
+        assert(complaints==0);
+        // The bar of a battery is as long as its charge, and a controller
+        // with no battery has words and no bar.
+        lv_obj_t *card=lv_obj_get_parent(label(screen_now,"Steam Controller 1"));
+        lv_obj_t *track=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+            lv_obj_t *o=lv_obj_get_child(card,i);
+            if(lv_obj_get_child_count(o)==1&&!lv_obj_check_type(o,&lv_label_class))track=o;
+        }
+        assert(track);
+        lv_obj_t *bar=lv_obj_get_child(track,0);
+        assert(lv_obj_get_width(bar)==lv_obj_get_width(track)*93/100);
+        lv_obj_t *xbox=lv_obj_get_parent(label(screen_now,"Xbox Controller"));
+        assert(label(xbox,panel_text(TXT_NO_BATTERY)));
+        for(unsigned i=0;i<lv_obj_get_child_count(xbox);i++){
+            lv_obj_t *o=lv_obj_get_child(xbox,i);
+            if(lv_obj_get_child_count(o)==1&&!lv_obj_check_type(o,&lv_label_class))
+                assert(lv_obj_has_flag(o,LV_OBJ_FLAG_HIDDEN));
+        }
+        // The page follows the state while it is open.
+        c.pad_count=1;
+        panel_ui_update(&c);
+        assert(label(screen_now,"Steam Controller 1")&&!label(screen_now,"Steam Controller 2"));
+        c.pad_count=0;
+        panel_ui_update(&c);
+        assert(label(screen_now,panel_text(TXT_NO_PADS)));
+        c.pad_count=4;c.online=false;
+        panel_ui_update(&c);
+        assert(label(screen_now,panel_text(TXT_PC_OFFLINE)));
+        assert(!label(lv_obj_get_child(screen_now,-1),"Steam Controller 1"));
+        c.online=true;
+        panel_ui_update(&c);
+        // Back closes it, and the head is there again.
+        click(panel_text(TXT_BACK));
+        assert(!label(screen_now,panel_text(TXT_CONTROLLERS)));
+        assert(label(screen_now,"93 %"));
+        // A new screen for a new language while the page is open drops it,
+        // and the page opens again after that.
+        panel_ui_pads_open();
+        panel_settings_t german={.brightness=70,.sound_volume=30,.language=PANEL_GERMAN};
+        panel_ui_create(action,setting,sound,&german);
+        assert(!label(lv_screen_active(),panel_text(TXT_CONTROLLERS)));
+        panel_ui_update(&c);
+        panel_ui_pads_open();
+        assert(label(lv_screen_active(),"Controller"));
+        assert(label(lv_screen_active(),"Kein Akkuwert"));
+        // The setup takes the page away, as it does the settings.
+        c.setup=true;
+        panel_ui_update(&c);
+        assert(!label(lv_screen_active(),"Kein Akkuwert"));
+        c.setup=false;
+        panel_ui_create(action,setting,sound,&english);
+        lv_refr_now(screen);
+        assert(complaints==0);
+    }
+
     puts("OK: four pages that snap, the session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
          "them drawn with nothing for LVGL to complain about, the battery of "
          "the panel in the corner with the network mark against it, the "
          "achievements of the game under its name, room under both "
-         "display sliders, and the clock with a timer that rings.");
+         "display sliders, the clock with a timer that rings, and two "
+         "controllers in the head with a page of four behind it.");
     return 0;
 }

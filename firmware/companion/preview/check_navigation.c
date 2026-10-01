@@ -58,7 +58,7 @@ static void walk(panel_language_t language)
     panel_settings_t initial={.brightness=70,.sound_volume=30,.language=language};
     panel_ui_create(action,setting,sound,&initial);
     assert(panel_text_language()==language);
-    panel_state_t offline={.battery=-1,.volume=-1,.cpu_temp=-1,.gpu_temp=-1,.gpu_watts=-1};
+    panel_state_t offline={.volume=-1,.cpu_temp=-1,.gpu_temp=-1,.gpu_watts=-1};
     panel_ui_update(&offline);
     assert(!label(lv_screen_active(),panel_text(TXT_BRIGHTNESS)));
     open_settings();
@@ -145,7 +145,7 @@ static void tables_differ(void)
         panel_text_set(PANEL_GERMAN);const char *german=panel_text(id);
         if(strcmp(english,german)==0)same++;
     }
-    // Two of them are the same word in both, CONTROLLER and PC OFFLINE. A
+    // A few of them are the same word in both, PC OFFLINE among them. A
     // quarter of the table is far above that and far below all of it.
     assert(same<TXT_COUNT/4);
 }

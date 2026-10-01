@@ -557,10 +557,29 @@ static int request(const char *path, const char *action)
     cJSON *audio=cJSON_GetObjectItemCaseSensitive(root,"audio");
     cJSON *host=cJSON_GetObjectItemCaseSensitive(root,"host");
     if (!cJSON_IsArray(items)||!cJSON_IsObject(audio)||!cJSON_IsString(host)) { cJSON_Delete(root); return 0; }
-    cJSON *first=cJSON_GetArrayItem(items,0);
-    cJSON *battery=cJSON_GetObjectItemCaseSensitive(first,"percent");
-    cJSON *name=cJSON_GetObjectItemCaseSensitive(first,"name");
-    cJSON *charging=cJSON_GetObjectItemCaseSensitive(first,"status");
+    /* Up to four controllers, in the order the service sends them: the
+     * head shows the first two and the page of the controllers all four.
+     * A controller with no number for its battery is on the list all the
+     * same, and the screen writes "--" for it. */
+    panel_pad_t pads[PANEL_PADS]={0};
+    int pad_count=0;
+    cJSON *item;
+    cJSON_ArrayForEach(item,items){
+        if(pad_count>=PANEL_PADS)break;
+        if(!cJSON_IsObject(item))continue;
+        cJSON *battery=cJSON_GetObjectItemCaseSensitive(item,"percent");
+        cJSON *name=cJSON_GetObjectItemCaseSensitive(item,"name");
+        cJSON *charging=cJSON_GetObjectItemCaseSensitive(item,"status");
+        panel_pad_t *pad=&pads[pad_count++];
+        snprintf(pad->name,sizeof pad->name,"%s",
+                 cJSON_IsString(name)&&name->valuestring[0]?name->valuestring:"Controller");
+        pad->battery=cJSON_IsNumber(battery)&&battery->valueint>=0&&battery->valueint<=100
+            ?battery->valueint:-1;
+        // The word the service sends, and not a word of any language on
+        // this screen. See panel_state_t.
+        pad->charging=cJSON_IsString(charging)
+            &&strcmp(charging->valuestring,"Charging")==0;
+    }
     cJSON *volume=cJSON_GetObjectItemCaseSensitive(audio,"percent");
     cJSON *muted=cJSON_GetObjectItemCaseSensitive(audio,"muted");
     /* The second and third pages. Each one is optional: a service that is
@@ -569,21 +588,16 @@ static int request(const char *path, const char *action)
     cJSON *session=cJSON_GetObjectItemCaseSensitive(root,"session");
     cJSON *playing=cJSON_GetObjectItemCaseSensitive(root,"playing");
     cJSON *drives=cJSON_GetObjectItemCaseSensitive(root,"drives");
-    // The word the service sends, and not a word of any language on this
-    // screen. See panel_state_t.
-    bool charge=cJSON_IsString(charging)
-        && strcmp(charging->valuestring,"Charging")==0;
     xSemaphoreTake(lock,portMAX_DELAY);
-    state.battery=cJSON_IsNumber(battery) && battery->valueint>=0 && battery->valueint<=100 ? battery->valueint : -1;
+    memcpy(state.pads,pads,sizeof state.pads);
+    state.pad_count=pad_count;
     state.volume=cJSON_IsNumber(volume) && volume->valueint>=0 && volume->valueint<=100 ? volume->valueint : -1;
     state.muted=cJSON_IsTrue(muted);
     cJSON *telemetry=cJSON_GetObjectItemCaseSensitive(root,"telemetry");
     state.cpu_temp=metric(telemetry,"cpu_c",150);
     state.gpu_temp=metric(telemetry,"gpu_c",150);
     state.gpu_watts=metric(telemetry,"gpu_w",2000);
-    snprintf(state.controller,sizeof(state.controller),"%s",cJSON_IsString(name) ? name->valuestring : "Controller");
     snprintf(state.host,sizeof(state.host),"%s",host->valuestring);
-    state.charging=charge;
     /* A word the service sends and not a word of any language on the
      * screen, the same rule the charge flag follows. See panel_state_t. */
     state.game_mode=cJSON_IsString(session)
@@ -965,7 +979,7 @@ void app_main(void)
     lock=xSemaphoreCreateMutex();
     actions=xQueueCreate(1,sizeof(panel_action_t));
     assert(lock && actions);
-    state.battery=-1; state.volume=-1; state.cpu_temp=-1; state.gpu_temp=-1; state.gpu_watts=-1;
+    state.volume=-1; state.cpu_temp=-1; state.gpu_temp=-1; state.gpu_watts=-1;
     state.setup=config.ssid[0]==0;
     /* An address kept from an earlier run. Without this the button appears
      * only after the PC has answered once, which is the case where it is

@@ -19,7 +19,7 @@
 #define BLUE 0x49A8F7
 #define RED 0xF06B79
 
-static lv_obj_t *connection,*dot,*battery,*audio_status,*audio_toggle,*audio_knob,*volume,*brightness_label,*sleep_label,*message;
+static lv_obj_t *connection,*dot,*audio_status,*audio_toggle,*audio_knob,*volume,*brightness_label,*sleep_label,*message;
 static lv_obj_t *controls[6],*overlay,*setup_screen,*setup_text,*cpu_value,*gpu_value,*power_value;
 /* Not in controls[]: that table is indexed by the action, it holds the
  * six the service performs, and PANEL_WAKE is done by the panel. */
@@ -58,6 +58,27 @@ static panel_setting_cb_t save_setting;
 static panel_sound_cb_t play_sound;
 static panel_settings_t local;
 static lv_obj_t *settings_screen, *sound_value, *sound_status;
+/* The controllers in the head: two places, each an icon and a value, and
+ * the whole of it one place to tap. */
+#define PAD_HEAD 2
+/* Where the two places stand in the head, from its left edge, and the room
+ * of each value: "100 %" and the charge symbol, which check_pages
+ * measures. */
+#define PAD_HEAD_X 13
+#define PAD_HEAD_STEP 118
+#define PAD_VALUE_WIDTH 76
+/* The cards of the page: four of them between the line under the title
+ * and the bottom edge. */
+#define PAD_CARD_TOP 78
+#define PAD_CARD_STEP 96
+#define PAD_CARD_HEIGHT 86
+#define PAD_BAR_LEFT 56
+#define PAD_BAR_WIDTH 368
+static lv_obj_t *pad_area,*pad_icons[PAD_HEAD],*pad_values[PAD_HEAD];
+/* The page of the controllers, one card for each of four. */
+static lv_obj_t *pads_screen,*pads_none;
+static lv_obj_t *pad_cards[PANEL_PADS],*pad_names[PANEL_PADS],*pad_levels[PANEL_PADS];
+static lv_obj_t *pad_tracks[PANEL_PADS],*pad_bars[PANEL_PADS],*pad_unknown[PANEL_PADS];
 static void feedback(void){if(local.touch_tones && play_sound)play_sound(local.sound_volume);}
 static panel_action_t pending;
 static panel_state_t last_state;
@@ -322,11 +343,122 @@ void panel_ui_settings_open(void)
     text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,648,440,&lv_font_montserrat_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
+/* What a controller says in the head and on its card: the battery, the
+ * charge symbol while it charges, and "--" where nobody reports one. */
+static void pad_level(char *out,size_t room,const panel_pad_t *pad)
+{
+    if(pad->battery<0)snprintf(out,room,"-- %%");
+    else snprintf(out,room,"%d %%%s",pad->battery,pad->charging?" " LV_SYMBOL_CHARGE:"");
+}
+/* How many controllers to draw. The list of a PC that does not answer is
+ * the list of the last answer, and that is no list to show. */
+static int pads_known(const panel_state_t *s)
+{
+    if(!s->online)return 0;
+    return s->pad_count<0?0:s->pad_count>PANEL_PADS?PANEL_PADS:s->pad_count;
+}
+static void pads_head(const panel_state_t *s)
+{
+    if(!pad_area)return;
+    int count=pads_known(s);
+    for(int i=0;i<PAD_HEAD;i++){
+        /* The first place shows "--" with no controller at all, so the
+         * head says that there is none. The second is there only for a
+         * second controller. */
+        bool shown=i==0||i<count;
+        if(shown){
+            lv_obj_remove_flag(pad_icons[i],LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(pad_values[i],LV_OBJ_FLAG_HIDDEN);
+        }else{
+            lv_obj_add_flag(pad_icons[i],LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(pad_values[i],LV_OBJ_FLAG_HIDDEN);
+        }
+        char said[24];
+        if(i<count)pad_level(said,sizeof said,&s->pads[i]);
+        else snprintf(said,sizeof said,"-- %%");
+        lv_label_set_text(pad_values[i],said);
+    }
+}
+/* Every pointer into the page of the controllers, dropped. The same rule
+ * as settings_drop: this only drops, and pads_forget deletes as well. */
+static void pads_drop(void)
+{
+    pads_screen=NULL;pads_none=NULL;
+    for(int i=0;i<PANEL_PADS;i++){
+        pad_cards[i]=NULL;pad_names[i]=NULL;pad_levels[i]=NULL;
+        pad_tracks[i]=NULL;pad_bars[i]=NULL;pad_unknown[i]=NULL;
+    }
+}
+static void pads_forget(void)
+{
+    if(pads_screen)lv_obj_delete(pads_screen);
+    pads_drop();
+}
+static void pads_show(const panel_state_t *s)
+{
+    if(!pads_screen)return;
+    int count=pads_known(s);
+    lv_label_set_text(pads_none,panel_text(s->online?TXT_NO_PADS:TXT_PC_OFFLINE));
+    if(count>0)lv_obj_add_flag(pads_none,LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(pads_none,LV_OBJ_FLAG_HIDDEN);
+    for(int i=0;i<PANEL_PADS;i++){
+        if(i>=count){lv_obj_add_flag(pad_cards[i],LV_OBJ_FLAG_HIDDEN);continue;}
+        const panel_pad_t *pad=&s->pads[i];
+        char said[24];
+        lv_obj_remove_flag(pad_cards[i],LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(pad_names[i],pad->name);
+        pad_level(said,sizeof said,pad);
+        lv_label_set_text(pad_levels[i],said);
+        /* A bar for a battery, and words for a controller with none: an
+         * empty bar reads as a flat battery. */
+        if(pad->battery<0){
+            lv_obj_add_flag(pad_tracks[i],LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(pad_unknown[i],LV_OBJ_FLAG_HIDDEN);
+        }else{
+            lv_obj_remove_flag(pad_tracks[i],LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(pad_unknown[i],LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_width(pad_bars[i],PAD_BAR_WIDTH*pad->battery/100);
+        }
+    }
+}
+static void pads_close(lv_event_t *e){(void)e;feedback();pads_forget();}
+void panel_ui_pads_open(void)
+{
+    if(pads_screen||settings_screen||setup_screen)return;
+    pads_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    button(pads_screen,panel_text(TXT_BACK),12,8,112,44,pads_close,0);
+    text_at(pads_screen,panel_text(TXT_CONTROLLERS),136,20,200,&lv_font_montserrat_20,TEXT);
+    line(pads_screen,0,62,480,1);
+    pads_none=text_at(pads_screen,"",20,220,440,&lv_font_montserrat_18,MUTED);
+    center_text(pads_none);
+    for(int i=0;i<PANEL_PADS;i++){
+        lv_obj_t *card=panel(pads_screen,20,PAD_CARD_TOP+i*PAD_CARD_STEP,440,PAD_CARD_HEIGHT,CARD,true);
+        lv_obj_remove_flag(card,LV_OBJ_FLAG_CLICKABLE);
+        pad_cards[i]=card;
+        icon(card,&icon_gamepad_2,16,16,MUTED);
+        pad_names[i]=text_at(card,"",56,16,250,&lv_font_montserrat_18,TEXT);
+        pad_levels[i]=text_at(card,"",306,16,118,&lv_font_montserrat_18,BLUE);
+        lv_obj_set_style_text_align(pad_levels[i],LV_TEXT_ALIGN_RIGHT,0);
+        pad_tracks[i]=panel(card,PAD_BAR_LEFT,54,PAD_BAR_WIDTH,10,EDGE,false);
+        lv_obj_set_style_radius(pad_tracks[i],LV_RADIUS_CIRCLE,0);
+        lv_obj_remove_flag(pad_tracks[i],LV_OBJ_FLAG_CLICKABLE);
+        pad_bars[i]=panel(pad_tracks[i],0,0,0,10,BLUE,false);
+        lv_obj_set_style_radius(pad_bars[i],LV_RADIUS_CIRCLE,0);
+        lv_obj_remove_flag(pad_bars[i],LV_OBJ_FLAG_CLICKABLE);
+        pad_unknown[i]=text_at(card,panel_text(TXT_NO_BATTERY),PAD_BAR_LEFT,50,PAD_BAR_WIDTH,&lv_font_montserrat_14,MUTED);
+        lv_obj_add_flag(card,LV_OBJ_FLAG_HIDDEN);
+    }
+    /* What the last update said, at once. panel_ui_update draws nothing
+     * for a state it saw before, so the page waits for no change. */
+    if(last_state_valid)pads_show(&last_state);
+}
+static void pads_clicked(lv_event_t *e){(void)e;feedback();panel_ui_pads_open();}
 const char *panel_ui_where(void)
 {
     if(setup_screen)return "the setup";
     if(overlay)return "a question";
     if(settings_screen)return "the settings";
+    if(pads_screen)return "the controllers";
     if(!band)return "no screen";
     /* Read from where the band stands: a swipe that did not carry far
      * enough left it on the page it was on. */
@@ -489,6 +621,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * panel_ui_settings_open returns at once and the page never opens
      * again. check_navigation builds the screens with that page open. */
     settings_drop();
+    /* The page of the controllers too, for the same reason. */
+    pads_drop();
     /* The band and everything on the second and third pages are children
      * of this screen too. A pointer kept past the clean above is a pointer
      * to freed memory, and panel_ui_update writes through these. */
@@ -509,9 +643,28 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     icon(s,&icon_monitor,14,19,MUTED);line(s,50,16,1,28);
     connection=text_at(s,panel_text(TXT_PC_OFFLINE),62,22,140,&lv_font_montserrat_14,TEXT);
     dot=panel(s,202,26,9,9,0x60758A,false);lv_obj_set_style_radius(dot,LV_RADIUS_CIRCLE,0);
-    line(s,234,16,1,28);icon(s,&icon_gamepad_2,248,19,MUTED);
-    text_at(s,panel_text(TXT_CONTROLLER),282,15,142,&lv_font_montserrat_12,MUTED);
-    battery=text_at(s,"-- %",282,31,142,&lv_font_montserrat_16,TEXT);
+    line(s,234,16,1,28);
+    /* The controllers, two side by side over the whole right of the head,
+     * with no caption: the icon says what the number is. The value stands
+     * at the height of the middle of its icon. A tap anywhere on the two
+     * opens the page of the controllers, which has room for four. */
+    pad_area=panel(s,235,0,245,57,BG,false);
+    lv_obj_set_style_bg_opa(pad_area,LV_OPA_TRANSP,0);
+    lv_obj_set_style_bg_color(pad_area,lv_color_hex(EDGE),LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(pad_area,LV_OPA_40,LV_STATE_PRESSED);
+    lv_obj_add_event_cb(pad_area,pads_clicked,LV_EVENT_CLICKED,NULL);
+    {
+        int32_t high=lv_font_get_line_height(&lv_font_montserrat_16);
+        for(int i=0;i<PAD_HEAD;i++){
+            int x=PAD_HEAD_X+i*PAD_HEAD_STEP;
+            pad_icons[i]=icon(pad_area,&icon_gamepad_2,x,19,MUTED);
+            lv_obj_remove_flag(pad_icons[i],LV_OBJ_FLAG_CLICKABLE);
+            pad_values[i]=text_at(pad_area,"-- %",x+32,19+12-high/2,PAD_VALUE_WIDTH,&lv_font_montserrat_16,TEXT);
+            lv_obj_remove_flag(pad_values[i],LV_OBJ_FLAG_CLICKABLE);
+        }
+        lv_obj_add_flag(pad_icons[1],LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(pad_values[1],LV_OBJ_FLAG_HIDDEN);
+    }
     line(s,0,57,480,1);
     /* The middle band, which scrolls sideways. Three pages of one screen
      * each, and the head above it and the sensors below it stay where they
@@ -777,7 +930,7 @@ void panel_ui_update(const panel_state_t *s)
     memcpy(&last_state,s,sizeof(*s));last_state_valid=true;
     if(sound_status)lv_label_set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
     if(s->setup){
-        settings_forget();
+        settings_forget();pads_forget();
         if(!setup_screen){
             if(overlay){lv_obj_delete(overlay);overlay=NULL;}
             setup_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
@@ -789,7 +942,8 @@ void panel_ui_update(const panel_state_t *s)
     }
     lv_label_set_text(connection,!s->wifi?panel_text(TXT_WIFI_OFFLINE):s->online?panel_text(TXT_PC_ONLINE):panel_text(TXT_PC_OFFLINE));
     lv_obj_set_style_bg_color(dot,lv_color_hex(s->online?0x70C256:0x60758A),0);
-    if(s->online&&s->battery>=0)lv_label_set_text_fmt(battery,"%d %% %s",s->battery,s->charging?LV_SYMBOL_CHARGE:"");else lv_label_set_text(battery,"-- %");
+    pads_head(s);
+    pads_show(s);
     esp_power_show(s);
     bool audio=s->online&&s->volume>=0;
     lv_label_set_text(audio_status,!audio?"--":s->muted?panel_text(TXT_MUTED):panel_text(TXT_ACTIVE));

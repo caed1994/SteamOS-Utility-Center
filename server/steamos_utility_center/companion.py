@@ -32,6 +32,7 @@ import json
 import os
 import re
 import secrets
+import struct
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -158,6 +159,24 @@ CONTROLLER_LABELS = (("ps-controller", "PlayStation Controller"),
                      ("sony_controller", "PlayStation Controller"),
                      ("steam", "Steam Controller"),
                      ("xpad", "Xbox Controller"))
+
+# Each game controller that the kernel knows, with a battery or without.
+# The page of the controllers lists one on a cable too, with "--" for its
+# battery.
+INPUT_ROOT = "/sys/class/input"
+# BTN_GAMEPAD and BTN_JOYSTICK of linux/input-event-codes.h. A pad has the
+# first and a stick the second. A keyboard, a mouse and the touchpad of a
+# DualShock have neither.
+GAMEPAD_KEYS = (0x130, 0x120)
+# The bits of one word in a capabilities file: the kernel writes each
+# unsigned long, and userspace on this machine has the same long.
+LONG_BITS = struct.calcsize("l") * 8
+# A name a person knows, for the vendors whose pads name the chip. A
+# DualShock 4 calls itself "Wireless Controller".
+PAD_VENDORS = {"054c": "PlayStation Controller", "045e": "Xbox Controller"}
+# Valve. steamcontroller.py reads the Steam Controller, and the puck adds an
+# input of its own for each of its four slots, with or without a controller.
+VALVE_VENDOR = "28de"
 
 # The chips that answer "how hot is the processor" and "how hot is the card".
 # temperature.py ranks the sensors inside a chip, and this says which chips
@@ -317,14 +336,88 @@ def _label_for(name):
     return "Controller"
 
 
-def controllers(root=CONTROLLER_ROOT):
-    """Every game controller with a battery that the kernel reports.
+def _has_key(capabilities, code, bits=LONG_BITS):
+    """Whether a capabilities file of the kernel sets one bit.
 
-    The panel shows the first one. This gives all of them, because the count
-    is the answer to "is anything connected" and a later firmware pages
-    through them.
+    The file is words of hex, the highest first, as /sys writes a bitmap.
     """
+    words = capabilities.split()
+    index, bit = divmod(code, bits)
+    if index >= len(words):
+        return False
+    try:
+        return bool(int(words[-1 - index], 16) >> bit & 1)
+    except ValueError:
+        return False
+
+
+def _number_in(name):
+    found = re.search(r"(\d+)$", name)
+    return int(found.group(1)) if found else -1
+
+
+def gamepads(root=INPUT_ROOT):
+    """Each game pad that the kernel knows, in the order it arrived.
+
+    Two kinds stay out. A device under /devices/virtual is one a program
+    made, and Steam makes an Xbox pad for each controller it drives. A pad
+    of Valve is the Steam Controller or its puck, and steamcontroller.py
+    reads those. Each entry carries its device, the HID device of the pad,
+    which is also the parent of its battery.
+    """
+    found, seen = [], set()
+    names = os.listdir(root) if os.path.isdir(root) else []
+    for name in sorted((one for one in names if one.startswith("input")),
+                       key=_number_in):
+        path = os.path.join(root, name)
+        if "/devices/virtual/" in os.path.realpath(path):
+            continue
+        vendor = (_read_text(os.path.join(path, "id", "vendor")) or "").lower()
+        if vendor == VALVE_VENDOR:
+            continue
+        keys = _read_text(os.path.join(path, "capabilities", "key")) or ""
+        if not any(_has_key(keys, code) for code in GAMEPAD_KEYS):
+            continue
+        device = os.path.realpath(os.path.join(path, "device"))
+        if device in seen:
+            continue
+        seen.add(device)
+        found.append({
+            "device": device,
+            "name": PAD_VENDORS.get(vendor) or
+            (_read_text(os.path.join(path, "name")) or "")[:63] or
+            "Controller",
+        })
+    return found
+
+
+def controllers(root=CONTROLLER_ROOT, inputs=INPUT_ROOT):
+    """Every game controller that the kernel knows, with its battery.
+
+    A battery and a pad with one device are one controller. A pad with no
+    battery is a controller all the same, with None for its percent. A
+    battery with no pad comes first: that is the Steam Controller while
+    Steam is not running, and the panel shows the first two.
+    """
+    batteries = _batteries(root)
     found = []
+    for pad in gamepads(inputs):
+        battery = batteries.pop(pad["device"], None)
+        found.append({
+            "name": pad["name"],
+            "percent": battery["percent"] if battery else None,
+            "status": battery["status"] if battery else "Unknown",
+        })
+    return list(batteries.values()) + found
+
+
+def _batteries(root):
+    """Each controller battery under root, by the device it belongs to.
+
+    A battery with no device link keeps a key of its own, so it stays on
+    the list and matches no pad.
+    """
+    found = {}
     for name in sorted(os.listdir(root) if os.path.isdir(root) else []):
         path = os.path.join(root, name)
         kind = (_read_text(os.path.join(path, "type")) or "").lower()
@@ -339,12 +432,31 @@ def controllers(root=CONTROLLER_ROOT):
         if capacity is None:
             continue
         model = _read_text(os.path.join(path, "model_name"))
-        found.append({
+        device = os.path.join(path, "device")
+        key = os.path.realpath(device) if os.path.exists(device) else path
+        found[key] = {
             "name": (model or "")[:63] or _label_for(lowered),
             "percent": max(0, min(100, int(capacity))),
             "status": _read_text(os.path.join(path, "status")) or "Unknown",
-        })
+        }
     return found
+
+
+def numbered(pads):
+    """Two controllers of one name become that name with 1 and with 2.
+
+    The page of the controllers shows the names, and two lines that read
+    "Steam Controller" do not say which one is low.
+    """
+    counts = collections.Counter(pad["name"] for pad in pads)
+    seen = collections.Counter()
+    out = []
+    for pad in pads:
+        if counts[pad["name"]] > 1:
+            seen[pad["name"]] += 1
+            pad = dict(pad, name="%s %d" % (pad["name"], seen[pad["name"]]))
+        out.append(pad)
+    return out
 
 
 def audio():
@@ -574,9 +686,9 @@ def status():
     return {
         "host": os.uname().nodename,
         # The Steam Controller of 2026 first, because the panel shows the
-        # first one and the kernel never reports that controller while Steam
+        # first two and the kernel never reports that controller while Steam
         # runs. See steamcontroller.py.
-        "controllers": steamcontroller.batteries() + controllers(),
+        "controllers": numbered(steamcontroller.batteries() + controllers()),
         "audio": audio(),
         "telemetry": telemetry(),
         # For the Wake button. None where this machine has no wired card,

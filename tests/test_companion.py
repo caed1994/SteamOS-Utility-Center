@@ -33,6 +33,12 @@ sys.path.insert(0, os.path.join(REPO, "server"))
 from steamos_utility_center import companion, temperature      # noqa: E402
 
 TOKEN = "x" * 32
+# A machine with no input devices, for the tests of the batteries alone.
+NO_INPUTS = "/does/not/exist"
+# The key capabilities of a pad and of a touchpad, as /sys writes them on a
+# 64 bit machine: BTN_GAMEPAD is bit 0x130, in the fifth word from the end.
+PAD_KEYS = "7fdb000000000000 0 0 0 0"
+TOUCHPAD_KEYS = "2420000 0 0 0 0"
 
 
 def machine(self, chips):
@@ -75,7 +81,7 @@ class ControllerTest(unittest.TestCase):
                                           "status": "Discharging"}),
             ("BAT0", {"type": "Battery", "capacity": "50"}),
         ])
-        self.assertEqual(companion.controllers(root),
+        self.assertEqual(companion.controllers(root, NO_INPUTS),
                          [{"name": "PlayStation Controller", "percent": 78,
                            "status": "Discharging"}])
 
@@ -83,16 +89,164 @@ class ControllerTest(unittest.TestCase):
         """The firmware invents no battery, so neither does this."""
         root = self.machine([("ps-controller-battery-01",
                               {"type": "Battery", "capacity": "invalid"})])
-        self.assertEqual(companion.controllers(root), [])
+        self.assertEqual(companion.controllers(root, NO_INPUTS), [])
 
     def test_a_controller_that_is_not_present_is_left_out(self):
         root = self.machine([("steam-controller-battery",
                               {"type": "Battery", "capacity": "40",
                                "present": "0"})])
-        self.assertEqual(companion.controllers(root), [])
+        self.assertEqual(companion.controllers(root, NO_INPUTS), [])
 
     def test_a_missing_directory_is_no_controllers_and_no_error(self):
-        self.assertEqual(companion.controllers("/does/not/exist"), [])
+        self.assertEqual(companion.controllers("/does/not/exist", NO_INPUTS), [])
+
+
+class GamepadTest(unittest.TestCase):
+    """The controllers with no battery, from /sys/class/input.
+
+    The tree is the one the kernel makes: /sys/class/input holds links to
+    the devices, a pad is a child of its HID device, and a battery of that
+    HID device has a link back to it.
+    """
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.inputs = os.path.join(self.root, "class", "input")
+        self.power = os.path.join(self.root, "class", "power_supply")
+        os.makedirs(self.inputs)
+        os.makedirs(self.power)
+
+    def hid(self, place):
+        where = os.path.join(self.root, "devices", place)
+        os.makedirs(where, exist_ok=True)
+        return where
+
+    def pad(self, number, hid, name, vendor, keys=PAD_KEYS):
+        where = os.path.join(hid, "input", "input%d" % number)
+        os.makedirs(os.path.join(where, "id"))
+        os.makedirs(os.path.join(where, "capabilities"))
+        for leaf, value in (("name", name), ("id/vendor", vendor),
+                            ("capabilities/key", keys)):
+            with open(os.path.join(where, leaf), "w") as handle:
+                handle.write(value + "\n")
+        os.symlink(hid, os.path.join(where, "device"))
+        os.symlink(where, os.path.join(self.inputs, "input%d" % number))
+
+    def battery(self, name, hid, capacity, status="Discharging"):
+        where = os.path.join(hid, "power_supply", name)
+        os.makedirs(where)
+        for leaf, value in (("type", "Battery"), ("capacity", capacity),
+                            ("status", status)):
+            with open(os.path.join(where, leaf), "w") as handle:
+                handle.write(value + "\n")
+        if hid:
+            os.symlink(hid, os.path.join(where, "device"))
+        os.symlink(where, os.path.join(self.power, name))
+
+    def found(self):
+        return companion.controllers(self.power, self.inputs)
+
+    def test_a_pad_and_its_battery_are_one_controller(self):
+        """A DualShock 4 has a pad, a touchpad and a battery on one HID
+        device. The touchpad is not a second controller."""
+        ds4 = self.hid("pci0/bt/0005:054C:09CC.0003")
+        self.pad(20, ds4, "Wireless Controller", "054c")
+        self.pad(21, ds4, "Wireless Controller Touchpad", "054c",
+                 TOUCHPAD_KEYS)
+        self.battery("ps-controller-battery-01", ds4, "78")
+        self.assertEqual(self.found(), [{"name": "PlayStation Controller",
+                                         "percent": 78,
+                                         "status": "Discharging"}])
+
+    def test_a_pad_on_a_cable_has_no_battery_and_is_listed(self):
+        xbox = self.hid("pci0/usb3/3-2/3-2:1.0")
+        self.pad(7, xbox, "Microsoft X-Box One pad", "045e")
+        self.assertEqual(self.found(), [{"name": "Xbox Controller",
+                                         "percent": None,
+                                         "status": "Unknown"}])
+
+    def test_an_unknown_vendor_keeps_the_name_of_its_pad(self):
+        pad = self.hid("pci0/usb3/3-1/3-1:1.0")
+        self.pad(8, pad, "8BitDo Pro 2", "2dc8")
+        self.assertEqual(self.found()[0]["name"], "8BitDo Pro 2")
+
+    def test_two_pads_of_one_device_are_one_controller(self):
+        """A device that adds a second pad for its motion keys is one
+        controller in a hand, and one line on the page."""
+        pad = self.hid("pci0/usb3/3-4/3-4:1.0")
+        self.pad(5, pad, "Pro Controller", "057e")
+        self.pad(6, pad, "Pro Controller (IMU)", "057e")
+        self.assertEqual(len(self.found()), 1)
+
+    def test_a_keyboard_is_no_controller(self):
+        keyboard = self.hid("pci0/usb3/3-3/3-3:1.0")
+        self.pad(3, keyboard, "Logitech USB Keyboard", "046d", TOUCHPAD_KEYS)
+        self.assertEqual(self.found(), [])
+
+    def test_the_pads_that_steam_makes_are_left_out(self):
+        """Steam drives a controller through a pad of its own, an Xbox 360
+        pad that the kernel log names. The board had one."""
+        virtual = self.hid("virtual/input")
+        self.pad(47, virtual, "Microsoft X-Box 360 pad 1", "045e")
+        self.assertEqual(self.found(), [])
+
+    def test_the_slots_of_the_puck_are_left_out(self):
+        """steamcontroller.py reads those, and an empty slot is no pad."""
+        slot = self.hid("pci0/usb1/1-1/1-1:1.3/0003:28DE:1304.0015")
+        self.pad(44, slot, "Valve Software Steam Controller Puck", "28de")
+        self.assertEqual(self.found(), [])
+
+    def test_the_pads_come_in_the_order_they_arrived(self):
+        first = self.hid("pci0/usb3/3-1/3-1:1.0")
+        later = self.hid("pci0/usb3/3-2/3-2:1.0")
+        self.pad(9, first, "Pad A", "1234")
+        self.pad(10, later, "Pad B", "1234")
+        self.assertEqual([one["name"] for one in self.found()],
+                         ["Pad A", "Pad B"])
+
+    def test_a_battery_with_no_pad_comes_first(self):
+        """That is the Steam Controller while Steam is not running: its pad
+        is a pad of Valve, and the panel shows the first two."""
+        steam = self.hid("pci0/usb1/1-1/1-1:1.2/0003:28DE:1304.0014")
+        self.battery("steam-ABC", steam, "64")
+        xbox = self.hid("pci0/usb3/3-2/3-2:1.0")
+        self.pad(7, xbox, "Microsoft X-Box One pad", "045e")
+        self.assertEqual([one["name"] for one in self.found()],
+                         ["Steam Controller", "Xbox Controller"])
+
+    def test_the_bits_are_read_from_the_end(self):
+        self.assertTrue(companion._has_key(PAD_KEYS, 0x130))
+        self.assertFalse(companion._has_key(TOUCHPAD_KEYS, 0x130))
+        self.assertFalse(companion._has_key("", 0x130))
+        self.assertFalse(companion._has_key("zz 0 0 0 0", 0x130))
+
+
+class NumberedTest(unittest.TestCase):
+    def test_two_of_one_name_get_a_number_each(self):
+        pads = [{"name": "Steam Controller", "percent": 93},
+                {"name": "PlayStation Controller", "percent": 60},
+                {"name": "Steam Controller", "percent": 8}]
+        self.assertEqual([one["name"] for one in companion.numbered(pads)],
+                         ["Steam Controller 1", "PlayStation Controller",
+                          "Steam Controller 2"])
+
+    def test_one_of_a_name_keeps_it(self):
+        pads = [{"name": "Steam Controller", "percent": 93}]
+        self.assertEqual(companion.numbered(pads), pads)
+
+    def test_the_status_numbers_across_both_lists(self):
+        """One Steam Controller on the puck and one the kernel reports are
+        two of one name on the page."""
+        steam = {"name": "Steam Controller", "percent": 93,
+                 "status": "Discharging"}
+        with mock.patch.object(companion.steamcontroller, "batteries",
+                               return_value=[steam]), \
+                mock.patch.object(companion, "controllers",
+                                  return_value=[dict(steam, percent=40)]):
+            answer = companion.status()
+        self.assertEqual([one["name"] for one in answer["controllers"]],
+                         ["Steam Controller 1", "Steam Controller 2"])
 
 
 class TelemetryTest(unittest.TestCase):
