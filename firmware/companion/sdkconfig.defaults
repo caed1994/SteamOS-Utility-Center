@@ -77,6 +77,13 @@ CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
 CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
 
+# Power management, so the CPU can drop to 80 MHz while the display sleeps.
+# The speed of the clock only: tickless idle and light sleep stay off. The
+# RGB panel driver keeps the chip out of light sleep in any case. See
+# main/panel_clock.c, which fails the build if this line stops taking
+# effect.
+CONFIG_PM_ENABLE=y
+
 CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
 
 # CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0 is not set

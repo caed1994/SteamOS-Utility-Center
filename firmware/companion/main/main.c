@@ -38,6 +38,7 @@
 #include "panel_text.h"
 #include "panel_boot.h"
 #include "panel_wol.h"
+#include "panel_clock.h"
 
 /* The startup animation, put in the image by main/CMakeLists.txt. It
  * belongs to Valve and not to this project; assets/ORIGIN-BOOT-ANIMATION
@@ -227,11 +228,17 @@ static void watch_stack(void)
 static void display_sleeping(bool sleep,bool by_hand)
 {
     if(sleep==atomic_load(&display_asleep))return;
+    /* The clock at full speed before the display comes back, so the first
+     * frame is drawn at it. Low only once the display is down, and back
+     * low when it did not come up. See panel_clock.c. */
+    if(!sleep)panel_clock_low(false);
     esp_err_t err=panel_display_standby(sleep,display_brightness);
     if(err!=ESP_OK){
         ESP_LOGW("panel_power","Standby change failed: %s",esp_err_to_name(err));
+        if(!sleep)panel_clock_low(true);
         return;
     }
+    if(sleep)panel_clock_low(true);
     atomic_store(&display_asleep,sleep);
     atomic_store(&asleep_by_hand,sleep && by_hand);
     if(sleep && sounds)xQueueReset(sounds);
@@ -697,7 +704,7 @@ static void network_task(void *arg)
             xSemaphoreTake(lock,portMAX_DELAY);
             bool wifi=state.wifi,online=state.online;
             xSemaphoreGive(lock);
-            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d radio_rest=%d key_slowest=%ums",
+            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d radio_rest=%d cpu=%uMHz key_slowest=%ums",
                 now_ms/1000,now_ms-atomic_load(&ui_heartbeat_ms),
                 (unsigned)esp_get_free_heap_size(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
@@ -709,6 +716,7 @@ static void network_task(void *arg)
                 atomic_load(&ui_stack_left),
                 (unsigned)panel_display_stack_bytes(),wifi,online,
                 atomic_load(&display_asleep),atomic_load(&radio_resting),
+                panel_clock_mhz(),
                 /* The slowest turn of the key loop since the last line.
                  * The shortest press the panel can see is about twice
                  * this, so a number far above PWRKEY_PERIOD_MS is why a
@@ -828,6 +836,11 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
     if (!panel_config_load(&config)) memset(&config,0,sizeof(config));
+    /* Before the display, so the full speed is held before anything draws. */
+    esp_err_t clock_err=panel_clock_init();
+    if (clock_err!=ESP_OK)
+        ESP_LOGW("panel_clock","The clock stays at full speed: %s",
+                 esp_err_to_name(clock_err));
     lock=xSemaphoreCreateMutex();
     actions=xQueueCreate(1,sizeof(panel_action_t));
     assert(lock && actions);
