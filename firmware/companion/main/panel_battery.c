@@ -20,6 +20,9 @@
 #include "driver/i2c_master.h"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include <stdio.h>
+#include <string.h>
 
 #define AXP2101_ADDRESS  0x34
 /* Bit 3: a cell is connected. */
@@ -31,6 +34,29 @@
 #define AXP2101_CHIP_ID  0x4A
 /* The gauge, in per cent. */
 #define AXP2101_PERCENT  0xA4
+
+/* The charger, read for the line in the log below and never set. The
+ * numbers and the bits are those of the AXP2101 datasheet V1.4, chapter
+ * 6.13.2, which XPowersLib carries in its datasheet/ directory. */
+#define AXP2101_VINDPM          0x15  /* 3:0, 3.88 V and 80 mV a step */
+#define AXP2101_INPUT_LIMIT     0x16  /* 2:0, see input_limit_ma */
+#define AXP2101_CHARGER_ON      0x18  /* bit 1, the cell charger */
+#define AXP2101_ADC_ON          0x30  /* bit 1, the ADC of the TS pin */
+#define AXP2101_VBAT_HIGH       0x34  /* with 0x35, the cell in mV */
+#define AXP2101_VBAT_LOW        0x35
+#define AXP2101_TS_HIGH         0x36  /* with 0x37, the TS pin in 0.5 mV */
+#define AXP2101_TS_LOW          0x37
+#define AXP2101_TS_CONTROL      0x50  /* bit 4: 0 when TS can stop the charger */
+#define AXP2101_JEITA           0x58  /* bit 0 */
+#define AXP2101_PRECHARGE       0x61  /* 3:0, 25 mA a step */
+#define AXP2101_CHARGE_CURRENT  0x62  /* 4:0, see charge_current_ma */
+#define AXP2101_TERMINATION     0x63  /* 3:0, 25 mA a step; bit 4 on */
+#define AXP2101_CHARGE_VOLTAGE  0x64  /* 2:0, see charge_voltage_mv */
+/* A reading of the TS pin with nothing connected to it. */
+#define AXP2101_TS_OPEN         0x2000
+/* At most one line about the charger in this time, however often its
+ * state changes. A change in the hold is written at the end of it. */
+#define CHARGER_HOLD_MS         30000
 
 /* Short, because the bus is shared with the touch, the codec and the key.
  * A chip that does not answer in this time is a reading skipped, and the
@@ -44,6 +70,140 @@ static esp_err_t read_register(uint8_t reg, uint8_t *value)
 {
     return i2c_master_transmit_receive(chip, &reg, 1, value, 1,
                                        READ_TIMEOUT_MS);
+}
+
+/* One register for the log line, or -1 when the chip did not answer. */
+static int read_or_none(uint8_t reg)
+{
+    uint8_t value = 0;
+    return read_register(reg, &value) == ESP_OK ? value : -1;
+}
+
+/* Two registers that hold one number, the high one first. */
+static int read_pair(uint8_t high, uint8_t low, uint8_t mask)
+{
+    int h = read_or_none(high), l = read_or_none(low);
+    return h < 0 || l < 0 ? -1 : ((h & mask) << 8) | l;
+}
+
+static int charge_current_ma(int code)
+{
+    if (code < 0) return -1;
+    code &= 0x1F;
+    if (code <= 8) return 25 * code;
+    if (code <= 16) return 200 + 100 * (code - 8);
+    return -1;
+}
+
+static int input_limit_ma(int code)
+{
+    static const int table[] = {100, 500, 900, 1000, 1500, 2000};
+    if (code < 0 || (code & 0x07) > 5) return -1;
+    return table[code & 0x07];
+}
+
+static int charge_voltage_mv(int code)
+{
+    static const int table[] = {5000, 4000, 4100, 4200, 4350, 4400};
+    if (code < 0 || (code & 0x07) > 5) return -1;
+    return table[code & 0x07];
+}
+
+static const char *charge_state_name(uint8_t status2)
+{
+    switch (status2 & 0x07) {
+    case 0: return "trickle";
+    case 1: return "pre-charge";
+    case 2: return "constant current";
+    case 3: return "constant voltage";
+    case 4: return "done";
+    case 5: return "not charging";
+    default: return "reserved";
+    }
+}
+
+/* What the charger does and what it is set to, in one line.
+ *
+ * Asked about on the board: the panel charges slowly, with a charger and
+ * a cable that charge a Switch 2 fast, and switched off as slowly as
+ * switched on. The speed of a charge is not the charger on the wall here.
+ * It is what this chip is set to, and two of its settings are suspects:
+ *
+ * The charge current. The datasheet gives 300 mA, and the value after a
+ * reset comes from a fuse in the chip, so only a reading says what this
+ * one holds.
+ *
+ * The TS pin. The chip can read a sensor in the cell through it, and stop
+ * or slow the charge when the sensor says too cold or too hot. The example
+ * of the maker of this board for this chip turns that off, with the note
+ * that a board without the sensor otherwise charges abnormally
+ * (examples/esp-idf/01_AXP2101/main/port_axp2101.cpp in
+ * waveshareteam/ESP32-S3-Touch-LCD-4B). This firmware writes nothing to
+ * the chip, so it is on whenever the fuse says on.
+ *
+ * Reads only, like everything else in this file. */
+static void charger_report(uint8_t status1, uint8_t status2)
+{
+    int ts_control = read_or_none(AXP2101_TS_CONTROL);
+    int adc = read_or_none(AXP2101_ADC_ON);
+    int ts = read_pair(AXP2101_TS_HIGH, AXP2101_TS_LOW, 0x3F);
+    int on = read_or_none(AXP2101_CHARGER_ON);
+    int jeita = read_or_none(AXP2101_JEITA);
+    int pre = read_or_none(AXP2101_PRECHARGE);
+    int term = read_or_none(AXP2101_TERMINATION);
+    int vindpm = read_or_none(AXP2101_VINDPM);
+
+    char ts_text[24];
+    if (ts < 0 || adc < 0 || !(adc & 0x02))
+        snprintf(ts_text, sizeof ts_text, "not measured");
+    else if (ts == AXP2101_TS_OPEN)
+        snprintf(ts_text, sizeof ts_text, "open");
+    else
+        snprintf(ts_text, sizeof ts_text, "%d mV", ts / 2);
+
+    /* What holds the current below its setting, if anything does. */
+    char held[48] = "";
+    if (status1 & (1u << 1)) strcat(held, "heat, ");
+    if (status1 & (1u << 0)) strcat(held, "input current, ");
+    if (status2 & (1u << 3)) strcat(held, "input voltage, ");
+    size_t length = strlen(held);
+    if (length) held[length - 2] = 0;
+    else strcpy(held, "nothing");
+
+    ESP_LOGI(tag, "charger: %s, %s, charger %s, vbat=%d mV, held by %s; "
+             "set to icc=%d mA pre=%d mA term=%d mA%s cv=%d mV iin=%d mA "
+             "vindpm=%d mV; ts=%s, %s, jeita %s",
+             charge_state_name(status2),
+             (status1 & (1u << 5)) ? "input good" : "no good input",
+             on < 0 ? "?" : (on & 0x02) ? "on" : "off",
+             read_pair(AXP2101_VBAT_HIGH, AXP2101_VBAT_LOW, 0x1F),
+             held,
+             charge_current_ma(read_or_none(AXP2101_CHARGE_CURRENT)),
+             pre < 0 ? -1 : 25 * (pre & 0x0F),
+             term < 0 ? -1 : 25 * (term & 0x0F),
+             term >= 0 && !(term & 0x10) ? " (off)" : "",
+             charge_voltage_mv(read_or_none(AXP2101_CHARGE_VOLTAGE)),
+             input_limit_ma(read_or_none(AXP2101_INPUT_LIMIT)),
+             vindpm < 0 ? -1 : 3880 + 80 * (vindpm & 0x0F),
+             ts_text,
+             ts_control < 0 ? "?" : (ts_control & 0x10)
+                 ? "apart from the charger" : "a sensor that can stop the charger",
+             jeita < 0 ? "?" : (jeita & 0x01) ? "on" : "off");
+}
+
+/* A line at the first reading, and one when the state of the charger
+ * changes after that, CHARGER_HOLD_MS apart at the closest. */
+static void charger_watch(uint8_t status1, uint8_t status2)
+{
+    static int last = -1;
+    static int64_t last_us;
+    int now_state = ((status1 & 0x3F) << 8) | (status2 & 0x7F);
+    int64_t now = esp_timer_get_time();
+    if (now_state == last) return;
+    if (last >= 0 && now - last_us < (int64_t)CHARGER_HOLD_MS * 1000) return;
+    last = now_state;
+    last_us = now;
+    charger_report(status1, status2);
 }
 
 esp_err_t panel_battery_init(void)
@@ -121,5 +281,6 @@ bool panel_battery_read(panel_supply_t *supply, int *percent, bool *charging)
     *supply = PANEL_SUPPLY_BATTERY;
     *percent = level > 100 ? 100 : level;
     *charging = (status2 >> 5) == 0x01;
+    charger_watch(status1, status2);
     return true;
 }

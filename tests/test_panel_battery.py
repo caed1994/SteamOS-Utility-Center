@@ -17,10 +17,15 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIRMWARE = os.path.join(REPO, "firmware", "companion", "main")
+HARNESS = os.path.join(REPO, "tests", "c", "panel-battery-harness.c")
+STUBS = os.path.join(REPO, "tests", "c", "stubs")
 
 
 def without_comments(text):
@@ -121,6 +126,166 @@ class WhereTest(unittest.TestCase):
             build = handle.read()
         self.assertIn('"panel_battery.c"', build)
         self.assertIn("esp_driver_i2c", build)
+
+
+
+def compiler():
+    return shutil.which("cc") or shutil.which("gcc")
+
+
+# A cell that charges at constant current on a good input: STATUS1 with
+# "input good" and "cell present", STATUS2 with "charge" and "CC".
+CHARGING = ("set 00 28", "set 01 22")
+
+
+@unittest.skipUnless(compiler(), "no C compiler here")
+class ChargerReportTest(unittest.TestCase):
+    """The line about the charger, built and driven on this machine.
+
+    Asked about on the board: the panel charges slowly, with a charger and
+    a cable that charge a Switch 2 fast, and off as slowly as on. Which
+    setting of the chip holds it back is a reading, and this line is that
+    reading. These hold that it says what the registers hold, in the units
+    of the AXP2101 datasheet V1.4, and that it writes nothing.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.where = tempfile.mkdtemp()
+        cls.program = os.path.join(cls.where, "panel-battery")
+        done = subprocess.run(
+            [compiler(), "-std=gnu17", "-Wall", "-Wextra", "-Werror",
+             "-I", STUBS, "-I", FIRMWARE, "-o", cls.program, HARNESS,
+             os.path.join(FIRMWARE, "panel_battery.c")],
+            capture_output=True, text=True)
+        # A failure and not a skip. The stubs are plain C, so a build that
+        # fails is a fault in the file, and a skip would hide every rule
+        # below behind it.
+        if done.returncode != 0:
+            shutil.rmtree(cls.where, ignore_errors=True)
+            raise AssertionError("panel_battery.c did not build here:\n"
+                                 + done.stderr.strip()[:500])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.where, ignore_errors=True)
+
+    def output(self, *commands):
+        done = subprocess.run([self.program], input="\n".join(commands) + "\n",
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.splitlines()
+
+    def charger(self, *commands):
+        return [line for line in self.output(*commands)
+                if line.startswith("I panel_battery: charger:")]
+
+    def one(self, *commands):
+        lines = self.charger(*CHARGING, *commands, "init")
+        self.assertEqual(len(lines), 1)
+        return lines[0]
+
+    def test_the_charge_current_reads_as_the_datasheet_counts(self):
+        """REG 62: 25 mA a step up to 200 mA, then 100 mA a step up to
+        1000 mA. Anything above is reserved, and says so."""
+        for code, current in ((0, 0), (1, 25), (4, 100), (8, 200), (9, 300),
+                              (11, 500), (16, 1000), (17, -1), (31, -1)):
+            with self.subTest(code=code):
+                self.assertIn("icc=%d mA" % current,
+                              self.one("set 62 %x" % code))
+
+    def test_the_input_limit_reads_as_the_datasheet_counts(self):
+        for code, current in ((0, 100), (1, 500), (2, 900), (3, 1000),
+                              (4, 1500), (5, 2000), (6, -1)):
+            with self.subTest(code=code):
+                self.assertIn("iin=%d mA" % current,
+                              self.one("set 16 %x" % code))
+
+    def test_the_voltages_read_as_the_datasheet_counts(self):
+        line = self.one("set 15 06", "set 64 03", "set 34 0f", "set 35 0a")
+        self.assertIn("vindpm=4360 mV", line)
+        self.assertIn("cv=4200 mV", line)
+        self.assertIn("vbat=3850 mV", line)
+        self.assertIn("cv=4350 mV", self.one("set 64 04"))
+
+    def test_the_small_currents_count_in_steps_of_25(self):
+        line = self.one("set 61 05", "set 63 15")
+        self.assertIn("pre=125 mA term=125 mA cv", line)
+        self.assertIn("term=125 mA (off)", self.one("set 63 05"))
+
+    def test_the_ts_pin_says_what_it_does_to_the_charger(self):
+        """The suspect. A TS pin that can stop the charger, with no sensor
+        on it, reads as open."""
+        line = self.one("set 50 0a", "set 30 03", "set 36 20", "set 37 00")
+        self.assertIn("ts=open, a sensor that can stop the charger", line)
+        line = self.one("set 50 10", "set 30 03", "set 36 03", "set 37 e8")
+        self.assertIn("ts=500 mV, apart from the charger", line)
+        self.assertIn("ts=not measured", self.one("set 30 01"))
+
+    def test_it_says_what_holds_the_current_down(self):
+        self.assertIn("held by nothing", self.one())
+        line = self.charger("set 00 2b", "set 01 2a", "init")[0]
+        self.assertIn("held by heat, input current, input voltage;", line)
+
+    def test_the_state_is_named(self):
+        for code, name in ((0, "trickle"), (1, "pre-charge"),
+                           (2, "constant current"), (3, "constant voltage"),
+                           (4, "done"), (5, "not charging")):
+            with self.subTest(code=code):
+                line = self.charger("set 00 28", "set 01 %x" % (0x20 | code),
+                                    "init")[0]
+                self.assertIn("charger: %s," % name, line)
+
+    def test_a_change_is_written_once_and_not_at_every_reading(self):
+        """The reading runs every five seconds. A line each time would bury
+        everything else in the log, and so would a state that flickers.
+        Here it flickers every two seconds: one line at the start, one at
+        the end of the hold with the state of that moment, and the next
+        one a hold after that."""
+        commands = list(CHARGING) + ["init"]
+        for second in range(2, 20, 2):
+            state = "23" if second % 4 == 2 else "22"
+            commands += ["at %d" % second, "set 01 %s" % state, "read"]
+        commands += ["at 31", "read",
+                     "at 33", "set 01 22", "read",
+                     "at 45", "read",
+                     "at 62", "read",
+                     "at 70", "read",
+                     "at 95", "read"]
+        lines = self.charger(*commands)
+        self.assertEqual(len(lines), 3, lines)
+        self.assertIn("charger: constant current,", lines[0])
+        self.assertIn("charger: constant voltage,", lines[1])
+        self.assertIn("charger: constant current,", lines[2])
+
+    def test_without_a_cell_there_is_no_line_about_a_charge(self):
+        self.assertEqual(self.charger("set 00 20", "init", "read"), [])
+
+    def test_nothing_is_written_to_the_chip(self):
+        output = self.output(*CHARGING, "init", "at 40", "set 01 23", "read")
+        self.assertEqual(output[-1], "not a read: 0")
+
+
+class ChargerRegisterTest(unittest.TestCase):
+    """The numbers of the charger, against the datasheet V1.4, 6.13.2."""
+
+    def test_the_numbers_are_those_of_the_datasheet(self):
+        code = read("panel_battery.c")
+        for name, value in (("AXP2101_VINDPM", "0x15"),
+                            ("AXP2101_INPUT_LIMIT", "0x16"),
+                            ("AXP2101_CHARGER_ON", "0x18"),
+                            ("AXP2101_ADC_ON", "0x30"),
+                            ("AXP2101_VBAT_HIGH", "0x34"),
+                            ("AXP2101_VBAT_LOW", "0x35"),
+                            ("AXP2101_TS_HIGH", "0x36"),
+                            ("AXP2101_TS_LOW", "0x37"),
+                            ("AXP2101_TS_CONTROL", "0x50"),
+                            ("AXP2101_JEITA", "0x58"),
+                            ("AXP2101_PRECHARGE", "0x61"),
+                            ("AXP2101_CHARGE_CURRENT", "0x62"),
+                            ("AXP2101_TERMINATION", "0x63"),
+                            ("AXP2101_CHARGE_VOLTAGE", "0x64")):
+            self.assertRegex(code, r"#define %s\s+%s\b" % (name, value))
 
 
 if __name__ == "__main__":
