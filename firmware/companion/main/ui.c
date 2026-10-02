@@ -74,6 +74,7 @@ static lv_obj_t *settings_screen, *sound_value, *sound_status;
 #define PAD_CARD_STEP 96
 #define PAD_CARD_HEIGHT 86
 #define PAD_BAR_LEFT 56
+#define PAD_NAME_WIDTH 250
 #define PAD_BAR_WIDTH 368
 static lv_obj_t *pad_area,*pad_icons[PAD_HEAD],*pad_values[PAD_HEAD];
 /* The left of the head, the PC and its connection, which opens the page of
@@ -385,6 +386,50 @@ static void pad_level(char *out,size_t room,const panel_pad_t *pad)
     if(pad->battery<0)snprintf(out,room,"-- %%");
     else snprintf(out,room,"%d %%%s",pad->battery,pad->charging?" " LV_SYMBOL_CHARGE:"");
 }
+/* Whether a text is as narrow as a room, in one line of that font. */
+static bool fits(const char *text,const lv_font_t *font,int32_t width)
+{
+    lv_point_t size;
+    lv_text_get_size(&size,text,font,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+    return size.x<=width;
+}
+/* A text without one word wherever it stands alone, and how many words
+ * are left. */
+static int without_word(char *out,size_t room,const char *text,const char *word)
+{
+    size_t used=0;int words=0;
+    out[0]=0;
+    for(const char *at=text;*at;){
+        while(*at==' ')at++;
+        const char *end=at;
+        while(*end&&*end!=' ')end++;
+        size_t length=(size_t)(end-at);
+        bool drop=length==strlen(word)&&strncmp(at,word,length)==0;
+        if(length&&!drop&&used+length+2<room){
+            if(used)out[used++]=' ';
+            memcpy(out+used,at,length);used+=length;out[used]=0;
+            words++;
+        }
+        at=end;
+    }
+    return words;
+}
+/* The name of a controller, made to fit its line.
+ *
+ * A name that fits stays as it is. One that does not loses "Wireless" and
+ * then "Controller", which say what every line on this page is: "8BitDo
+ * Ultimate 2C Wireless Controller" reads "8BitDo Ultimate 2C". A word goes
+ * only while two words stay, so a "Steam Controller" never reads "Steam".
+ * What still does not fit ends in dots. */
+static void pad_fit(char *out,size_t room,const char *name,const lv_font_t *font,int32_t width)
+{
+    static const char *const fillers[]={"Wireless","Controller"};
+    snprintf(out,room,"%s",name);
+    for(unsigned i=0;i<sizeof fillers/sizeof *fillers&&!fits(out,font,width);i++){
+        char shorter[PANEL_PAD_NAME];
+        if(without_word(shorter,sizeof shorter,out,fillers[i])>=2)snprintf(out,room,"%s",shorter);
+    }
+}
 /* How many controllers to draw. The list of a PC that does not answer is
  * the list of the last answer, and that is no list to show. */
 static int pads_known(const panel_state_t *s)
@@ -441,7 +486,9 @@ static void pads_show(const panel_state_t *s)
         const panel_pad_t *pad=&s->pads[i];
         char said[24];
         lv_obj_remove_flag(pad_cards[i],LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(pad_names[i],pad->name);
+        char name[PANEL_PAD_NAME];
+        pad_fit(name,sizeof name,pad->name,&panel_font_18,PAD_NAME_WIDTH);
+        lv_label_set_text(pad_names[i],name);
         pad_level(said,sizeof said,pad);
         lv_label_set_text(pad_levels[i],said);
         /* A bar for a battery, and words for a controller with none: an
@@ -471,7 +518,10 @@ void panel_ui_pads_open(void)
         lv_obj_remove_flag(card,LV_OBJ_FLAG_CLICKABLE);
         pad_cards[i]=card;
         icon(card,&icon_gamepad_2,16,16,MUTED);
-        pad_names[i]=text_at(card,"",56,16,250,&panel_font_18,TEXT);
+        /* One line, with the height of one: a label as wide as its text
+         * wraps, and the dots of LONG_DOT need the height. */
+        pad_names[i]=text_at(card,"",56,16,PAD_NAME_WIDTH,&panel_font_18,TEXT);
+        lv_obj_set_height(pad_names[i],lv_font_get_line_height(&panel_font_18));
         pad_levels[i]=text_at(card,"",306,16,118,&panel_font_18,BLUE);
         lv_obj_set_style_text_align(pad_levels[i],LV_TEXT_ALIGN_RIGHT,0);
         pad_tracks[i]=panel(card,PAD_BAR_LEFT,54,PAD_BAR_WIDTH,10,EDGE,false);

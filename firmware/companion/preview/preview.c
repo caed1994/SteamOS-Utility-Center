@@ -34,14 +34,14 @@ int main(int argc,char **argv)
     static const panel_pad_t pads[]={{"Steam Controller 1",93,false},
                                       {"PlayStation Controller",100,true},
                                       {"Steam Controller 2",8,false},
-                                      {"Xbox Controller",-1,false}};
+                                      {"8BitDo Ultimate 2C Wireless Controller",-1,false}};
     memcpy(s.pads,pads,sizeof pads);s.pad_count=4;
     if(argc>2&&strcmp(argv[2],"pad")==0)s.pad_count=1;
     /* The page of the PC, as the board answers. "pc" opens it and "pc-end"
      * scrolls it to its end. */
     static const panel_pc_t pc={.os="SteamOS 3.9.2",.build="20260925.100",.channel="Beta",
-        .kernel="7.2.7-valve1-1-neptune-72-gc8730d37f9c6",.cpu="AMD Ryzen 7 9800X3D",
-        .gpu="Radeon RX 9070/9070 XT/9070 GRE",.ip="192.168.178.42",.mac="a8:a1:59:3c:21:7e",
+        .kernel="7.2.7-valve1-1",.cpu="AMD Ryzen 7 7800X3D",
+        .gpu="AMD Radeon RX 9070 XT",.ip="192.168.178.42",.mac="a8:a1:59:3c:21:7e",
         .uptime_s=2*86400+4*3600+13*60,.cpu_load=12,.fan_rpm=1180,.gpu_fan_rpm=0,
         .memory_used=9876543210ULL,.memory_total=33554432000ULL,.link=PANEL_LINK_WIRED,
         .link_mbit=2500,.answer_ms=38};

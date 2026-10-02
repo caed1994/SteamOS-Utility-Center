@@ -41,6 +41,19 @@ PCI_IDS = '''# a comment
 '''
 
 
+# libdrm's list, in its own shape: a version line, then device, revision and
+# name, split by a comma and a tab.
+AMDGPU_IDS = """# List of AMDGPU IDs
+#
+# Syntax:
+# device_id,\trevision_id,\tproduct_name        <-- single tab after comma
+
+1.0.0
+7550,\tC0,\tAMD Radeon RX 9070 XT
+7550,\tC3,\tAMD Radeon RX 9070
+"""
+
+
 class Folder(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
@@ -68,7 +81,20 @@ class SystemTest(Folder):
         self.assertEqual(found["os"], "SteamOS 3.9.2")
         self.assertEqual(found["build"], "20260925.100")
         self.assertEqual(found["channel"], "Beta")
-        self.assertEqual(found["kernel"], os.uname().release[:47])
+        self.assertEqual(found["kernel"],
+                         pcinfo.short_kernel(os.uname().release)[:47])
+
+    def test_the_kernel_is_its_version_and_not_its_build(self):
+        """The board showed 7.2.7-valve1-1-neptune-72-gc8730d37f9c6, which
+        ended in dots. The parts after the version are the build."""
+        for release, short in (
+                ("7.2.7-valve1-1-neptune-72-gc8730d37f9c6", "7.2.7-valve1-1"),
+                ("6.8.0-45-generic", "6.8.0-45"),
+                ("6.10.3-arch1-2", "6.10.3-arch1-2"),
+                ("6.12.0-rc1", "6.12.0-rc1"),
+                ("6.18.44-fc-v51", "6.18.44"),
+                ("no number", "no number")):
+            self.assertEqual(pcinfo.short_kernel(release), short, release)
 
     def test_a_system_with_no_build_says_none(self):
         path = self.write("os-release", 'NAME="Ubuntu"\nVERSION_ID="24.04"\n')
@@ -130,43 +156,57 @@ class HardwareTest(Folder):
                          {"used": 10000000 * 1024, "total": 32768000 * 1024})
         self.assertIsNone(pcinfo.memory(self.write("none", "")))
 
-    def card(self, vendor, device, sub_vendor="0x0000", sub_device="0x0000"):
+    def card(self, vendor, device, revision="0xc0", sub_vendor="0x1da2",
+             sub_device="0x3490"):
+        """The board's card: a Sapphire Pure RX 9070 XT, as LACT showed."""
         card = os.path.join(self.root, "card")
         for leaf, value in (("vendor", vendor), ("device", device),
+                            ("revision", revision),
                             ("subsystem_vendor", sub_vendor),
                             ("subsystem_device", sub_device)):
             self.write(os.path.join("card", leaf), value + "\n")
         return card
 
-    def test_the_card_is_the_part_in_brackets(self):
-        ids = self.write("pci.ids", PCI_IDS)
-        card = self.card("0x1002", "0x7550")
-        self.assertEqual(pcinfo.gpu_model(card, (ids,)),
-                         "Radeon RX 9070/9070 XT/9070 GRE")
+    def lists(self):
+        return ((self.write("pci.ids", PCI_IDS),),
+                (self.write("amdgpu.ids", AMDGPU_IDS),))
 
-    def test_a_board_the_list_names_wins(self):
-        ids = self.write("pci.ids", PCI_IDS)
-        card = self.card("0x1002", "0x7550", "0x1da2", "0xe490")
-        self.assertEqual(pcinfo.gpu_model(card, (ids,)),
-                         "Sapphire Pulse Radeon RX 9070 XT")
+    def test_the_model_of_libdrm_by_its_revision(self):
+        """What LACT showed: AMD Radeon RX 9070 XT, for 0x1002:0x7550:0xC0.
+        The model and not the board, which was asked for."""
+        pci, amd = self.lists()
+        self.assertEqual(pcinfo.gpu_model(self.card("0x1002", "0x7550"),
+                                          pci, amd), "AMD Radeon RX 9070 XT")
+        pcinfo.gpu_model.cache_clear()
+        self.assertEqual(pcinfo.gpu_model(
+            self.card("0x1002", "0x7550", "0xc3"), pci, amd),
+            "AMD Radeon RX 9070")
+
+    def test_a_revision_libdrm_does_not_know_takes_the_brackets(self):
+        pci, amd = self.lists()
+        self.assertEqual(pcinfo.gpu_model(
+            self.card("0x1002", "0x7550", "0xc9"), pci, amd),
+            "Radeon RX 9070/9070 XT/9070 GRE")
 
     def test_a_chip_with_no_brackets_keeps_its_name(self):
-        ids = self.write("pci.ids", PCI_IDS)
+        pci, amd = self.lists()
         self.assertEqual(pcinfo.gpu_model(self.card("0x1002", "0x7551"),
-                                          (ids,)), "Navi 48 GL")
+                                          pci, amd), "Navi 48 GL")
 
-    def test_a_device_of_another_vendor_is_not_found_in_this_one(self):
-        ids = self.write("pci.ids", PCI_IDS)
+    def test_a_card_of_another_vendor_has_the_list_of_pci_names(self):
+        """libdrm's list is AMD's alone, so 7550 of NVIDIA is not in it."""
+        pci, amd = self.lists()
         self.assertEqual(pcinfo.gpu_model(self.card("0x10de", "0x2684"),
-                                          (ids,)), "GeForce RTX 4090")
+                                          pci, amd), "GeForce RTX 4090")
         pcinfo.gpu_model.cache_clear()
         self.assertIsNone(pcinfo.gpu_model(self.card("0x10de", "0x7550"),
-                                           (ids,)))
+                                           pci, amd))
 
     def test_no_card_and_no_list_are_none(self):
         self.assertIsNone(pcinfo.gpu_model(None))
+        nowhere = (os.path.join(self.root, "x"),)
         self.assertIsNone(pcinfo.gpu_model(self.card("0x1002", "0x7550"),
-                                           (os.path.join(self.root, "x"),)))
+                                           nowhere, nowhere))
 
 
 class NetworkTest(Folder):

@@ -73,7 +73,7 @@
     X(TXT_PC_UPTIME,       "Uptime",                "Laufzeit") \
     X(TXT_PC_CPU,          "Processor",             "Prozessor") \
     X(TXT_PC_LOAD,         "CPU load",              "CPU-Last") \
-    X(TXT_PC_GPU,          "Graphics card",         "Grafikkarte") \
+    X(TXT_PC_GPU,          "GPU model",             "GPU-Modell") \
     X(TXT_PC_MEMORY,       "Memory",                "Arbeitsspeicher") \
     X(TXT_PC_FAN,          "Fans",                  "Lüfter") \
     X(TXT_PC_GPU_FAN,      "GPU fan",               "GPU-Lüfter") \

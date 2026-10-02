@@ -33,6 +33,12 @@ NET_ROOT = "/sys/class/net"
 # The list of PCI names. SteamOS has it from hwdata, other systems keep it
 # in /usr/share/misc.
 PCI_IDS = ("/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids")
+# The names AMD gives its cards, by device and revision, from libdrm. The
+# list of PCI names calls 7550 "Navi 48 [Radeon RX 9070/9070 XT/9070 GRE]";
+# this one tells the three apart by the revision, C0 for the 9070 XT. LACT
+# shows the same name, and the board showed LACT.
+AMDGPU_IDS = ("/usr/share/libdrm/amdgpu.ids",)
+AMD_VENDOR = "1002"
 
 # The update channel. The command prints the branch, and the branch is the
 # word the menu of Steam shows for three of them.
@@ -96,8 +102,19 @@ def system(path=OS_RELEASE):
         "os": ("%s %s" % (name, version)).strip()[:31],
         "build": release.get("BUILD_ID", "")[:23] or None,
         "channel": channel(),
-        "kernel": os.uname().release[:47],
+        "kernel": short_kernel(os.uname().release)[:47],
     }
+
+
+def short_kernel(release):
+    """The version of a kernel, without the name of its build.
+
+    "7.2.7-valve1-1-neptune-72-gc8730d37f9c6" is 7.2.7-valve1-1 to a person:
+    the numbers, and each part after them that has a number in it, up to the
+    first part that has none.
+    """
+    found = re.match(r"\d+(?:\.\d+)+(?:-[a-z]*\d[a-z0-9]*)*", release)
+    return found.group(0) if found else release
 
 
 def uptime(path=UPTIME):
@@ -185,15 +202,26 @@ def _hex(path):
     return text[2:] if text.startswith("0x") else text
 
 
-def _pci_name(vendor, device, subsystem, paths=PCI_IDS):
-    """The name of a PCI device in the list, the board before the chip."""
+def _amdgpu_name(device, revision, paths=AMDGPU_IDS):
+    """The name of an AMD card in the list of libdrm, or None.
+
+    A line is "7550,\tC0,\tAMD Radeon RX 9070 XT": the device, the
+    revision and the name.
+    """
     for path in paths:
-        text = _read(path)
-        if not text:
-            continue
-        in_vendor = in_device = False
-        chip = None
-        for line in text.splitlines():
+        for line in _read(path).splitlines():
+            parts = [part.strip() for part in line.split(",", 2)]
+            if (len(parts) == 3 and parts[0].lower() == device
+                    and parts[1].lower() == revision):
+                return parts[2]
+    return None
+
+
+def _pci_name(vendor, device, paths=PCI_IDS):
+    """The name of a PCI device in the list of PCI names, or None."""
+    for path in paths:
+        in_vendor = False
+        for line in _read(path).splitlines():
             if not line or line.startswith("#"):
                 continue
             if not line.startswith("\t"):
@@ -201,38 +229,35 @@ def _pci_name(vendor, device, subsystem, paths=PCI_IDS):
                     break
                 in_vendor = line[:4].lower() == vendor
                 continue
-            if not in_vendor:
-                continue
-            if not line.startswith("\t\t"):
-                if in_device:
-                    break
-                in_device = line[1:5].lower() == device
-                if in_device:
-                    chip = line[5:].strip()
-                continue
-            if in_device and line[2:11].lower() == subsystem:
-                return line[11:].strip()
-        if chip:
-            return chip
+            if in_vendor and not line.startswith("\t\t") \
+                    and line[1:5].lower() == device:
+                return line[5:].strip()
     return None
 
 
 @functools.lru_cache(maxsize=4)
-def gpu_model(card, paths=PCI_IDS):
-    """The graphics card at that PCI device, as the list of PCI names says.
+def gpu_model(card, paths=PCI_IDS, amd_paths=AMDGPU_IDS):
+    """The model of the graphics chip at that PCI device.
 
-    The list names a chip and its cards: "Navi 48 [Radeon RX 9070/9070 XT/
-    9070 GRE]". A person means the part in brackets.
+    The model and not the board: "AMD Radeon RX 9070 XT", which is what
+    LACT calls the model of the GPU. An AMD card has it in the list of
+    libdrm. Any other card, and an AMD card that list does not know, has
+    the list of PCI names, which names a chip and its models: "Navi 48
+    [Radeon RX 9070/9070 XT/9070 GRE]". A person means the part in
+    brackets.
     """
     if not card:
         return None
     vendor, device = _hex(os.path.join(card, "vendor")), _hex(
         os.path.join(card, "device"))
-    subsystem = "%s %s" % (_hex(os.path.join(card, "subsystem_vendor")),
-                           _hex(os.path.join(card, "subsystem_device")))
     if not vendor or not device:
         return None
-    name = _pci_name(vendor, device, subsystem, paths)
+    if vendor == AMD_VENDOR:
+        name = _amdgpu_name(device, _hex(os.path.join(card, "revision")),
+                            amd_paths)
+        if name:
+            return name[:47]
+    name = _pci_name(vendor, device, paths)
     if not name:
         return None
     bracket = re.search(r"\[([^\]]+)\]\s*$", name)

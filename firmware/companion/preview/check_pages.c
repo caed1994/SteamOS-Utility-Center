@@ -718,6 +718,34 @@ int main(void)
             if(lv_obj_get_child_count(o)==1&&!lv_obj_check_type(o,&lv_label_class))
                 assert(lv_obj_has_flag(o,LV_OBJ_FLAG_HIDDEN));
         }
+        // A name too long for its line loses "Wireless" and "Controller",
+        // and never down to one word. Each name is one line.
+        static const panel_pad_t long_names[]={{"8BitDo Ultimate 2C Wireless Controller",-1,false},
+                                               {"Steam Controller",93,false},
+                                               {"Supercalifragilistic Controller",50,false}};
+        panel_state_t named=c;
+        memcpy(named.pads,long_names,sizeof long_names);named.pad_count=3;
+        panel_ui_update(&named);
+        assert(label(screen_now,"8BitDo Ultimate 2C"));
+        assert(label(screen_now,"Steam Controller"));
+        // That one fits alone and not with its second word, and it keeps both.
+        assert(!label(screen_now,"Supercalifragilistic"));
+        lv_obj_t *long_one=lv_obj_get_parent(label(screen_now,"8BitDo Ultimate 2C"));
+        lv_obj_t *third=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(lv_obj_get_parent(long_one));i++){
+            lv_obj_t *card_i=lv_obj_get_child(lv_obj_get_parent(long_one),i);
+            for(unsigned j=0;j<lv_obj_get_child_count(card_i);j++){
+                lv_obj_t *o=lv_obj_get_child(card_i,j);
+                if(lv_obj_check_type(o,&lv_label_class)&&strncmp(lv_label_get_text(o),"Supercali",9)==0)third=o;
+            }
+        }
+        assert(third&&lv_obj_get_height(third)==lv_font_get_line_height(&panel_font_18));
+        // LVGL writes the dots once the label has its size.
+        lv_obj_update_layout(screen_now);
+        assert(strstr(lv_label_get_text(third),"...")&&strncmp(lv_label_get_text(third),"Supercalifragilistic C",22)==0);
+        lv_obj_t *steam_name=label(screen_now,"Steam Controller");
+        assert(lv_obj_get_height(steam_name)==lv_font_get_line_height(&panel_font_18));
+        panel_ui_update(&c);
         // The page follows the state while it is open.
         c.pad_count=1;
         panel_ui_update(&c);
