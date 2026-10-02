@@ -88,9 +88,13 @@ class NetworkTimeTest(unittest.TestCase):
         for said in ("config.server_from_dhcp = true;",
                      "config.renew_servers_after_new_IP = true;",
                      "config.index_of_first_server = 1;",
-                     "config.wait_for_sync = false;",
-                     'setenv("TZ", PANEL_TIME_ZONE, 1);', "tzset();"):
+                     "config.wait_for_sync = false;"):
             self.assertIn(said, init)
+        # The zone comes first, at the start, before the screen: see
+        # tests/test_panel_rtc.py.
+        start = body(code, "void panel_time_start(void)")
+        for said in ('setenv("TZ", PANEL_TIME_ZONE, 1);', "tzset();"):
+            self.assertIn(said, start)
         self.assertIn('#define PANEL_TIME_SERVER "pool.ntp.org"',
                       read("main", "panel_time.c"))
 

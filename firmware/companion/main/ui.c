@@ -128,6 +128,18 @@ static lv_obj_t *update_card,*update_offered,*update_note,*update_button;
 /* The screen over everything while an update writes, which nothing closes:
  * the panel restarts at its end, or the page says why it did not. */
 static lv_obj_t *update_layer,*update_title,*update_bar,*update_percent,*update_hint;
+/* The order of the pages of the band: the page at each place, and the
+ * pages themselves, which stand at their place in the band. See
+ * panel_pages.h. */
+static uint8_t page_order[PANEL_PAGES];
+static lv_obj_t *band_pages[PANEL_PAGES];
+/* The screen that puts them in order: a row for each place, with the name
+ * of the page there and a button up and one down. */
+static lv_obj_t *arrange_screen,*arrange_names[PANEL_PAGES],*arrange_starts[PANEL_PAGES];
+static lv_obj_t *arrange_up[PANEL_PAGES],*arrange_down[PANEL_PAGES];
+static const panel_text_id_t page_names[PANEL_PAGES]={TXT_PAGE_CONTROLS,TXT_PAGE_SESSION,
+    TXT_PLAYING,TXT_PAGE_CLOCK,TXT_PAGE_CARD};
+static void arrange_forget(void);
 /* The menu that chooses the sensor of a tile, and which tile it is for. */
 static lv_obj_t *sensor_layer;
 static bool sensor_gpu;
@@ -359,6 +371,8 @@ static void settings_drop(void)
 }
 static void settings_forget(void)
 {
+    /* The order of the pages stands on the settings, and goes with them. */
+    arrange_forget();
     if(settings_screen)lv_obj_delete(settings_screen);
     settings_drop();
 }
@@ -379,6 +393,85 @@ static void settings_close(lv_event_t *e)
 {
     (void)e;feedback();settings_forget();
 }
+/* The screen that puts the pages in order.
+ *
+ * A row for each place, the start page first, with the name of the page
+ * there and two buttons: one up and one down. A press moves the page one
+ * place and the page there to the place it left, saves the order, and
+ * moves the pages of the band at once. The top row has no way up and the
+ * bottom row no way down. */
+#define ARRANGE_TOP 78
+#define ARRANGE_STEP 78
+#define ARRANGE_HEIGHT 70
+static void arrange_drop(void)
+{
+    arrange_screen=NULL;
+    for(int i=0;i<PANEL_PAGES;i++){
+        arrange_names[i]=NULL;arrange_starts[i]=NULL;arrange_up[i]=NULL;arrange_down[i]=NULL;
+    }
+}
+static void arrange_forget(void)
+{
+    if(arrange_screen)lv_obj_delete(arrange_screen);
+    arrange_drop();
+}
+/* Each page of the band at its place now. */
+static void band_arrange(void)
+{
+    for(int i=0;i<PANEL_PAGES;i++)
+        if(band_pages[i])lv_obj_set_x(band_pages[i],panel_pages_place(page_order,i)*480);
+}
+static void arrange_show(void)
+{
+    if(!arrange_screen)return;
+    for(int place=0;place<PANEL_PAGES;place++){
+        lv_label_set_text(arrange_names[place],panel_text(page_names[page_order[place]]));
+        /* The start page has a second line, and the others have their name
+         * in the middle of the row. */
+        lv_obj_set_y(arrange_names[place],place==0?14:
+                     (ARRANGE_HEIGHT-lv_font_get_line_height(&panel_font_18))/2);
+        if(place==0)lv_obj_remove_flag(arrange_starts[place],LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(arrange_starts[place],LV_OBJ_FLAG_HIDDEN);
+        if(place==0)lv_obj_add_state(arrange_up[place],LV_STATE_DISABLED);
+        else lv_obj_remove_state(arrange_up[place],LV_STATE_DISABLED);
+        if(place==PANEL_PAGES-1)lv_obj_add_state(arrange_down[place],LV_STATE_DISABLED);
+        else lv_obj_remove_state(arrange_down[place],LV_STATE_DISABLED);
+    }
+}
+static void arrange_move(lv_event_t *e)
+{
+    int code=(int)(intptr_t)lv_event_get_user_data(e);
+    int place=code/2,step=code%2?1:-1;
+    feedback();
+    if(!panel_pages_move(page_order,place,step))return;
+    local.page_order=panel_pages_pack(page_order);
+    if(save_setting)save_setting(PANEL_PAGE_ORDER,(int)local.page_order,true);
+    band_arrange();
+    arrange_show();
+}
+static void arrange_close(lv_event_t *e){(void)e;feedback();arrange_forget();}
+void panel_ui_arrange_open(void)
+{
+    if(arrange_screen||!settings_screen)return;
+    arrange_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    button(arrange_screen,panel_text(TXT_BACK),12,8,112,44,arrange_close,0);
+    text_at(arrange_screen,panel_text(TXT_PAGES_TITLE),136,20,320,&panel_font_20,TEXT);
+    line(arrange_screen,0,62,480,1);
+    for(int place=0;place<PANEL_PAGES;place++){
+        lv_obj_t *row=panel(arrange_screen,20,ARRANGE_TOP+place*ARRANGE_STEP,440,ARRANGE_HEIGHT,CARD,true);
+        lv_obj_remove_flag(row,LV_OBJ_FLAG_CLICKABLE);
+        char number[4];
+        snprintf(number,sizeof number,"%d",place+1);
+        text_at(row,number,16,20,24,&panel_font_24,BLUE);
+        arrange_names[place]=text_at(row,"",52,14,236,&panel_font_18,TEXT);
+        lv_obj_set_height(arrange_names[place],lv_font_get_line_height(&panel_font_18));
+        arrange_starts[place]=text_at(row,panel_text(TXT_PAGES_START),52,40,236,&panel_font_12,MUTED);
+        arrange_up[place]=button(row,LV_SYMBOL_UP,296,13,60,44,arrange_move,place*2);
+        arrange_down[place]=button(row,LV_SYMBOL_DOWN,366,13,60,44,arrange_move,place*2+1);
+    }
+    arrange_show();
+}
+static void arrange_clicked(lv_event_t *e){(void)e;feedback();panel_ui_arrange_open();}
 void panel_ui_settings_open(void)
 {
     if(settings_screen)return;
@@ -456,11 +549,16 @@ void panel_ui_settings_open(void)
      * a stray finger lands. It still asks before it starts, the same
      * question as before, and the setup screen that follows closes this
      * one: see settings_forget in panel_ui_update. */
-    lv_obj_t *link=panel(settings_screen,20,622,440,84,CARD,true);
+    /* The order of the pages, on a screen of its own. */
+    lv_obj_t *pages=panel(settings_screen,20,622,440,84,CARD,true);
+    text_at(pages,panel_text(TXT_PAGES),20,16,240,&panel_font_18,TEXT);
+    text_at(pages,panel_text(TXT_PAGES_WHAT),20,44,248,&panel_font_12,MUTED);
+    button(pages,panel_text(TXT_PAGES_ARRANGE),276,20,144,44,arrange_clicked,0);
+    lv_obj_t *link=panel(settings_screen,20,720,440,84,CARD,true);
     text_at(link,panel_text(TXT_CONNECTION),20,16,240,&panel_font_18,TEXT);
     text_at(link,panel_text(TXT_SETUP_WHAT),20,44,240,&panel_font_12,MUTED);
     button(link,panel_text(TXT_SETUP),276,20,144,44,clicked,PANEL_SETUP);
-    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,720,440,&panel_font_12,MUTED);
+    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,818,440,&panel_font_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
 /* What a controller says in the head and on its card: the battery, the
@@ -1190,6 +1288,7 @@ const char *panel_ui_where(void)
     if(setup_screen)return "the setup";
     if(overlay)return "a question";
     if(sensor_layer)return "a choice of sensor";
+    if(arrange_screen)return "the order of the pages";
     if(settings_screen)return "the settings";
     if(pads_screen)return "the controllers";
     if(pc_screen)return "the PC";
@@ -1197,14 +1296,14 @@ const char *panel_ui_where(void)
     if(self_screen)return "the panel";
     if(!band)return "no screen";
     /* Read from where the band stands: a swipe that did not carry far
-     * enough left it on the page it was on. */
-    static const char *const pages[PANEL_PAGES]={"the first page","the second page",
-                                                 "the third page","the fourth page",
-                                                 "the fifth page"};
-    int32_t page=(lv_obj_get_scroll_x(band)+240)/480;
-    if(page<0)page=0;
-    if(page>PANEL_PAGES-1)page=PANEL_PAGES-1;
-    return pages[page];
+     * enough left it on the page it was on. The name is the one of the
+     * page and not of its place, which somebody can change. */
+    static const char *const pages[PANEL_PAGES]={"the controls","the session",
+                                                 "the game","the clock","the card"};
+    int32_t place=(lv_obj_get_scroll_x(band)+240)/480;
+    if(place<0)place=0;
+    if(place>PANEL_PAGES-1)place=PANEL_PAGES-1;
+    return pages[page_order[place]];
 }
 
 /* A label set only when its text is new. LVGL draws a label again at each
@@ -1366,6 +1465,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * of this screen too. A pointer kept past the clean above is a pointer
      * to freed memory, and panel_ui_update writes through these. */
     band=NULL;mode_now=NULL;mode_button=NULL;mode_caption=NULL;
+    for(int i=0;i<PANEL_PAGES;i++)band_pages[i]=NULL;
+    arrange_drop();
     playing_name=NULL;achievement_count=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
     clock_digits=NULL;clock_date=NULL;timer_value=NULL;timer_minus=NULL;timer_plus=NULL;
     timer_go=NULL;timer_go_label=NULL;timer_reset=NULL;alarm_layer=NULL;
@@ -1438,11 +1539,16 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_remove_flag(band,LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_pad_all(band,0,0);
     lv_obj_set_scrollbar_mode(band,LV_SCROLLBAR_MODE_OFF);
+    /* Each page at its place, in the order somebody chose. The pages are
+     * built in the order of the firmware and stand where their place is,
+     * so the snap and the swipe follow the order and nothing else does. */
+    panel_pages_order(local.page_order,page_order);
     lv_obj_t *page[PANEL_PAGES];
     for(int i=0;i<PANEL_PAGES;i++){
-        page[i]=panel(band,i*480,0,480,300,BG,false);
+        page[i]=panel(band,panel_pages_place(page_order,i)*480,0,480,300,BG,false);
         lv_obj_set_style_bg_opa(page[i],LV_OPA_TRANSP,0);
         lv_obj_remove_flag(page[i],LV_OBJ_FLAG_CLICKABLE);
+        band_pages[i]=page[i];
     }
     /* No marks under the band for the page on the screen. There were
      * three, and its owner found them of no use and not good to look at.

@@ -117,7 +117,8 @@ static panel_settings_t settings_load(void)
                                .sleep_after=0,
                                /* Asked for, so on until somebody switches
                                 * it off. It acts only after the timeout. */
-                               .lift_wake=true};
+                               .lift_wake=true,
+                               .page_order=PANEL_PAGES_UNSET};
     nvs_handle_t h;
     if(nvs_open("panel_ui",NVS_READONLY,&h)==ESP_OK){
         uint8_t value;
@@ -138,6 +139,9 @@ static panel_settings_t settings_load(void)
         if(nvs_get_u32(h,"cpu_sensor",&key)==ESP_OK)settings.cpu_sensor=key;
         if(nvs_get_u32(h,"gpu_sensor",&key)==ESP_OK)settings.gpu_sensor=key;
         if(nvs_get_u8(h,"lift_wake",&value)==ESP_OK)settings.lift_wake=value==1;
+        /* The order of the pages. Whatever it holds is read with care:
+         * see panel_pages_order. */
+        if(nvs_get_u32(h,"page_order",&key)==ESP_OK)settings.page_order=key;
         nvs_close(h);
     }
     // Here, and not where the screen is built. The setup portal opens
@@ -154,8 +158,9 @@ static void setting_set(panel_setting_t key,int value,bool save)
                      key==PANEL_SLEEP_AFTER?"sleep_after":
                      key==PANEL_CPU_SENSOR?"cpu_sensor":
                      key==PANEL_GPU_SENSOR?"gpu_sensor":
-                     key==PANEL_LIFT_WAKE?"lift_wake":"touch_tones";
-    bool wide=key==PANEL_CPU_SENSOR||key==PANEL_GPU_SENSOR;
+                     key==PANEL_LIFT_WAKE?"lift_wake":
+                     key==PANEL_PAGE_ORDER?"page_order":"touch_tones";
+    bool wide=key==PANEL_CPU_SENSOR||key==PANEL_GPU_SENSOR||key==PANEL_PAGE_ORDER;
     esp_err_t result=ESP_OK;
     if(key==PANEL_BRIGHTNESS){
         if(!atomic_load(&display_asleep))result=bsp_display_brightness_set(value);
@@ -1087,6 +1092,8 @@ static void network_task(void *arg)
         /* A reading of the clock at every turn of this loop, which is ten a
          * second or so. See panel_clock_sample. */
         panel_clock_sample();
+        /* The clock chip takes the time of a server that just answered. */
+        panel_time_keep();
         /* The radio rests while the display sleeps by the button, and not
          * during the setup: a phone talks to the access point of the setup,
          * whatever the screen does. */
@@ -1331,6 +1338,9 @@ void app_main(void)
     panel_battery_init();
     /* The same bus, and nothing on the screen depends on it. */
     panel_motion_init();
+    /* The same bus, and before the screen is built: the clock page has the
+     * time of the clock chip at once. See panel_time.c. */
+    panel_time_start();
     panel_settings_t settings=settings_load();
     atomic_store(&lift_wake,settings.lift_wake);
     display_brightness=settings.brightness;

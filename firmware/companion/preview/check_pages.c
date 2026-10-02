@@ -33,20 +33,36 @@ static lv_obj_t *label(lv_obj_t *root,const char *text)
     for(unsigned i=0;i<lv_obj_get_child_count(root);i++){lv_obj_t *f=label(lv_obj_get_child(root,i),text);if(f)return f;}
     return NULL;
 }
-static void click(const char *text)
+static void click_in(lv_obj_t *root,const char *text)
 {
-    lv_obj_t *l=label(lv_screen_active(),text);assert(l);
+    lv_obj_t *l=label(root,text);assert(l);
     lv_obj_t *b=lv_obj_get_parent(l);
     while(b&&!lv_obj_check_type(b,&lv_button_class))b=lv_obj_get_parent(b);
     assert(b);
     lv_obj_send_event(b,LV_EVENT_CLICKED,NULL);
 }
+static void click(const char *text){click_in(lv_screen_active(),text);}
 // The band is the one object on the screen that scrolls sideways.
 static lv_obj_t *find_band(lv_obj_t *root)
 {
     if(lv_obj_get_scroll_dir(root)==LV_DIR_HOR&&lv_obj_get_child_count(root)==PANEL_PAGES)return root;
     for(unsigned i=0;i<lv_obj_get_child_count(root);i++){lv_obj_t *f=find_band(lv_obj_get_child(root,i));if(f)return f;}
     return NULL;
+}
+// A name in a row of the screen of the order: whole on its line, and left
+// of the buttons of its row.
+static bool name_fits(lv_obj_t *name)
+{
+    lv_point_t size;
+    lv_text_get_size(&size,lv_label_get_text(name),lv_obj_get_style_text_font(name,0),0,0,
+                     LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+    if(size.x>lv_obj_get_width(name))return false;
+    lv_obj_t *row=lv_obj_get_parent(name);
+    for(unsigned i=0;i<lv_obj_get_child_count(row);i++){
+        lv_obj_t *c=lv_obj_get_child(row,i);
+        if(lv_obj_check_type(c,&lv_button_class)&&lv_obj_get_x(name)+size.x>lv_obj_get_x(c))return false;
+    }
+    return true;
 }
 // The end of a frame, which this display takes and does nothing with. The
 // pixels stay in the buffer that main hands LVGL, so a rule can read them.
@@ -562,7 +578,7 @@ int main(void)
         lv_obj_t *page4=lv_obj_get_child(band4,3);
         lv_obj_scroll_to_view(page4,LV_ANIM_OFF);
         lv_obj_update_layout(lv_screen_active());
-        assert(strcmp(panel_ui_where(),"the fourth page")==0);
+        assert(strcmp(panel_ui_where(),"the clock")==0);
         // Not set by the network yet: dashes and a word, and no date
         // made up out of nought.
         assert(label(page4,"--:--"));
@@ -1178,6 +1194,143 @@ int main(void)
         assert(complaints==0);
     }
 
+    // The order of the pages: the band stands in the order somebody chose,
+    // and the screen in the settings changes it a place at a time.
+    {
+        static const uint8_t clock_first[PANEL_PAGES]={PANEL_PAGE_CLOCK,PANEL_PAGE_CONTROLS,
+            PANEL_PAGE_SESSION,PANEL_PAGE_PLAYING,PANEL_PAGE_CARD};
+        panel_settings_t ordered={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH,
+                                  .page_order=panel_pages_pack(clock_first)};
+        panel_ui_create(action,setting,sound,&ordered);
+        lv_obj_t *band_now=find_band(lv_screen_active());
+        assert(band_now);
+        lv_obj_update_layout(lv_screen_active());
+        // The clock is the start page now: at the left, and where the band
+        // stands at the start.
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CLOCK))==0);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CONTROLS))==480);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==4*480);
+        assert(strcmp(panel_ui_where(),"the clock")==0);
+        // The screen of the order, behind a button in the settings.
+        panel_ui_settings_open();
+        assert(label(lv_screen_active(),panel_text(TXT_PAGES)));
+        assert(label(lv_screen_active(),panel_text(TXT_PAGES_WHAT)));
+        click(panel_text(TXT_PAGES_ARRANGE));
+        assert(strcmp(panel_ui_where(),"the order of the pages")==0);
+        // The search stays on that screen: the band behind it has names
+        // like these too.
+        lv_obj_t *screen_now=lv_obj_get_parent(label(lv_screen_active(),panel_text(TXT_PAGES_TITLE)));
+        assert(screen_now&&lv_obj_get_parent(screen_now)==lv_screen_active());
+        lv_obj_update_layout(screen_now);
+        lv_refr_now(screen);
+        // A row for each place, in that order, the start page marked.
+        static const panel_text_id_t first_names[PANEL_PAGES]={TXT_PAGE_CLOCK,TXT_PAGE_CONTROLS,
+            TXT_PAGE_SESSION,TXT_PLAYING,TXT_PAGE_CARD};
+        int32_t last_y=-1;
+        for(int place=0;place<PANEL_PAGES;place++){
+            lv_obj_t *name=label(screen_now,panel_text(first_names[place]));
+            assert(name);
+            lv_obj_t *row=lv_obj_get_parent(name);
+            assert(lv_obj_get_y(row)>last_y);
+            last_y=lv_obj_get_y(row);
+            assert(lv_obj_get_y(row)+lv_obj_get_height(row)<=480);
+            assert(name_fits(name));
+        }
+        lv_obj_t *start=label(screen_now,panel_text(TXT_PAGES_START));
+        assert(start&&lv_obj_get_parent(start)==lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CLOCK))));
+        // The top row has no way up, and the bottom row no way down.
+        lv_obj_t *top=lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CLOCK)));
+        lv_obj_t *bottom=lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CARD)));
+        lv_obj_t *top_up=NULL,*top_down=NULL,*bottom_up=NULL,*bottom_down=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(top);i++){
+            lv_obj_t *c=lv_obj_get_child(top,i);
+            if(!lv_obj_check_type(c,&lv_button_class))continue;
+            if(label(c,LV_SYMBOL_UP))top_up=c;
+            if(label(c,LV_SYMBOL_DOWN))top_down=c;
+        }
+        for(unsigned i=0;i<lv_obj_get_child_count(bottom);i++){
+            lv_obj_t *c=lv_obj_get_child(bottom,i);
+            if(!lv_obj_check_type(c,&lv_button_class))continue;
+            if(label(c,LV_SYMBOL_UP))bottom_up=c;
+            if(label(c,LV_SYMBOL_DOWN))bottom_down=c;
+        }
+        assert(top_up&&top_down&&bottom_up&&bottom_down);
+        assert(lv_obj_has_state(top_up,LV_STATE_DISABLED)&&!lv_obj_has_state(top_down,LV_STATE_DISABLED));
+        assert(lv_obj_has_state(bottom_down,LV_STATE_DISABLED)&&!lv_obj_has_state(bottom_up,LV_STATE_DISABLED));
+        // Down on the top row: the clock goes second and the controls are
+        // the start page. The order is saved and the band moves at once.
+        saved_count=0;
+        lv_obj_send_event(top_down,LV_EVENT_CLICKED,NULL);
+        static const uint8_t controls_first[PANEL_PAGES]={PANEL_PAGE_CONTROLS,PANEL_PAGE_CLOCK,
+            PANEL_PAGE_SESSION,PANEL_PAGE_PLAYING,PANEL_PAGE_CARD};
+        assert(saved_count==1&&saved_key==PANEL_PAGE_ORDER);
+        assert((uint32_t)saved_value==panel_pages_pack(controls_first));
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CONTROLS))==0);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CLOCK))==480);
+        start=label(screen_now,panel_text(TXT_PAGES_START));
+        assert(start&&lv_obj_get_parent(start)==lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CONTROLS))));
+        // Up on the bottom row: the card goes fourth.
+        lv_obj_send_event(bottom_up,LV_EVENT_CLICKED,NULL);
+        static const uint8_t card_fourth[PANEL_PAGES]={PANEL_PAGE_CONTROLS,PANEL_PAGE_CLOCK,
+            PANEL_PAGE_SESSION,PANEL_PAGE_CARD,PANEL_PAGE_PLAYING};
+        assert((uint32_t)saved_value==panel_pages_pack(card_fourth));
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==3*480);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_PLAYING))==4*480);
+        // A press on a disabled end moves nothing and saves nothing.
+        int before=saved_count;
+        lv_obj_send_event(top_up,LV_EVENT_CLICKED,NULL);
+        assert(saved_count==before);
+        lv_refr_now(screen);
+        assert(complaints==0);
+        // Back to the settings, and they are still open.
+        click_in(screen_now,panel_text(TXT_BACK));
+        assert(strcmp(panel_ui_where(),"the settings")==0);
+        // The next language keeps the order, in the words of that language
+        // and each name whole.
+        panel_settings_t german=ordered;german.language=PANEL_GERMAN;
+        german.page_order=panel_pages_pack(card_fourth);
+        panel_ui_create(action,setting,sound,&german);
+        panel_ui_settings_open();
+        panel_ui_arrange_open();
+        screen_now=lv_obj_get_parent(label(lv_screen_active(),"Seiten anordnen"));
+        assert(screen_now);
+        lv_obj_update_layout(screen_now);
+        lv_refr_now(screen);
+        assert(label(screen_now,"Seiten anordnen")&&label(screen_now,"Startseite"));
+        static const char *const german_names[]={"Steuerung","Uhr und Timer",
+            "Sitzung und Datenträger","Grafikkarte und Verlauf","Läuft gerade"};
+        last_y=-1;
+        for(int place=0;place<PANEL_PAGES;place++){
+            lv_obj_t *name=label(screen_now,german_names[place]);
+            assert(name&&lv_obj_get_y(lv_obj_get_parent(name))>last_y);
+            last_y=lv_obj_get_y(lv_obj_get_parent(name));
+            assert(name_fits(name));
+        }
+        // The setup takes the screen of the order away with the settings.
+        panel_state_t up=base();up.setup=true;
+        panel_ui_update(&up);
+        assert(!label(lv_screen_active(),"Seiten anordnen"));
+        up.setup=false;
+        // A stored number that no firmware wrote still gives every page
+        // once.
+        panel_settings_t garbled={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH,
+                                  .page_order=0x44444444u};
+        panel_ui_create(action,setting,sound,&garbled);
+        band_now=find_band(lv_screen_active());
+        lv_obj_update_layout(lv_screen_active());
+        bool taken[PANEL_PAGES]={false};
+        for(int i=0;i<PANEL_PAGES;i++){
+            int32_t x=lv_obj_get_x(lv_obj_get_child(band_now,i));
+            assert(x%480==0&&x/480<PANEL_PAGES&&!taken[x/480]);
+            taken[x/480]=true;
+        }
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==0);
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+    }
+
     // The power chip in detail, on the page of the panel: its voltages,
     // the temperature of the chip, the phase of the charge and what holds
     // it down, and the settings of the charger in a card of their own.
@@ -1272,7 +1425,7 @@ int main(void)
         lv_obj_update_layout(screen_now);
         lv_obj_scroll_to_view(page,LV_ANIM_OFF);
         lv_obj_update_layout(screen_now);
-        assert(strcmp(panel_ui_where(),"the fifth page")==0);
+        assert(strcmp(panel_ui_where(),"the card")==0);
         panel_state_t g=base();
         g.gpu_load=87;g.gpu_mhz=2450;g.vram_used=10522460160ULL;g.vram_total=17163091968ULL;
         panel_ui_update(&g);
@@ -1401,7 +1554,8 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
-    puts("OK: five pages that snap, the session and its target button, the "
+    puts("OK: five pages that snap, in an order somebody can change, the "
+         "session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
          "them drawn with nothing for LVGL to complain about, the battery of "
          "the panel in the corner with the network mark against it, the "

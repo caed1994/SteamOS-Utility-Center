@@ -43,6 +43,16 @@
                            "Knopf hat es ausgeschaltet") \
     X(TXT_SLEEP_NEVER,     "Never",                 "Nie") \
     X(TXT_LIFT_WAKE,       "Wake when lifted",      "Beim Anheben einschalten") \
+    X(TXT_PAGES,           "Pages",                 "Seiten") \
+    X(TXT_PAGES_WHAT,      "The top one is the start page.", \
+                           "Die oberste ist die Startseite.") \
+    X(TXT_PAGES_ARRANGE,   "Arrange",               "Anordnen") \
+    X(TXT_PAGES_TITLE,     "Arrange pages",         "Seiten anordnen") \
+    X(TXT_PAGES_START,     "Start page",            "Startseite") \
+    X(TXT_PAGE_CONTROLS,   "Controls",              "Steuerung") \
+    X(TXT_PAGE_SESSION,    "Session and drives",    "Sitzung und Datenträger") \
+    X(TXT_PAGE_CLOCK,      "Clock and timer",       "Uhr und Timer") \
+    X(TXT_PAGE_CARD,       "Graphics card and history", "Grafikkarte und Verlauf") \
     X(TXT_LIFT_WAKE_WHAT,  "Only when it went off by itself, not after the button", \
                            "Nur wenn es von selbst ausging, nicht nach dem Knopf") \
     X(TXT_MINUTES,         "min",                   "Min") \

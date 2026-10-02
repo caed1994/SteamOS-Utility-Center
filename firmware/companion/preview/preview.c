@@ -197,6 +197,9 @@ int main(int argc,char **argv)
     }
     if(argc>2&&strcmp(argv[2],"confirm")==0)panel_ui_confirm(PANEL_POWEROFF);
     if(argc>2&&strncmp(argv[2],"settings",8)==0)panel_ui_settings_open();
+    /* "pages" is the screen that puts the pages in order, behind the
+     * settings. */
+    if(argc>2&&strcmp(argv[2],"pages")==0){panel_ui_settings_open();panel_ui_arrange_open();}
     /* The settings scroll, and the end of them is a page of its own to
      * look at. The page is the last child of the screen. */
     if(argc>2&&strcmp(argv[2],"settings-end")==0){

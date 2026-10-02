@@ -247,7 +247,7 @@ class WhereTest(unittest.TestCase):
 
     def test_it_is_on_until_somebody_switches_it_off(self):
         main = code("main.c")
-        self.assertIn(".lift_wake=true}", main)
+        self.assertRegex(main, r"\.lift_wake=true\s*[,}]")
         self.assertIn('nvs_get_u8(h,"lift_wake",&value)', main)
         self.assertLess(main.index("panel_battery_init();"),
                         main.index("panel_motion_init();"))

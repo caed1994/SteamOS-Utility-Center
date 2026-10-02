@@ -5,13 +5,15 @@
 #include <stdint.h>
 
 #include "panel_history.h"
+#include "panel_pages.h"
 #include "panel_text.h"
 #include "panel_timer.h"
 
 /* The band of pages that scrolls sideways: the controls, the session and
  * the drives, the game that runs, the clock with the timer, and the card
- * with its history. */
-#define PANEL_PAGES 5
+ * with its history. PANEL_PAGES and their order are panel_pages.h's:
+ * somebody can put them in another order, and the first is the page the
+ * panel starts on. */
 
 typedef enum {
     PANEL_VOLUME_DOWN, PANEL_MUTE, PANEL_VOLUME_UP,
@@ -196,7 +198,8 @@ typedef struct {
 typedef void (*panel_action_cb_t)(panel_action_t action);
 typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
                PANEL_LANGUAGE, PANEL_SLEEP_AFTER,
-               PANEL_CPU_SENSOR, PANEL_GPU_SENSOR, PANEL_LIFT_WAKE } panel_setting_t;
+               PANEL_CPU_SENSOR, PANEL_GPU_SENSOR, PANEL_LIFT_WAKE,
+               PANEL_PAGE_ORDER } panel_setting_t;
 /* sleep_after counts minutes, and nought means the display stays on. The
  * stored value is the count and not a place in the list of choices, so a
  * later firmware that offers other choices still reads what somebody
@@ -208,10 +211,14 @@ typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
  * of the service, and that order is not a promise.
  *
  * lift_wake: a lift of the panel brings back a display that went dark
- * after the set time, as a touch does. See panel_motion.c. */
+ * after the set time, as a touch does. See panel_motion.c.
+ *
+ * page_order: the order of the pages of the band, as panel_pages.h
+ * stores it. */
 typedef struct { int brightness, sound_volume; bool touch_tones;
                  panel_language_t language; int sleep_after;
-                 uint32_t cpu_sensor, gpu_sensor; bool lift_wake; }
+                 uint32_t cpu_sensor, gpu_sensor; bool lift_wake;
+                 uint32_t page_order; }
     panel_settings_t;
 typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);
@@ -223,6 +230,8 @@ void panel_ui_pads_open(void);
 void panel_ui_pc_open(void);
 /* The page of the panel itself, which a tap on its battery opens. */
 void panel_ui_self_open(void);
+/* The order of the pages, which a button in the settings opens. */
+void panel_ui_arrange_open(void);
 /* The history of the page of the card, which main.c keeps in PSRAM. Set
  * once and before the first tick; the screen draws no curve without it. */
 void panel_ui_history_use(panel_history_t *history);
