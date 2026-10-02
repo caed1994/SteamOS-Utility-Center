@@ -44,6 +44,7 @@
 #include "panel_ota.h"
 #include "panel_history.h"
 #include "panel_motion.h"
+#include "panel_psram.h"
 #include "esp_ota_ops.h"
 
 /* The startup animation, put in the image by main/CMakeLists.txt. It
@@ -707,7 +708,9 @@ static void offer_read(const cJSON *firmware)
 }
 static int request(const char *path, const char *action)
 {
-    response_t *out=calloc(1,sizeof(*out));
+    /* 8 KB at every poll, which the internal memory gave and took back
+     * every few seconds. See panel_psram.h. */
+    response_t *out=panel_psram_calloc(1,sizeof(*out));
     if (!out) return 0;
     int code=attempt(path,action,out);
     // 401 is the nonce, not the secret: it was spent, or the service
@@ -1320,6 +1323,21 @@ static const char *reset_reason_name(esp_reset_reason_t reason)
     }
 }
 
+/* The internal memory free after each step of the start, in KB, for one
+ * line of the log at its end. Asked for: where the internal memory goes.
+ * The health line says the least since the start, and this says which
+ * step took what. */
+static char ram_steps[320];
+static void ram_step(const char *step)
+{
+    size_t used=strlen(ram_steps);
+    snprintf(ram_steps+used,sizeof ram_steps-used," %s=%u",step,
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)/1024));
+}
+/* The JSON of the answers of the PC out of PSRAM: hundreds of small
+ * blocks at every poll. See panel_psram.h. */
+static void *json_alloc(size_t size){return panel_psram_malloc(size);}
+
 void app_main(void)
 {
     esp_reset_reason_t why=esp_reset_reason();
@@ -1332,6 +1350,9 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
     if (!panel_config_load(&config)) memset(&config,0,sizeof(config));
+    cJSON_Hooks json={.malloc_fn=json_alloc,.free_fn=heap_caps_free};
+    cJSON_InitHooks(&json);
+    ram_step("start");
     /* Before the display, so the full speed is held before anything draws. */
     esp_err_t clock_err=panel_clock_init();
     if (clock_err!=ESP_OK)
@@ -1353,6 +1374,7 @@ void app_main(void)
         state.can_wake=panel_wol_parse(config.wol_mac,kept);
     }
     if (!panel_display_start()) ESP_ERROR_CHECK(ESP_FAIL);
+    ram_step("display");
     esp_err_t key_err=panel_power_init();
     if(key_err!=ESP_OK)ESP_LOGW("panel_power","PWRKEY unavailable: %s",esp_err_to_name(key_err));
     /* After the key, whose IO expander brings the I2C bus up. Not finding
@@ -1360,6 +1382,7 @@ void app_main(void)
     panel_battery_init();
     /* The same bus, and nothing on the screen depends on it. */
     panel_motion_init();
+    ram_step("sensors");
     /* The same bus, and before the screen is built: the clock page has the
      * time of the clock chip at once. See panel_time.c. */
     panel_time_start();
@@ -1369,8 +1392,9 @@ void app_main(void)
     display_sleep_after=settings.sleep_after;
     sounds=xQueueCreate(1,sizeof(int));
     assert(sounds);
-    BaseType_t sound_created=xTaskCreate(sound_task,"panel_sound",6144,NULL,3,NULL);
+    BaseType_t sound_created=panel_psram_task(sound_task,"panel_sound",6144,3,tskNO_AFFINITY);
     assert(sound_created==pdPASS);
+    ram_step("sound");
     /* The history of the page of the card: an hour of points and what the
      * chart draws of it, about 6.5 KB. PSRAM, because the internal memory
      * is for the network and the drawing. A panel with no PSRAM to spare
@@ -1401,6 +1425,7 @@ void app_main(void)
      * below would beat it there. */
     lv_refr_now(NULL);
     bsp_display_unlock();
+    ram_step("screen");
     setting_set(PANEL_BRIGHTNESS,settings.brightness,false);
     uint32_t network_began=esp_log_timestamp();
     WIFI_STEP("esp_netif_init",ESP_ERROR_CHECK(esp_netif_init()));
@@ -1411,8 +1436,10 @@ void app_main(void)
     /* After the event loop, which it hangs a handler on, and before the
      * radio joins: it asks DHCP for a time server. See panel_time.c. */
     panel_time_init();
+    ram_step("netif");
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
     WIFI_STEP("esp_wifi_init",ESP_ERROR_CHECK(esp_wifi_init(&init)));
+    ram_step("wifi_init");
     WIFI_STEP("esp_wifi_set_storage",
               ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM)));
     /* Keep association; the driver wakes the radio for AP DTIM beacons. */
@@ -1476,6 +1503,7 @@ void app_main(void)
         WIFI_STEP("esp_wifi_start",ESP_ERROR_CHECK(esp_wifi_start()));
         WIFI_STEP("esp_wifi_connect",ESP_ERROR_CHECK(esp_wifi_connect()));
     }
+    ram_step("wifi_start");
     ESP_LOGI("panel_wifi","network brought up in %u ms, all channels "
              "scanned, strongest AP first",
              (unsigned)(esp_log_timestamp()-network_began));
@@ -1489,9 +1517,13 @@ void app_main(void)
      * thread takes either core. A poll of the PC parses its answer for
      * some milliseconds, and at the priority of the drawing or above it,
      * that parse held a frame back while somebody scrolled. */
-    BaseType_t created=xTaskCreatePinnedToCore(network_task,"panel_network",12288,NULL,
-                                               PANEL_NETWORK_PRIORITY,NULL,0);
+    BaseType_t created=panel_psram_task(network_task,"panel_network",12288,
+                                        PANEL_NETWORK_PRIORITY,0);
     assert(created==pdPASS);
+    ram_step("network");
+    ESP_LOGI("panel_ram","internal KB free after each step of the start:%s, least %u",
+             ram_steps,
+             (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)/1024));
     /* The start task as well, once, at its end. It is freed when app_main
      * returns, so its size costs nothing after this. */
     ESP_LOGI("panel_stack","the start used %u of %u bytes of its stack",

@@ -17,7 +17,10 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 
 CONFIG_FREERTOS_HZ=1000
-CONFIG_LV_USE_CLIB_MALLOC=y
+# The memory of LVGL out of PSRAM first, through main/panel_lvgl_mem.c.
+# With the C library, nearly every object of LVGL came out of the internal
+# memory. See main/panel_psram.h.
+CONFIG_LV_USE_CUSTOM_MALLOC=y
 CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
 # The refresh and the touch every 15 ms, under the frame of the panel.

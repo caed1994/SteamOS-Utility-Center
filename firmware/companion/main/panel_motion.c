@@ -26,6 +26,7 @@
 #include "freertos/task.h"
 
 #include "panel_lift.h"
+#include "panel_psram.h"
 
 #define QMI8658_ADDRESS        0x6B
 #define QMI8658_ADDRESS_OTHER  0x6A
@@ -166,8 +167,9 @@ esp_err_t panel_motion_init(void)
         ESP_LOGW(tag, "the QMI8658 did not take its settings: %s", esp_err_to_name(err));
         return err;
     }
-    if (xTaskCreate(motion_task, "panel_motion", MOTION_TASK_STACK, NULL,
-                    MOTION_TASK_PRIORITY, NULL) != pdPASS)
+    /* Its stack in PSRAM: see panel_psram.h. */
+    if (panel_psram_task(motion_task, "panel_motion", MOTION_TASK_STACK,
+                         MOTION_TASK_PRIORITY, tskNO_AFFINITY) != pdPASS)
         return ESP_ERR_NO_MEM;
     ESP_LOGI(tag, "QMI8658 at 0x%02x%s", address,
              done == QMI8658_RESET_DONE ? "" : ", its reset did not say it was done");

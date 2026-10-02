@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "bsp/esp-bsp.h"
 #include "esp_io_expander.h"
+#include "panel_psram.h"
 
 /* Official 4B schematic: PWR -> TCA9554 EXIO4, active low.
  * Do not drive this pin: it is also connected to the AXP2101 power-key circuit. */
@@ -75,7 +76,8 @@ esp_err_t panel_power_init(void)
     if(!expander)return ESP_FAIL;
     esp_err_t err=esp_io_expander_set_dir(expander,PWRKEY_PIN,IO_EXPANDER_INPUT);
     if(err!=ESP_OK)return err;
-    if(xTaskCreate(key_task,"panel_pwrkey",3072,NULL,PWRKEY_TASK_PRIORITY,NULL)!=pdPASS)
+    /* Its stack in PSRAM: see panel_psram.h. */
+    if(panel_psram_task(key_task,"panel_pwrkey",3072,PWRKEY_TASK_PRIORITY,tskNO_AFFINITY)!=pdPASS)
         return ESP_ERR_NO_MEM;
     ESP_LOGI("panel_power",
              "PWRKEY short press: display standby toggle (EXIO4), read every %d ms",

@@ -213,7 +213,7 @@ class WhereTest(unittest.TestCase):
         and not the network task, which a PC that does not answer holds
         for seconds."""
         motion = code("panel_motion.c")
-        self.assertIn('xTaskCreate(motion_task, "panel_motion"', motion)
+        self.assertIn('panel_psram_task(motion_task, "panel_motion"', motion)
         tick = self.ui_tick()
         self.assertIn("panel_motion_take_lift()", tick)
         self.assertNotIn("i2c_master", tick)

@@ -266,8 +266,8 @@ class WhereTest(unittest.TestCase):
         network = re.search(r"#define PANEL_NETWORK_PRIORITY (\d+)", main)
         self.assertIsNotNone(network)
         self.assertLess(int(network.group(1)), int(draw.group(1)))
-        self.assertRegex(main, r'xTaskCreatePinnedToCore\(network_task,"panel_network",12288,NULL,'
-                               r'\s*PANEL_NETWORK_PRIORITY,NULL,0\)')
+        self.assertRegex(main, r'panel_psram_task\(network_task,"panel_network",12288,'
+                               r'\s*PANEL_NETWORK_PRIORITY,0\)')
         self.assertNotIn("xTaskCreate(network_task", main)
         self.assertRegex(settings, r"(?m)^CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y$")
 
