@@ -15,6 +15,16 @@ static lv_obj_t *band_in(lv_obj_t *root)
     }
     return NULL;
 }
+/* The label with that text, for a tap on what holds it. */
+static lv_obj_t *find_label(lv_obj_t *root,const char *text)
+{
+    if(lv_obj_check_type(root,&lv_label_class)&&strcmp(lv_label_get_text(root),text)==0)return root;
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++){
+        lv_obj_t *found=find_label(lv_obj_get_child(root,i),text);
+        if(found)return found;
+    }
+    return NULL;
+}
 int main(int argc,char **argv)
 {
     lv_init();
@@ -46,6 +56,13 @@ int main(int argc,char **argv)
         .memory_used=9876543210ULL,.memory_total=33554432000ULL,.link=PANEL_LINK_WIRED,
         .link_mbit=2500,.answer_ms=38};
     s.pc=pc;
+    /* The sensors of the board's machine to choose from. "cpu-menu" and
+     * "gpu-menu" open the choice, by a tap on the tile. */
+    static const panel_sensor_t cpu_sensors[]={{"k10temp/Tctl","Tctl",49},{"k10temp/Tccd1","CCD 1",47}};
+    static const panel_sensor_t gpu_sensors[]={{"amdgpu/edge","Edge",56},
+        {"amdgpu/junction","Junction (Hotspot)",68},{"amdgpu/mem","VRAM",60}};
+    memcpy(s.cpu_sensors,cpu_sensors,sizeof cpu_sensors);s.cpu_sensor_count=2;
+    memcpy(s.gpu_sensors,gpu_sensors,sizeof gpu_sensors);s.gpu_sensor_count=3;
     /* The battery of the panel itself, for the corner of the main screen.
      * A real board shows this only once its power chip answers. */
     s.esp_supply=PANEL_SUPPLY_BATTERY;s.esp_battery=87;
@@ -100,6 +117,11 @@ int main(int argc,char **argv)
         }
     }
     if(argc>2&&strcmp(argv[2],"pads")==0)panel_ui_pads_open();
+    if(argc>2&&strstr(argv[2],"-menu")){
+        const char *reading=strncmp(argv[2],"gpu",3)==0?"56 °C":"49 °C";
+        lv_obj_t *value=find_label(lv_screen_active(),reading);
+        if(value)lv_obj_send_event(lv_obj_get_parent(value),LV_EVENT_CLICKED,NULL);
+    }
     if(argc>2&&strncmp(argv[2],"pc",2)==0)panel_ui_pc_open();
     if(argc>2&&strcmp(argv[2],"pc-end")==0){
         lv_obj_t *page=lv_obj_get_child(lv_screen_active(),-1);

@@ -113,6 +113,11 @@ static panel_settings_t settings_load(void)
          * not write. */
         if(nvs_get_u8(h,"sleep_after",&value)==ESP_OK && value<=60)
             settings.sleep_after=value;
+        /* The sensor of each tile, as a key. A key no sensor has any more
+         * is the choice of the service: see sensor_shown in ui.c. */
+        uint32_t key;
+        if(nvs_get_u32(h,"cpu_sensor",&key)==ESP_OK)settings.cpu_sensor=key;
+        if(nvs_get_u32(h,"gpu_sensor",&key)==ESP_OK)settings.gpu_sensor=key;
         nvs_close(h);
     }
     // Here, and not where the screen is built. The setup portal opens
@@ -126,7 +131,10 @@ static void setting_set(panel_setting_t key,int value,bool save)
     const char *name=key==PANEL_BRIGHTNESS?"brightness":
                      key==PANEL_SOUND_VOLUME?"sound_volume":
                      key==PANEL_LANGUAGE?"language":
-                     key==PANEL_SLEEP_AFTER?"sleep_after":"touch_tones";
+                     key==PANEL_SLEEP_AFTER?"sleep_after":
+                     key==PANEL_CPU_SENSOR?"cpu_sensor":
+                     key==PANEL_GPU_SENSOR?"gpu_sensor":"touch_tones";
+    bool wide=key==PANEL_CPU_SENSOR||key==PANEL_GPU_SENSOR;
     esp_err_t result=ESP_OK;
     if(key==PANEL_BRIGHTNESS){
         if(!atomic_load(&display_asleep))result=bsp_display_brightness_set(value);
@@ -142,7 +150,7 @@ static void setting_set(panel_setting_t key,int value,bool save)
         nvs_handle_t h;
         result=nvs_open("panel_ui",NVS_READWRITE,&h);
         if(result==ESP_OK){
-            result=nvs_set_u8(h,name,(uint8_t)value);
+            result=wide?nvs_set_u32(h,name,(uint32_t)value):nvs_set_u8(h,name,(uint8_t)value);
             if(result==ESP_OK)result=nvs_commit(h);
             nvs_close(h);
         }
@@ -544,6 +552,27 @@ static int attempt(const char *path, const char *action, response_t *out)
     return code;
 }
 
+/* The sensors of one tile to choose from, up to PANEL_SENSORS. A service
+ * older than this firmware sends none, and the menu then offers the
+ * choice of the service alone. */
+static int sensors_read(panel_sensor_t *out,const cJSON *list)
+{
+    memset(out,0,sizeof(panel_sensor_t)*PANEL_SENSORS);
+    int count=0;
+    cJSON *item;
+    cJSON_ArrayForEach(item,list){
+        if(count>=PANEL_SENSORS)break;
+        const cJSON *id=cJSON_GetObjectItemCaseSensitive(item,"id");
+        const cJSON *name=cJSON_GetObjectItemCaseSensitive(item,"name");
+        if(!cJSON_IsString(id)||!id->valuestring[0])continue;
+        panel_sensor_t *sensor=&out[count++];
+        snprintf(sensor->id,sizeof sensor->id,"%s",id->valuestring);
+        snprintf(sensor->name,sizeof sensor->name,"%s",
+                 cJSON_IsString(name)&&name->valuestring[0]?name->valuestring:id->valuestring);
+        sensor->celsius=metric(item,"c",150);
+    }
+    return count;
+}
 /* A text of the page of the PC, cut to its room, or nothing. */
 static void pc_text(char *out,size_t room,const cJSON *object,const char *key)
 {
@@ -655,6 +684,10 @@ static int request(const char *path, const char *action)
     state.cpu_temp=metric(telemetry,"cpu_c",150);
     state.gpu_temp=metric(telemetry,"gpu_c",150);
     state.gpu_watts=metric(telemetry,"gpu_w",2000);
+    state.cpu_sensor_count=sensors_read(state.cpu_sensors,
+        cJSON_GetObjectItemCaseSensitive(telemetry,"cpu_sensors"));
+    state.gpu_sensor_count=sensors_read(state.gpu_sensors,
+        cJSON_GetObjectItemCaseSensitive(telemetry,"gpu_sensors"));
     snprintf(state.host,sizeof(state.host),"%s",host->valuestring);
     /* A word the service sends and not a word of any language on the
      * screen, the same rule the charge flag follows. See panel_state_t. */

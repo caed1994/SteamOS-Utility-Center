@@ -61,6 +61,9 @@
                            "Kein Controller verbunden") \
     X(TXT_NO_BATTERY,      "No battery reading",    "Kein Akkustand") \
     X(TXT_PC_AUDIO,        "PC AUDIO",              "PC-TON") \
+    X(TXT_CPU_TEMPERATURE, "CPU temperature",       "CPU-Temperatur") \
+    X(TXT_GPU_TEMPERATURE, "GPU temperature",       "GPU-Temperatur") \
+    X(TXT_SENSOR_AUTO,     "Automatic",             "Automatisch") \
     X(TXT_PC_DETAILS,      "PC details",            "PC-Details") \
     X(TXT_PC_SYSTEM,       "SYSTEM",                "SYSTEM") \
     X(TXT_PC_HARDWARE,     "HARDWARE",              "HARDWARE") \

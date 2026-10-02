@@ -497,6 +497,44 @@ def _sane(value, limit):
     return round(value)
 
 
+# Names a person reads for the labels the drivers give their sensors. A
+# label not here is shown as the driver writes it.
+SENSOR_NAMES = {"edge": "Edge", "junction": "Junction (Hotspot)",
+                "mem": "VRAM", "tctl": "Tctl", "tdie": "Tdie"}
+
+
+def _sensor_name(sensor):
+    label = sensor["label"]
+    ccd = re.fullmatch(r"Tccd(\d+)", label)
+    if ccd:
+        return "CCD %s" % ccd.group(1)
+    if not label:
+        return os.path.basename(sensor["path"]).replace("_input", "")
+    return SENSOR_NAMES.get(label.lower(), label)[:23]
+
+
+def sensor_list(sensors):
+    """Each sensor of one kind, as the panel offers it to choose from.
+
+    The id is the chip and the label, and not the path: hwmon numbers its
+    chips in the order they come up, and that order is not the same after
+    each start. The panel stores the id it was given. The best answer comes
+    first, which is the one the panel shows when nobody chose.
+    """
+    out = []
+    for sensor in sorted(sensors, key=lambda one: (one["rank"],
+                                                    one["path"])):
+        name = (sensor["label"] or
+                os.path.basename(sensor["path"]).replace("_input", ""))
+        out.append({
+            "id": ("%s/%s" % (sensor["chip"], name))[:31],
+            "name": _sensor_name(sensor),
+            "c": _sane(temperature.read_celsius(sensor["path"]),
+                       SANE_CELSIUS),
+        })
+    return out
+
+
 def telemetry(root=temperature.HWMON_ROOT):
     """The two temperatures and the power of the card, or a None for each.
 
@@ -523,6 +561,13 @@ def telemetry(root=temperature.HWMON_ROOT):
         "gpu_c": _sane(temperature.read_celsius(gpu["path"]) if gpu else None,
                        SANE_CELSIUS),
         "gpu_w": _sane(watts, SANE_WATTS),
+        # Every sensor of the processor and of the card, for the choice on
+        # the panel. The two above stay the answer when nobody chose.
+        "cpu_sensors": sensor_list(
+            [one for one in sensors if one["chip"].lower() in CPU_CHIPS]),
+        "gpu_sensors": sensor_list(
+            [one for one in sensors
+             if os.path.dirname(one["path"]) == place]),
     }
 
 

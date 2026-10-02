@@ -55,6 +55,19 @@ typedef struct {
     bool charging;
 } panel_pad_t;
 
+/* One temperature sensor of the processor or the card, for the choice of
+ * the sensor of each tile. id is what the service names it by, and what
+ * the choice is a key of; name is what the menu shows. celsius is -1 for
+ * a sensor with no reading. */
+#define PANEL_SENSORS 6
+typedef struct {
+    char id[32], name[24];
+    int celsius;
+} panel_sensor_t;
+/* The key of a sensor, for its id: FNV-1a, and never nought, which is
+ * the choice of the service. */
+uint32_t panel_sensor_key(const char *id);
+
 /* The PC, as the page behind the head on the left shows it: the system,
  * the hardware and the network, in that order. A text the service did not
  * send is empty, a number it did not send is -1, and the screen writes
@@ -103,6 +116,8 @@ typedef struct {
     panel_pad_t pads[PANEL_PADS];
     int pad_count;
     panel_pc_t pc;
+    panel_sensor_t cpu_sensors[PANEL_SENSORS], gpu_sensors[PANEL_SENSORS];
+    int cpu_sensor_count, gpu_sensor_count;
     char setup_ssid[32], setup_password[32];
     /* The second page. game_mode says which session runs, playing holds
      * the name of the game or nothing at all, and the drives are however
@@ -130,13 +145,20 @@ typedef struct {
 
 typedef void (*panel_action_cb_t)(panel_action_t action);
 typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
-               PANEL_LANGUAGE, PANEL_SLEEP_AFTER } panel_setting_t;
+               PANEL_LANGUAGE, PANEL_SLEEP_AFTER,
+               PANEL_CPU_SENSOR, PANEL_GPU_SENSOR } panel_setting_t;
 /* sleep_after counts minutes, and nought means the display stays on. The
  * stored value is the count and not a place in the list of choices, so a
  * later firmware that offers other choices still reads what somebody
- * picked with this one. */
+ * picked with this one.
+ *
+ * cpu_sensor and gpu_sensor are the sensor somebody chose for each tile,
+ * as panel_sensor_key of its id, and nought for the choice of the
+ * service. A key and not a place in the list: the list is in the order
+ * of the service, and that order is not a promise. */
 typedef struct { int brightness, sound_volume; bool touch_tones;
-                 panel_language_t language; int sleep_after; }
+                 panel_language_t language; int sleep_after;
+                 uint32_t cpu_sensor, gpu_sensor; }
     panel_settings_t;
 typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);

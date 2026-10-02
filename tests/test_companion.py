@@ -252,6 +252,40 @@ class NumberedTest(unittest.TestCase):
 class TelemetryTest(unittest.TestCase):
     machine = machine
 
+    def test_every_sensor_of_the_processor_and_the_card_to_choose(self):
+        """The board: a Ryzen 7 7800X3D with Tctl and one CCD, and a card
+        with edge, junction and memory. The best answer comes first, and
+        an NVMe drive is neither."""
+        root = self.machine([
+            ("k10temp", {"temp1_input": 49500, "temp1_label": "Tctl",
+                         "temp3_input": 47000, "temp3_label": "Tccd1"}),
+            ("nvme", {"temp1_input": 38000, "temp1_label": "Composite"}),
+            ("amdgpu", {"temp1_input": 52000, "temp1_label": "edge",
+                        "temp2_input": 68000, "temp2_label": "junction",
+                        "temp3_input": 60000, "temp3_label": "mem",
+                        "device/mem_info_vram_total": 16384}),
+        ])
+        said = companion.telemetry(root)
+        self.assertEqual(said["cpu_sensors"], [
+            {"id": "k10temp/Tctl", "name": "Tctl", "c": 50},
+            {"id": "k10temp/Tccd1", "name": "CCD 1", "c": 47}])
+        self.assertEqual([(one["id"], one["name"]) for one in
+                          said["gpu_sensors"]],
+                         [("amdgpu/edge", "Edge"),
+                          ("amdgpu/junction", "Junction (Hotspot)"),
+                          ("amdgpu/mem", "VRAM")])
+        self.assertEqual(said["cpu_c"], said["cpu_sensors"][0]["c"])
+
+    def test_a_sensor_with_no_label_is_named_by_its_file(self):
+        root = self.machine([("k10temp", {"temp1_input": 49500})])
+        self.assertEqual(companion.telemetry(root)["cpu_sensors"],
+                         [{"id": "k10temp/temp1", "name": "temp1", "c": 50}])
+
+    def test_a_broken_sensor_is_offered_with_no_reading(self):
+        root = self.machine([("k10temp", {"temp1_input": 4000000,
+                                          "temp1_label": "Tctl"})])
+        self.assertIsNone(companion.telemetry(root)["cpu_sensors"][0]["c"])
+
     def test_the_units_and_the_card_with_the_most_memory(self):
         """A Ryzen with a graphics part and a card gives two amdgpu chips."""
         root = self.machine([
@@ -261,8 +295,13 @@ class TelemetryTest(unittest.TestCase):
             ("amdgpu", {"temp1_input": 56000, "power1_average": 78000000,
                         "device/mem_info_vram_total": 16384}),
         ])
-        self.assertEqual(companion.telemetry(root),
+        said = companion.telemetry(root)
+        self.assertEqual({key: said[key] for key in ("cpu_c", "gpu_c",
+                                                     "gpu_w")},
                          {"cpu_c": 50, "gpu_c": 56, "gpu_w": 78})
+        # The choice of the card is the card of the answer: its sensors
+        # alone, and not the graphics part of the Ryzen.
+        self.assertEqual([one["c"] for one in said["gpu_sensors"]], [56])
 
     def test_power1_input_answers_where_there_is_no_average(self):
         root = self.machine([
@@ -273,7 +312,8 @@ class TelemetryTest(unittest.TestCase):
 
     def test_a_machine_with_no_sensors_reports_a_dash_for_each(self):
         self.assertEqual(companion.telemetry("/does/not/exist"),
-                         {"cpu_c": None, "gpu_c": None, "gpu_w": None})
+                         {"cpu_c": None, "gpu_c": None, "gpu_w": None,
+                          "cpu_sensors": [], "gpu_sensors": []})
 
     def test_a_reading_outside_the_possible_is_no_reading(self):
         root = self.machine([("k10temp", {"temp1_input": 4000000})])

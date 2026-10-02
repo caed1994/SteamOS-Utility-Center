@@ -15,7 +15,10 @@
 static unsigned actions;
 static panel_action_t last_action;
 static void action(panel_action_t a){actions++;last_action=a;}
-static void setting(panel_setting_t k,int v,bool save){(void)k;(void)v;(void)save;}
+// The last setting the screen saved, for the choice of a sensor.
+static panel_setting_t saved_key;
+static int saved_value,saved_count;
+static void setting(panel_setting_t k,int v,bool save){if(save){saved_key=k;saved_value=v;saved_count++;}}
 static void sound(int volume){(void)volume;}
 // A label somebody can see. The hidden ones are still in the tree, and a
 // search that walks into them answers "there it is" about a card that is
@@ -911,6 +914,120 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
+    // The tiles of the temperatures: one for the processor, and one for the
+    // card with its power beside, a short line between. A tap on either
+    // opens the choice of its sensor.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_state_t t=base();
+        t.cpu_temp=49;t.gpu_temp=56;t.gpu_watts=78;
+        static const panel_sensor_t cpus[]={{"k10temp/Tctl","Tctl",49},{"k10temp/Tccd1","CCD 1",47}};
+        static const panel_sensor_t gpus[]={{"amdgpu/edge","Edge",56},
+            {"amdgpu/junction","Junction (Hotspot)",68},{"amdgpu/mem","VRAM",60}};
+        memcpy(t.cpu_sensors,cpus,sizeof cpus);t.cpu_sensor_count=2;
+        memcpy(t.gpu_sensors,gpus,sizeof gpus);t.gpu_sensor_count=3;
+        panel_ui_update(&t);
+        lv_obj_t *screen_now=lv_screen_active();
+        lv_obj_t *cpu_tile=lv_obj_get_parent(label(screen_now,"49 °C"));
+        lv_obj_t *gpu_tile=lv_obj_get_parent(label(screen_now,"56 °C"));
+        assert(cpu_tile!=gpu_tile&&lv_obj_get_parent(label(screen_now,"78 W"))==gpu_tile);
+        lv_obj_update_layout(screen_now);
+        assert(lv_obj_get_y(cpu_tile)==lv_obj_get_y(gpu_tile));
+        assert(lv_obj_get_x(cpu_tile)+lv_obj_get_width(cpu_tile)<lv_obj_get_x(gpu_tile));
+        // The line between the temperature and the power of the card.
+        lv_point_t reading;
+        lv_text_get_size(&reading,"56 °C",&panel_font_18,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+        int32_t temperature_end=lv_obj_get_x(label(screen_now,"56 °C"))+reading.x;
+        int32_t power_start=lv_obj_get_x(label(screen_now,"78 W"));
+        bool between=false;
+        for(unsigned i=0;i<lv_obj_get_child_count(gpu_tile);i++){
+            lv_obj_t *o=lv_obj_get_child(gpu_tile,i);
+            if(lv_obj_get_width(o)==1&&lv_obj_get_height(o)==30
+               &&lv_obj_get_x(o)>temperature_end&&lv_obj_get_x(o)<power_start)between=true;
+        }
+        assert(between);
+        // The processor: the choice of the service and both sensors, with
+        // a mark on the choice of the service.
+        lv_obj_send_event(cpu_tile,LV_EVENT_CLICKED,NULL);
+        assert(label(screen_now,panel_text(TXT_CPU_TEMPERATURE)));
+        assert(strcmp(panel_ui_where(),"a choice of sensor")==0);
+        assert(label(screen_now,LV_SYMBOL_OK "  Automatic"));
+        assert(label(screen_now,"Tctl")&&label(screen_now,"CCD 1")&&label(screen_now,"47 °C"));
+        // The other choices do not open over it, and neither does a second
+        // menu.
+        lv_obj_send_event(cpu_tile,LV_EVENT_CLICKED,NULL);
+        panel_ui_pads_open();
+        assert(strcmp(panel_ui_where(),"a choice of sensor")==0);
+        // A new answer while the menu is open brings the sensors in another
+        // order; a row still chooses the sensor it names.
+        panel_state_t moved=t;
+        panel_sensor_t other_way[]={{"k10temp/Tccd1","CCD 1",47},{"k10temp/Tctl","Tctl",49}};
+        memcpy(moved.cpu_sensors,other_way,sizeof other_way);
+        panel_ui_update(&moved);
+        saved_count=0;
+        click("CCD 1");
+        assert(!label(screen_now,panel_text(TXT_CPU_TEMPERATURE)));
+        assert(saved_count==1&&saved_key==PANEL_CPU_SENSOR);
+        assert((uint32_t)saved_value==panel_sensor_key("k10temp/Tccd1"));
+        assert(label(screen_now,"47 °C")&&!label(screen_now,"49 °C"));
+        // The choice follows its sensor through new answers, in another
+        // order too.
+        t.cpu_temp=50;
+        panel_sensor_t turned[]={{"k10temp/Tccd1","CCD 1",48},{"k10temp/Tctl","Tctl",50}};
+        memcpy(t.cpu_sensors,turned,sizeof turned);
+        panel_ui_update(&t);
+        assert(label(screen_now,"48 °C"));
+        // A new screen with the stored key shows the same sensor, and the
+        // menu marks it.
+        panel_settings_t stored=english;stored.cpu_sensor=panel_sensor_key("k10temp/Tccd1");
+        panel_ui_create(action,setting,sound,&stored);
+        panel_ui_update(&t);
+        screen_now=lv_screen_active();
+        assert(label(screen_now,"48 °C"));
+        lv_obj_send_event(lv_obj_get_parent(label(screen_now,"48 °C")),LV_EVENT_CLICKED,NULL);
+        assert(label(screen_now,LV_SYMBOL_OK "  CCD 1")&&label(screen_now,"Automatic"));
+        // Back to the choice of the service.
+        click("Automatic");
+        assert(saved_key==PANEL_CPU_SENSOR&&saved_value==0);
+        assert(label(screen_now,"50 °C"));
+        // A key that no sensor has any more is the choice of the service.
+        stored.cpu_sensor=panel_sensor_key("k10temp/Tdie");
+        panel_ui_create(action,setting,sound,&stored);
+        panel_ui_update(&t);
+        assert(label(lv_screen_active(),"50 °C"));
+        // The card, and a tap beside the box closes the menu.
+        screen_now=lv_screen_active();
+        lv_obj_send_event(lv_obj_get_parent(label(screen_now,"78 W")),LV_EVENT_CLICKED,NULL);
+        assert(label(screen_now,panel_text(TXT_GPU_TEMPERATURE)));
+        assert(label(screen_now,"Junction (Hotspot)")&&label(screen_now,"68 °C"));
+        lv_refr_now(screen);
+        assert(complaints==0);
+        lv_obj_send_event(lv_obj_get_child(screen_now,-1),LV_EVENT_CLICKED,NULL);
+        assert(!label(screen_now,panel_text(TXT_GPU_TEMPERATURE)));
+        // A PC that does not answer: the rows have no reading.
+        t.online=false;
+        panel_ui_update(&t);
+        lv_obj_send_event(lv_obj_get_parent(label(screen_now,"-- W")),LV_EVENT_CLICKED,NULL);
+        assert(label(screen_now,panel_text(TXT_GPU_TEMPERATURE))&&!label(screen_now,"68 °C"));
+        // A new screen for a new language drops the menu, and the setup
+        // takes it away.
+        panel_ui_create(action,setting,sound,&english);
+        assert(!label(lv_screen_active(),panel_text(TXT_GPU_TEMPERATURE)));
+        t.online=true;
+        panel_ui_update(&t);
+        screen_now=lv_screen_active();
+        lv_obj_send_event(lv_obj_get_parent(label(screen_now,"78 W")),LV_EVENT_CLICKED,NULL);
+        assert(label(screen_now,panel_text(TXT_GPU_TEMPERATURE)));
+        t.setup=true;
+        panel_ui_update(&t);
+        assert(!label(screen_now,panel_text(TXT_GPU_TEMPERATURE)));
+        t.setup=false;
+        panel_ui_create(action,setting,sound,&english);
+        lv_refr_now(screen);
+        assert(complaints==0);
+    }
+
     puts("OK: four pages that snap, the session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
          "them drawn with nothing for LVGL to complain about, the battery of "
@@ -918,6 +1035,7 @@ int main(void)
          "achievements of the game under its name, room under both "
          "display sliders, the clock with a timer that rings, and two "
          "controllers in the head with a page of four behind it, and the "
-         "page of the PC that scrolls.");
+         "page of the PC that scrolls, and a choice of sensor for each tile "
+         "of the temperatures.");
     return 0;
 }

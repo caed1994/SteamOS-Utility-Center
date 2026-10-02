@@ -77,6 +77,12 @@ static lv_obj_t *settings_screen, *sound_value, *sound_status;
 #define PAD_NAME_WIDTH 250
 #define PAD_BAR_WIDTH 368
 static lv_obj_t *pad_area,*pad_icons[PAD_HEAD],*pad_values[PAD_HEAD];
+/* The menu that chooses the sensor of a tile, and which tile it is for. */
+static lv_obj_t *sensor_layer;
+static bool sensor_gpu;
+/* The key of each row of the open menu, kept when it opens: a new state
+ * while it is open can bring the list in another order. */
+static uint32_t sensor_keys[PANEL_SENSORS+1];
 /* The left of the head, the PC and its connection, which opens the page of
  * the PC. */
 static lv_obj_t *pc_area;
@@ -100,6 +106,12 @@ static lv_obj_t *pc_memory_track,*pc_memory_bar;
  * the end of a card and between two. A row is one line at 14 px, its name
  * on the left and its value on the right: "Radeon RX 9070/9070 XT/9070
  * GRE" fits the value at that size, and a longer one ends in dots. */
+/* The menu of the sensors: the title, a row of 44 for each choice 50
+ * apart, and the end of the box. Seven rows at the most, the choice of the
+ * service and six sensors, fit the screen. */
+#define SENSOR_TITLE_ROOM 62
+#define SENSOR_ROW_STEP 50
+#define SENSOR_BOX_END 14
 #define PC_CARD_TOP 78
 #define PC_TITLE_ROOM 40
 #define PC_ROW_STEP 30
@@ -688,10 +700,93 @@ void panel_ui_pc_open(void)
     if(last_state_valid)pc_show(&last_state);
 }
 static void pc_clicked(lv_event_t *e){(void)e;feedback();panel_ui_pc_open();}
+uint32_t panel_sensor_key(const char *id)
+{
+    uint32_t key=2166136261u;
+    for(const unsigned char *at=(const unsigned char *)id;*at;at++){key^=*at;key*=16777619u;}
+    return key?key:1u;
+}
+/* The reading a tile shows: the one of the sensor somebody chose, while
+ * the service still lists it, and otherwise the one the service chose. A
+ * stored key no sensor has any more is the choice of the service, which
+ * is what an update of the PC that renames a sensor comes to. */
+static int sensor_shown(const panel_sensor_t *list,int count,uint32_t chosen,int otherwise)
+{
+    if(chosen)for(int i=0;i<count&&i<PANEL_SENSORS;i++)
+        if(panel_sensor_key(list[i].id)==chosen)return list[i].celsius;
+    return otherwise;
+}
+static void temperatures_show(const panel_state_t *s)
+{
+    int cpu=sensor_shown(s->cpu_sensors,s->cpu_sensor_count,local.cpu_sensor,s->cpu_temp);
+    int gpu=sensor_shown(s->gpu_sensors,s->gpu_sensor_count,local.gpu_sensor,s->gpu_temp);
+    if(s->online&&cpu>=0)lv_label_set_text_fmt(cpu_value,"%d °C",cpu);else lv_label_set_text(cpu_value,"-- °C");
+    if(s->online&&gpu>=0)lv_label_set_text_fmt(gpu_value,"%d °C",gpu);else lv_label_set_text(gpu_value,"-- °C");
+}
+static void sensor_close(void){if(sensor_layer){lv_obj_delete(sensor_layer);sensor_layer=NULL;}}
+static void sensor_outside(lv_event_t *e){(void)e;sensor_close();}
+/* A row of the menu, by its place: row nought is the choice of the
+ * service. */
+static void sensor_chosen(lv_event_t *e)
+{
+    int row=(int)(intptr_t)lv_event_get_user_data(e);
+    uint32_t key=row>=0&&row<=PANEL_SENSORS?sensor_keys[row]:0;
+    if(sensor_gpu)local.gpu_sensor=key;else local.cpu_sensor=key;
+    if(save_setting)save_setting(sensor_gpu?PANEL_GPU_SENSOR:PANEL_CPU_SENSOR,(int)key,true);
+    feedback();
+    sensor_close();
+    if(last_state_valid)temperatures_show(&last_state);
+}
+static void sensor_row(lv_obj_t *box,int row,int y,const char *name,int celsius,bool chosen)
+{
+    lv_obj_t *b=button(box,"",20,y,400,44,sensor_chosen,row);
+    uint32_t color=chosen?BLUE:TEXT;
+    char said[48];
+    snprintf(said,sizeof said,"%s%s",chosen?LV_SYMBOL_OK "  ":"",name);
+    lv_obj_t *left=text_at(b,said,14,12,250,&panel_font_16,color);
+    lv_obj_set_height(left,lv_font_get_line_height(&panel_font_16));
+    if(celsius>=0)snprintf(said,sizeof said,"%d °C",celsius);else snprintf(said,sizeof said,"-- °C");
+    lv_obj_t *right=text_at(b,said,270,12,116,&panel_font_16,color);
+    lv_obj_set_style_text_align(right,LV_TEXT_ALIGN_RIGHT,0);
+}
+/* The choice of the sensor of a tile: the choice of the service first,
+ * with what it reads now, then each sensor with its reading. A tap on a
+ * row chooses and closes, and a tap beside the box closes. Over the whole
+ * screen, as a question is. */
+static void sensor_menu(bool gpu)
+{
+    if(sensor_layer||overlay||settings_screen||pads_screen||pc_screen||setup_screen)return;
+    const panel_state_t *s=&last_state;
+    int count=!last_state_valid?0:gpu?s->gpu_sensor_count:s->cpu_sensor_count;
+    if(count<0)count=0;
+    if(count>PANEL_SENSORS)count=PANEL_SENSORS;
+    const panel_sensor_t *list=gpu?s->gpu_sensors:s->cpu_sensors;
+    uint32_t chosen=gpu?local.gpu_sensor:local.cpu_sensor;
+    bool known=false;
+    for(int i=0;i<count;i++)if(panel_sensor_key(list[i].id)==chosen)known=true;
+    sensor_gpu=gpu;
+    sensor_layer=panel(lv_screen_active(),0,0,480,480,BG,false);
+    lv_obj_set_style_bg_opa(sensor_layer,LV_OPA_90,0);
+    lv_obj_add_event_cb(sensor_layer,sensor_outside,LV_EVENT_CLICKED,NULL);
+    int high=SENSOR_TITLE_ROOM+(count+1)*SENSOR_ROW_STEP+SENSOR_BOX_END;
+    lv_obj_t *box=panel(sensor_layer,20,(480-high)/2,440,high,CARD,true);
+    lv_obj_remove_flag(box,LV_OBJ_FLAG_CLICKABLE);
+    text_at(box,panel_text(gpu?TXT_GPU_TEMPERATURE:TXT_CPU_TEMPERATURE),20,18,400,&panel_font_20,TEXT);
+    int automatic=!last_state_valid||!s->online?-1:gpu?s->gpu_temp:s->cpu_temp;
+    sensor_keys[0]=0;
+    sensor_row(box,0,SENSOR_TITLE_ROOM,panel_text(TXT_SENSOR_AUTO),automatic,!known);
+    for(int i=0;i<count;i++)sensor_keys[i+1]=panel_sensor_key(list[i].id);
+    for(int i=0;i<count;i++)
+        sensor_row(box,i+1,SENSOR_TITLE_ROOM+(i+1)*SENSOR_ROW_STEP,list[i].name,
+                   s->online?list[i].celsius:-1,known&&panel_sensor_key(list[i].id)==chosen);
+}
+static void cpu_tile_clicked(lv_event_t *e){(void)e;feedback();sensor_menu(false);}
+static void gpu_tile_clicked(lv_event_t *e){(void)e;feedback();sensor_menu(true);}
 const char *panel_ui_where(void)
 {
     if(setup_screen)return "the setup";
     if(overlay)return "a question";
+    if(sensor_layer)return "a choice of sensor";
     if(settings_screen)return "the settings";
     if(pads_screen)return "the controllers";
     if(pc_screen)return "the PC";
@@ -851,7 +946,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     // Everything on the screen goes, because this runs a second time when
     // the language changes. Without it the new words are drawn over the old
     // ones. The pointers below are the ones that outlive a clean.
-    lv_obj_clean(s);overlay=NULL;setup_screen=NULL;setup_text=NULL;
+    lv_obj_clean(s);overlay=NULL;setup_screen=NULL;setup_text=NULL;sensor_layer=NULL;
     /* The settings page is a child of this screen too, so the clean
      * above took it. Kept, its pointer is the reason that
      * panel_ui_settings_open returns at once and the page never opens
@@ -1049,10 +1144,24 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     timer_show();
     /* A new screen for a new language, while the timer rings. */
     if(timer.phase==PANEL_TIMER_RINGING)alarm_show();
-    lv_obj_t *foot=panel(s,10,386,460,48,CARD,true);
-    icon(foot,&icon_cpu,12,12,MUTED);text_at(foot,"CPU",45,6,99,&panel_font_12,MUTED);cpu_value=text_at(foot,"-- C",45,22,99,&panel_font_18,BLUE);
-    line(foot,151,9,1,30);icon(foot,&icon_circuit_board,165,12,MUTED);text_at(foot,"GPU",198,6,99,&panel_font_12,MUTED);gpu_value=text_at(foot,"-- C",198,22,99,&panel_font_18,BLUE);
-    line(foot,304,9,1,30);icon(foot,&icon_zap,318,12,MUTED);text_at(foot,"GPU-WATT",350,6,98,&panel_font_12,MUTED);power_value=text_at(foot,"-- W",350,22,98,&panel_font_18,BLUE);
+    /* The temperatures and the power of the card: a tile for the
+     * processor, and one for the card that holds its temperature and its
+     * power, with a short line between the two. A tap on a tile opens the
+     * choice of its temperature sensor. */
+    lv_obj_t *cpu_tile=panel(s,10,386,150,48,CARD,true);
+    lv_obj_t *foot=panel(s,170,386,300,48,CARD,true);
+    lv_obj_t *tiles[2]={cpu_tile,foot};
+    for(int i=0;i<2;i++){
+        lv_obj_set_style_bg_color(tiles[i],lv_color_hex(0x1B2B3C),LV_STATE_PRESSED);
+        lv_obj_add_event_cb(tiles[i],i==0?cpu_tile_clicked:gpu_tile_clicked,LV_EVENT_CLICKED,NULL);
+    }
+    lv_obj_remove_flag(icon(cpu_tile,&icon_cpu,12,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
+    text_at(cpu_tile,"CPU",45,6,99,&panel_font_12,MUTED);cpu_value=text_at(cpu_tile,"-- C",45,22,99,&panel_font_18,BLUE);
+    lv_obj_remove_flag(icon(foot,&icon_circuit_board,12,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
+    text_at(foot,"GPU",45,6,99,&panel_font_12,MUTED);gpu_value=text_at(foot,"-- C",45,22,99,&panel_font_18,BLUE);
+    line(foot,150,9,1,30);
+    lv_obj_remove_flag(icon(foot,&icon_zap,164,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
+    text_at(foot,"GPU-WATT",196,6,98,&panel_font_12,MUTED);power_value=text_at(foot,"-- W",196,22,98,&panel_font_18,BLUE);
     /* The bottom row: the settings on the left, what the panel has to
      * say in the middle, and the state of the panel itself on the right.
      *
@@ -1173,7 +1282,7 @@ void panel_ui_update(const panel_state_t *s)
     memcpy(&last_state,s,sizeof(*s));last_state_valid=true;
     if(sound_status)lv_label_set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
     if(s->setup){
-        settings_forget();pads_forget();pc_forget();
+        settings_forget();pads_forget();pc_forget();sensor_close();
         if(!setup_screen){
             if(overlay){lv_obj_delete(overlay);overlay=NULL;}
             setup_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
@@ -1206,8 +1315,7 @@ void panel_ui_update(const panel_state_t *s)
     }
     if(offer_wake){lv_obj_remove_flag(wake_button,LV_OBJ_FLAG_HIDDEN);lv_obj_remove_flag(wake_what,LV_OBJ_FLAG_HIDDEN);}
     else{lv_obj_add_flag(wake_button,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(wake_what,LV_OBJ_FLAG_HIDDEN);}
-    if(s->online&&s->cpu_temp>=0)lv_label_set_text_fmt(cpu_value,"%d °C",s->cpu_temp);else lv_label_set_text(cpu_value,"-- °C");
-    if(s->online&&s->gpu_temp>=0)lv_label_set_text_fmt(gpu_value,"%d °C",s->gpu_temp);else lv_label_set_text(gpu_value,"-- °C");
+    temperatures_show(s);
     if(s->online&&s->gpu_watts>=0)lv_label_set_text_fmt(power_value,"%d W",s->gpu_watts);else lv_label_set_text(power_value,"-- W");
     lv_label_set_text(message,s->message);
     if(s->message[0])lv_obj_remove_flag(message,LV_OBJ_FLAG_HIDDEN);
