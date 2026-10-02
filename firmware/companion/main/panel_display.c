@@ -12,7 +12,10 @@
 #include <stdint.h>
 #include <string.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "driver/ledc.h"
+#include "panel_boot.h"
+#include "panel_frames.h"
 
 static lv_display_t *panel_screen;
 static lv_indev_t *panel_input;
@@ -134,6 +137,33 @@ static void lvgl_log(lv_log_level_t level,const char *text)
 #define PANEL_LVGL_STACK (24 * 1024)
 
 size_t panel_display_stack_bytes(void){return PANEL_LVGL_STACK;}
+
+/* The frames for panel_frames.h, at the three moments it asks for.
+ *
+ * LV_EVENT_REFR_START opens a refresh. The flush of the last area of a
+ * frame hands that frame to the panel, and the port waits inside it for
+ * the end of the frame on the glass. So the start of that flush is the end
+ * of the work, and its end is the moment the frame is on the screen. The
+ * other areas of a frame only draw: in direct mode the port acts on the
+ * last one alone.
+ *
+ * The startup animation is no scroll, so its frames do not count. */
+static void frame_begun(lv_event_t *e)
+{
+    (void)e;
+    panel_frames_begin(&panel_frames,esp_timer_get_time());
+}
+static void frame_flush(lv_event_t *e)
+{
+    if(lv_display_flush_is_last(lv_event_get_target(e)))
+        panel_frames_drawn(&panel_frames,esp_timer_get_time());
+}
+static void frame_flushed(lv_event_t *e)
+{
+    if(!lv_display_flush_is_last(lv_event_get_target(e)))return;
+    if(panel_boot_playing())panel_frames_break(&panel_frames);
+    else panel_frames_shown(&panel_frames,esp_timer_get_time());
+}
 
 lv_display_t *panel_display_start(void)
 {
@@ -348,6 +378,11 @@ lv_display_t *panel_display_start(void)
     const lvgl_port_touch_cfg_t input={.disp=screen,.handle=touch};
     panel_input=lvgl_port_add_touch(&input);
     ESP_RETURN_ON_FALSE(panel_input,NULL,tag,"Touch allocation failed");
+    lvgl_port_lock(0);
+    lv_display_add_event_cb(screen,frame_begun,LV_EVENT_REFR_START,NULL);
+    lv_display_add_event_cb(screen,frame_flush,LV_EVENT_FLUSH_START,NULL);
+    lv_display_add_event_cb(screen,frame_flushed,LV_EVENT_FLUSH_FINISH,NULL);
+    lvgl_port_unlock();
     panel_screen=screen;
     ESP_LOGI(tag,"RGB: requested PCLK=12MHz, bounce=%d rows, %d frame buffers "
              "at %p and %p, direct mode, core=1",

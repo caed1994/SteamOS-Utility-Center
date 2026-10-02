@@ -192,7 +192,7 @@ class WhereTest(unittest.TestCase):
     def test_the_chip_is_found_before_the_task_that_reads_it_starts(self):
         code = read("main.c")
         self.assertLess(code.index("panel_battery_init();"),
-                        code.index("xTaskCreate(network_task"))
+                        code.index("xTaskCreatePinnedToCore(network_task"))
 
     def test_the_build_knows_the_file(self):
         with open(os.path.join(FIRMWARE, "CMakeLists.txt"),

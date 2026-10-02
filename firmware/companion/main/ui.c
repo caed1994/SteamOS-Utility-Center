@@ -119,7 +119,8 @@ enum { SELF_VERSION, SELF_UPTIME, SELF_MEMORY,
        SELF_WIFI, SELF_SIGNAL, SELF_IP, SELF_MAC, SELF_SERVER,
        SELF_CHARGE, SELF_SUPPLY, SELF_VBAT, SELF_PHASE, SELF_VBUS,
        SELF_VSYS, SELF_DIE, SELF_HELD,
-       SELF_CHARGE_MA, SELF_CHARGE_MV, SELF_INPUT_MA, SELF_ROWS };
+       SELF_CHARGE_MA, SELF_CHARGE_MV, SELF_INPUT_MA,
+       SELF_FPS, SELF_INTERVAL, SELF_DRAW, SELF_FRAMES, SELF_ROWS };
 /* The phases of the charge in a row, as the power chip counts them: see
  * panel_power_detail_t. */
 _Static_assert(TXT_PHASE_IDLE==TXT_PHASE_TRICKLE+5,"the six phases of the charge in a row");
@@ -1073,6 +1074,9 @@ static void self_drop(void)
 {
     self_screen=NULL;update_card=NULL;update_offered=NULL;update_note=NULL;update_button=NULL;
     for(int i=0;i<SELF_ROWS;i++)self_values[i]=NULL;
+    /* The page went, so the count of the frames starts again: the next
+     * visit shows the movement between the two. */
+    panel_frames_reset(&panel_frames);
 }
 static void self_forget(void)
 {
@@ -1137,9 +1141,28 @@ static void self_show(const panel_state_t *s)
     char said[64];
     say_version(said,sizeof said,self->version);self_say(SELF_VERSION,said);
     pc_uptime(said,sizeof said,(int32_t)self->uptime_s);self_say(SELF_UPTIME,said);
-    snprintf(said,sizeof said,"%u KB, PSRAM %u.%u MB",(unsigned)(self->heap_free/1024),
-             (unsigned)(self->psram_free/1048576),(unsigned)(self->psram_free%1048576*10/1048576));
+    unsigned psram_mb=(unsigned)(self->psram_free/1048576),
+             psram_tenth=(unsigned)(self->psram_free%1048576*10/1048576);
+    if(self->heap_least)
+        snprintf(said,sizeof said,"%u KB (min %u KB), PSRAM %u.%u MB",(unsigned)(self->heap_free/1024),
+                 (unsigned)(self->heap_least/1024),psram_mb,psram_tenth);
+    else
+        snprintf(said,sizeof said,"%u KB, PSRAM %u.%u MB",(unsigned)(self->heap_free/1024),
+                 psram_mb,psram_tenth);
     self_say(SELF_MEMORY,self->heap_free?said:"");
+    /* The frames in movement: the mean, the 95th percentile and the most,
+     * in that order, which the line under the card says. */
+    const panel_frame_stats_t *frames=&s->frames;
+    snprintf(said,sizeof said,"%d fps",frames->fps);
+    self_say(SELF_FPS,frames->frames?said:"");
+    snprintf(said,sizeof said,"%d / %d / %d ms",frames->interval_mean_ms,
+             frames->interval_p95_ms,frames->interval_most_ms);
+    self_say(SELF_INTERVAL,frames->frames?said:"");
+    snprintf(said,sizeof said,"%d / %d / %d ms",frames->draw_mean_ms,
+             frames->draw_p95_ms,frames->draw_most_ms);
+    self_say(SELF_DRAW,frames->frames?said:"");
+    snprintf(said,sizeof said,"%u",(unsigned)frames->frames);
+    self_say(SELF_FRAMES,frames->frames?said:"");
     self_say(SELF_WIFI,self->ssid);
     if(self->rssi<0){snprintf(said,sizeof said,"%d dBm",self->rssi);self_say(SELF_SIGNAL,said);}
     else self_say(SELF_SIGNAL,"");
@@ -1235,6 +1258,15 @@ void panel_ui_self_open(void)
     lv_obj_set_style_bg_color(update_button,lv_color_hex(BLUE),0);
     lv_obj_set_style_text_color(update_button,lv_color_hex(BG),0);
     lv_obj_add_flag(update_card,LV_OBJ_FLAG_HIDDEN);
+    /* The frames in movement, with a line under the rows that says what
+     * the three numbers are and since when they count. */
+    static const int motion[]={SELF_FPS,SELF_INTERVAL,SELF_DRAW,SELF_FRAMES};
+    static const panel_text_id_t motion_names[]={TXT_SELF_FPS,TXT_SELF_INTERVAL,TXT_SELF_DRAW,TXT_SELF_FRAMES};
+    lv_obj_t *motion_card=self_card(column,TXT_SELF_MOTION,motion,4,motion_names);
+    int32_t note_top=PC_TITLE_ROOM+4*PC_ROW_STEP;
+    lv_obj_t *note=text_at(motion_card,panel_text(TXT_SELF_MOTION_WHAT),18,note_top,404,&panel_font_12,MUTED);
+    lv_label_set_long_mode(note,LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(motion_card,note_top+2*lv_font_get_line_height(&panel_font_12)+PC_CARD_END+4);
     static const int network[]={SELF_WIFI,SELF_SIGNAL,SELF_IP,SELF_MAC,SELF_SERVER};
     static const panel_text_id_t network_names[]={TXT_WIRELESS,TXT_SELF_SIGNAL,TXT_PC_IP,TXT_PC_MAC,TXT_SELF_SERVER};
     self_card(column,TXT_PC_NETWORK,network,5,network_names);
@@ -1248,6 +1280,9 @@ void panel_ui_self_open(void)
     static const int charger[]={SELF_CHARGE_MA,SELF_CHARGE_MV,SELF_INPUT_MA};
     static const panel_text_id_t charger_names[]={TXT_SELF_CHARGE_MA,TXT_SELF_CHARGE_MV,TXT_SELF_INPUT_MA};
     self_card(column,TXT_SELF_CHARGER,charger,3,charger_names);
+    /* What the page shows stays as it was while it is open: its own frames,
+     * its scroll among them, are not the movement it reports. */
+    panel_frames_hold(&panel_frames,true);
     if(last_state_valid)self_show(&last_state);
 }
 static void self_clicked(lv_event_t *e){(void)e;feedback();panel_ui_self_open();}

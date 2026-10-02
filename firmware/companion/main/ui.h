@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "panel_frames.h"
 #include "panel_history.h"
 #include "panel_pages.h"
 #include "panel_text.h"
@@ -100,6 +101,9 @@ typedef struct {
     char version[32], ssid[33], ip[16], mac[18], server[64];
     int rssi;
     uint32_t uptime_s, heap_free, psram_free;
+    /* The least internal memory that was free since the start. Nought for
+     * none, and the page then shows what is free alone. */
+    uint32_t heap_least;
 } panel_self_t;
 
 /* An update of the firmware over the network. offered is the version of a
@@ -193,6 +197,9 @@ typedef struct {
      * the network has set the clock. */
     bool clock_set;
     int hour, minute, weekday, day, month;
+    /* The frames in movement, for the page of the panel. See
+     * panel_frames.h. */
+    panel_frame_stats_t frames;
 } panel_state_t;
 
 typedef void (*panel_action_cb_t)(panel_action_t action);

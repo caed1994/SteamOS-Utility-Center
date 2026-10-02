@@ -563,7 +563,7 @@ class DrawingStackTest(unittest.TestCase):
         self.assertGreaterEqual(int(found.group(1)), 3584 + 2048)
         start = re.search(r"void app_main\(void\).*?\n\}", self.main(),
                           re.S).group(0)
-        tail = start[start.index("xTaskCreate(network_task"):]
+        tail = start[start.index("xTaskCreatePinnedToCore(network_task"):]
         self.assertIn("uxTaskGetStackHighWaterMark(NULL)", tail)
         self.assertIn("CONFIG_ESP_MAIN_TASK_STACK_SIZE", tail)
 

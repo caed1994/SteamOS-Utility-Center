@@ -20,9 +20,27 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_LV_USE_CLIB_MALLOC=y
 CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
-CONFIG_LV_DEF_REFR_PERIOD=33
+# The refresh and the touch every 15 ms, under the frame of the panel.
+#
+# The panel shows a frame every 22.5 ms (12 MHz, about 44 Hz), and the
+# flush waits for the end of that frame. With 33 ms here a refresh began
+# 33 ms after the one before it and then waited for the next frame, so a
+# scroll showed its frames 22.5 and 45 ms apart in turn: an uneven step
+# that a person sees. Under the frame of the panel, the next refresh
+# begins as soon as the last one is on the glass, and each frame takes one
+# frame of the panel, or two of them when the work does not fit in one.
+#
+# Nothing wakes for it while nothing changes: LVGL pauses its refresh
+# timer until something is invalid, and a sleeping panel pauses the touch.
+# The momentum of a swipe counts the time of the last 99 ms and not the
+# number of reads, so it stays the same. See lv_indev.c.
+CONFIG_LV_DEF_REFR_PERIOD=15
 CONFIG_LV_OS_FREERTOS=y
 CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
+# The thread that draws, "swdraw", at the top of what LVGL offers, which
+# is FreeRTOS priority 4. It stood at 3, under the network task at 4, so a
+# poll of the PC held a frame back. main.c holds the network task under it.
+CONFIG_LV_DRAW_THREAD_PRIO=4
 # GCC 15 rejects conflicting section attributes when LVGL fast memory uses IRAM.
 CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=n
 CONFIG_LV_FONT_MONTSERRAT_12=y
@@ -76,6 +94,11 @@ CONFIG_LV_USE_LOG=y
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
 CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+# The restart in VSYNC (CONFIG_LCD_RGB_RESTART_IN_VSYNC) stays off. ESP-IDF
+# 5.5 finds a frame that slipped with bounce buffers on its own and
+# restarts only then (lcd_rgb_panel_try_restart_transmission). The option
+# restarts at every frame, and its own note says that a late restart
+# shifts a frame.
 
 # Power management, so the CPU can drop to 80 MHz while the display sleeps.
 # The speed of the clock only: tickless idle and light sleep stay off. The
@@ -96,6 +119,9 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
 
 # Two time servers for the clock page, and the first one from DHCP: the
 # router names one when it has one. See main/panel_time.c.
+# lwIP on core 0 with the radio. It ran on either core, and at priority
+# 18 a burst of the network took core 1 from the drawing.
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 CONFIG_LWIP_SNTP_MAX_SERVERS=2
 CONFIG_LWIP_DHCP_GET_NTP_SRV=y
 

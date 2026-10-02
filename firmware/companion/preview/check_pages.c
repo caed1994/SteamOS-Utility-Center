@@ -1331,6 +1331,101 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
+    // The frames in movement, on the page of the panel: four rows and the
+    // line that says what they are, each whole. The count stands still
+    // while the page is open, and starts again when it closes.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_state_t p=base();
+        p.self=(panel_self_t){.version="61-1eec536",.heap_free=142*1024,
+                              .psram_free=6400*1024,.heap_least=98*1024};
+        p.frames=(panel_frame_stats_t){.frames=412,.fps=41,.interval_mean_ms=24,
+            .interval_p95_ms=45,.interval_most_ms=67,.draw_mean_ms=14,.draw_p95_ms=19,
+            .draw_most_ms=31};
+        panel_ui_update(&p);
+        panel_ui_self_open();
+        lv_obj_t *screen_now=lv_screen_active();
+        lv_obj_update_layout(screen_now);
+        lv_refr_now(screen);
+        static const char *const shown[]={"41 fps","24 / 45 / 67 ms","14 / 19 / 31 ms","412",
+            "142 KB (min 98 KB), PSRAM 6.2 MB"};
+        for(unsigned i=0;i<sizeof shown/sizeof *shown;i++){
+            lv_obj_t *value=label(screen_now,shown[i]);
+            assert(value&&name_fits(value));
+        }
+        lv_obj_t *card=lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_MOTION)));
+        assert(lv_obj_get_parent(label(screen_now,"41 fps"))==card);
+        assert(lv_obj_get_parent(label(screen_now,"412"))==card);
+        static const panel_text_id_t names[]={TXT_SELF_FPS,TXT_SELF_INTERVAL,TXT_SELF_DRAW,TXT_SELF_FRAMES};
+        for(unsigned i=0;i<sizeof names/sizeof *names;i++)
+            assert(name_fits(label(card,panel_text(names[i]))));
+        // Under the firmware and above the network, on the first screen
+        // of the page with no update offered: no scroll to read it.
+        int32_t firmware_at=lv_obj_get_y(lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_FIRMWARE))));
+        int32_t network_at=lv_obj_get_y(lv_obj_get_parent(label(screen_now,panel_text(TXT_PC_NETWORK))));
+        assert(firmware_at<lv_obj_get_y(card)&&lv_obj_get_y(card)<network_at);
+        lv_area_t card_area;
+        lv_obj_get_coords(card,&card_area);
+        assert(card_area.y2<480);
+        // The line under the rows fits two lines and the card holds it.
+        lv_obj_t *note=label(card,panel_text(TXT_SELF_MOTION_WHAT));
+        assert(note);
+        int32_t line_high=lv_font_get_line_height(&panel_font_12);
+        assert(lv_obj_get_height(note)<=2*line_high);
+        assert(lv_obj_get_y(note)+lv_obj_get_height(note)<=lv_obj_get_height(card));
+        // No frame counted yet: dashes, and the memory without its least.
+        p.frames=(panel_frame_stats_t){0};
+        p.self.heap_least=0;
+        panel_ui_update(&p);
+        assert(!label(screen_now,"41 fps")&&!label(screen_now,"412"));
+        unsigned dashes=0;
+        for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+            lv_obj_t *c=lv_obj_get_child(card,i);
+            if(lv_obj_check_type(c,&lv_label_class)&&strcmp(lv_label_get_text(c),"--")==0)dashes++;
+        }
+        assert(dashes==4);
+        assert(label(screen_now,"142 KB, PSRAM 6.2 MB"));
+        // The page holds the count: frames while it is open do not count.
+        assert(panel_frames.held);
+        panel_frames_begin(&panel_frames,1000000);panel_frames_drawn(&panel_frames,1010000);
+        panel_frames_shown(&panel_frames,1020000);
+        panel_frames_begin(&panel_frames,1020000);panel_frames_drawn(&panel_frames,1030000);
+        panel_frames_shown(&panel_frames,1040000);
+        assert(panel_frames.counted==0);
+        // Back, and the count starts again and counts.
+        click_in(screen_now,panel_text(TXT_BACK));
+        assert(strcmp(panel_ui_where(),"the panel")!=0);
+        assert(!panel_frames.held&&panel_frames.counted==0);
+        panel_frames_begin(&panel_frames,2000000);panel_frames_drawn(&panel_frames,2010000);
+        panel_frames_shown(&panel_frames,2020000);
+        panel_frames_begin(&panel_frames,2020000);panel_frames_drawn(&panel_frames,2030000);
+        panel_frames_shown(&panel_frames,2042000);
+        assert(panel_frames.counted==1);
+        // In German, the same: each row whole and the line in two.
+        panel_settings_t german=english;german.language=PANEL_GERMAN;
+        panel_ui_create(action,setting,sound,&german);
+        p.frames=(panel_frame_stats_t){.frames=412,.fps=41,.interval_mean_ms=24,
+            .interval_p95_ms=45,.interval_most_ms=67,.draw_mean_ms=14,.draw_p95_ms=19,
+            .draw_most_ms=31};
+        p.self.heap_least=98*1024;
+        panel_ui_update(&p);
+        panel_ui_self_open();
+        screen_now=lv_screen_active();
+        lv_obj_update_layout(screen_now);
+        lv_refr_now(screen);
+        card=lv_obj_get_parent(label(screen_now,"ANZEIGE IN BEWEGUNG"));
+        assert(card);
+        static const char *const german_names[]={"Bildrate","Bildabstand","Zeichenzeit","Gezählte Bilder"};
+        for(unsigned i=0;i<sizeof german_names/sizeof *german_names;i++)
+            assert(name_fits(label(card,german_names[i])));
+        note=label(card,panel_text(TXT_SELF_MOTION_WHAT));
+        assert(note&&lv_obj_get_height(note)<=2*line_high);
+        assert(lv_obj_get_y(note)+lv_obj_get_height(note)<=lv_obj_get_height(card));
+        assert(complaints==0);
+        panel_ui_create(action,setting,sound,&english);
+    }
+
     // The power chip in detail, on the page of the panel: its voltages,
     // the temperature of the chip, the phase of the charge and what holds
     // it down, and the settings of the charger in a card of their own.
@@ -1563,8 +1658,8 @@ int main(void)
          "display sliders, the clock with a timer that rings, and two "
          "controllers in the head with a page of four behind it, and the "
          "page of the PC that scrolls, and a choice of sensor for each tile "
-         "of the temperatures, and the page of the panel with its update "
-         "and its power chip in detail, and the page of the card with its "
-         "history.");
+         "of the temperatures, and the page of the panel with its update, "
+         "its power chip in detail and its frames in movement, and the page "
+         "of the card with its history.");
     return 0;
 }

@@ -395,8 +395,13 @@ static void ui_tick(lv_timer_t *timer)
      * step of it, and not at every tick. */
     bool due=history&&panel_history_due(history,now_ms);
     if(atomic_load(&display_asleep)&&!due)return;
+    /* The frames in movement, counted in this task by the events of the
+     * display. Into the state as well, for the health line of the network
+     * task. See panel_frames.h. */
+    panel_frame_stats_t frames;
+    panel_frames_stats(&panel_frames,&frames);
     panel_state_t copy;
-    xSemaphoreTake(lock,portMAX_DELAY); copy=state; xSemaphoreGive(lock);
+    xSemaphoreTake(lock,portMAX_DELAY); state.frames=frames; copy=state; xSemaphoreGive(lock);
     if(due)panel_ui_history_tick(&copy,now_ms);
     if(atomic_load(&display_asleep))return;
     /* The time of day, read here and not kept in state: it is the clock of
@@ -1064,9 +1069,17 @@ static void self_read(void)
     if(connected()&&esp_wifi_sta_get_ap_info(&ap)==ESP_OK)self.rssi=ap.rssi;
     self.uptime_s=(uint32_t)(esp_timer_get_time()/1000000);
     self.heap_free=(uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    self.heap_least=(uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
     self.psram_free=(uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     xSemaphoreTake(lock,portMAX_DELAY);state.self=self;xSemaphoreGive(lock);
 }
+
+/* The priority of the network task: under the thread that draws, which
+ * LVGL starts at tskIDLE_PRIORITY plus CONFIG_LV_DRAW_THREAD_PRIO (see
+ * lv_thread_init in lv_freertos.c). The build stops if the two meet. */
+#define PANEL_NETWORK_PRIORITY 3
+_Static_assert(PANEL_NETWORK_PRIORITY<tskIDLE_PRIORITY+CONFIG_LV_DRAW_THREAD_PRIO,
+               "the network task stands above the thread that draws");
 
 static void network_task(void *arg)
 {
@@ -1144,11 +1157,15 @@ static void network_task(void *arg)
             panel_clock_average(&clock_mhz,&clock_low);
             xSemaphoreTake(lock,portMAX_DELAY);
             bool wifi=state.wifi,online=state.online;
+            panel_frame_stats_t frames=state.frames;
             xSemaphoreGive(lock);
-            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d radio_rest=%d cpu_avg=%uMHz low=%u%% key_slowest=%ums",
+            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u internal_min=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d radio_rest=%d cpu_avg=%uMHz low=%u%% key_slowest=%ums frames=%u fps=%d gap=%d/%d/%dms draw=%d/%d/%dms",
                 now_ms/1000,now_ms-atomic_load(&ui_heartbeat_ms),
                 (unsigned)esp_get_free_heap_size(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+                /* The least internal memory since the start, which says
+                 * what room a change that takes some of it has. */
+                (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
                 (unsigned)esp_get_minimum_free_heap_size(),
                 (unsigned)uxTaskGetStackHighWaterMark(NULL),
@@ -1165,7 +1182,12 @@ static void network_task(void *arg)
                  * The shortest press the panel can see is about twice
                  * this, so a number far above PWRKEY_PERIOD_MS is why a
                  * press did nothing. See panel_power.c. */
-                (unsigned)panel_power_slowest_read_ms());
+                (unsigned)panel_power_slowest_read_ms(),
+                /* The frames in movement since the page of the panel was
+                 * last closed: mean, 95th percentile and most. */
+                (unsigned)frames.frames,frames.fps,
+                frames.interval_mean_ms,frames.interval_p95_ms,frames.interval_most_ms,
+                frames.draw_mean_ms,frames.draw_p95_ms,frames.draw_most_ms);
         }
         panel_action_t action;
         if (xQueueReceive(actions,&action,pdMS_TO_TICKS(100))==pdTRUE) {
@@ -1462,7 +1484,13 @@ void app_main(void)
      * not answer. The network task writes a line of its own when the
      * answer of the PC changes, with the reason. See network_task. */
     esp_log_level_set("HTTP_CLIENT",ESP_LOG_NONE);
-    BaseType_t created=xTaskCreate(network_task,"panel_network",12288,NULL,4,NULL);
+    /* On core 0 with the radio, and under the drawing. LVGL draws in a
+     * thread of its own, "swdraw", at CONFIG_LV_DRAW_THREAD_PRIO, and that
+     * thread takes either core. A poll of the PC parses its answer for
+     * some milliseconds, and at the priority of the drawing or above it,
+     * that parse held a frame back while somebody scrolled. */
+    BaseType_t created=xTaskCreatePinnedToCore(network_task,"panel_network",12288,NULL,
+                                               PANEL_NETWORK_PRIORITY,NULL,0);
     assert(created==pdPASS);
     /* The start task as well, once, at its end. It is freed when app_main
      * returns, so its size costs nothing after this. */

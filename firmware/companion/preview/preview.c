@@ -73,9 +73,16 @@ int main(int argc,char **argv)
      * an update that failed, and "updating" the screen while one writes. */
     static const panel_self_t self={.version="61-1eec536",.ssid="FRITZ!Box 7590",
         .ip="192.168.178.57",.mac="24:58:7c:12:ab:cd",.server="192.168.178.42:8765",
-        .rssi=-58,.uptime_s=3*3600+12*60,.heap_free=142*1024,.psram_free=6400*1024};
+        .rssi=-58,.uptime_s=3*3600+12*60,.heap_free=142*1024,.psram_free=6400*1024,
+        .heap_least=98*1024};
     s.self=self;
     snprintf(s.update.offered,sizeof s.update.offered,"64-2b7f0c1");
+    /* The frames of a scroll, as the page of the panel counts them.
+     * "self-frames" shows them with no update in the way. */
+    s.frames=(panel_frame_stats_t){.frames=412,.fps=41,.interval_mean_ms=24,
+        .interval_p95_ms=45,.interval_most_ms=67,.draw_mean_ms=14,.draw_p95_ms=19,
+        .draw_most_ms=31};
+    if(argc>2&&strcmp(argv[2],"self-frames")==0)s.update.offered[0]=0;
     if(argc>2&&strcmp(argv[2],"self-failed")==0){
         s.update.phase=PANEL_UPDATE_FAILED;s.update.failure=TXT_UPDATE_BROKEN;
     }
