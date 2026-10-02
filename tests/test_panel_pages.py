@@ -131,7 +131,12 @@ class BandTest(unittest.TestCase):
         self.assertIsNotNone(kept)
         for name in ("band", "mode_now", "mode_button", "mode_caption",
                      "playing_name", "no_drives", "drive_rows",
-                     "drive_names", "drive_bars", "drive_free"):
+                     "drive_names", "drive_bars", "drive_free",
+                     "gpu_load_value", "gpu_load_track", "gpu_load_bar",
+                     "vram_value", "vram_track", "vram_bar",
+                     "gpu_clock_value", "history_chart", "history_empty",
+                     "history_ago", "history_axis", "history_buttons",
+                     "history_series"):
             self.assertIn(name, kept.group(1),
                           "%s outlives the clean that freed it" % name)
 

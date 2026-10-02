@@ -205,7 +205,13 @@
     X(TXT_PAUSE,           "Pause",                 "Pause") \
     X(TXT_RESET,           "Reset",                 "Zurücksetzen") \
     X(TXT_TIME_UP,         "Time is up",            "Zeit abgelaufen") \
-    X(TXT_STOP,            "Stop",                  "Stopp")
+    X(TXT_STOP,            "Stop",                  "Stopp") \
+    X(TXT_GPU_LOAD,        "GPU load",              "GPU-Last") \
+    X(TXT_GPU_VRAM,        "VRAM",                  "VRAM") \
+    X(TXT_GPU_CLOCK,       "GPU clock",             "GPU-Takt") \
+    X(TXT_HISTORY,         "History",               "Verlauf") \
+    X(TXT_HISTORY_EMPTY,   "No readings yet",       "Noch keine Werte") \
+    X(TXT_HISTORY_NOW,     "now",                   "jetzt")
 
 typedef enum {
 #define PANEL_TEXT_AS_ENUM(name, english, german) name,

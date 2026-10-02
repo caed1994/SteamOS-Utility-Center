@@ -35,8 +35,13 @@ int main(int argc,char **argv)
     /* A third word "de" draws the screen in German. */
     panel_settings_t settings={.brightness=70,.sound_volume=30,.touch_tones=false,
                                .language=argc>3&&strcmp(argv[3],"de")==0?PANEL_GERMAN:PANEL_ENGLISH};
+    /* The history of the page of the card, which main.c keeps in PSRAM. */
+    static panel_history_t history;
+    panel_history_reset(&history);
+    panel_ui_history_use(&history);
     panel_ui_create(NULL,NULL,NULL,&settings);
-    panel_state_t s={.wifi=true,.online=true,.volume=42,.cpu_temp=49,.gpu_temp=56,.gpu_watts=78};
+    panel_state_t s={.wifi=true,.online=true,.volume=42,.cpu_temp=49,.gpu_temp=56,.gpu_watts=78,
+                     .gpu_load=87,.gpu_mhz=2450,.vram_used=10522460160ULL,.vram_total=17163091968ULL};
     strcpy(s.host,"FractalMachine");
     /* Two controllers in the head, and four on their page: one charges and
      * one has no battery that anybody reports. "pads" opens that page, and
@@ -127,6 +132,44 @@ int main(int argc,char **argv)
         if(strcmp(argv[2],"alarm")==0){
             lv_tick_inc(25*60*1000);
             panel_ui_timer_tick();
+        }
+    }
+    /* The fifth page. "card" is 35 minutes of the board's machine: ten
+     * idle, then a game, with a minute in it in which the PC did not
+     * answer. "card-60" shows the hour, and "card-empty" is a panel that
+     * just started. */
+    if(argc>2&&strncmp(argv[2],"card",4)==0){
+        if(strcmp(argv[2],"card-empty")!=0){
+            uint32_t seed=7;
+            panel_state_t t=s;
+            for(uint32_t now=0;now<=35u*60u*1000u;now+=1000){
+                if(now%3000==0&&!(now>=19u*60u*1000u&&now<20u*60u*1000u)){
+                    seed=seed*1103515245u+12345u;
+                    int noise=(int)((seed>>16)%7)-3;
+                    bool game=now>=10u*60u*1000u;
+                    int warm=game?(int)((now-10u*60u*1000u)/60000u):0;
+                    if(warm>8)warm=8;
+                    t.cpu_temp=game?66+warm+noise/2:44+noise/3;
+                    t.gpu_temp=game?54+warm+noise/2:39;
+                    t.gpu_watts=game?262+noise*9+(int)((seed>>8)%30):24+noise;
+                    t.answers++;
+                }
+                if(panel_history_due(&history,now))panel_ui_history_tick(&t,now);
+            }
+            s.cpu_temp=t.cpu_temp;s.gpu_temp=t.gpu_temp;s.gpu_watts=t.gpu_watts;
+            s.answers=t.answers;
+        }
+        panel_ui_update(&s);
+        lv_obj_t *band=band_in(lv_screen_active());
+        if(band){
+            lv_obj_update_layout(band);
+            lv_obj_scroll_to_view(lv_obj_get_child(band,4),LV_ANIM_OFF);
+        }
+        if(strcmp(argv[2],"card-60")==0){
+            char caption[16];
+            snprintf(caption,sizeof caption,"60 %s",panel_text(TXT_MINUTES));
+            lv_obj_t *sixty=find_label(lv_screen_active(),caption);
+            if(sixty)lv_obj_send_event(lv_obj_get_parent(sixty),LV_EVENT_CLICKED,NULL);
         }
     }
     if(argc>2&&strcmp(argv[2],"pads")==0)panel_ui_pads_open();

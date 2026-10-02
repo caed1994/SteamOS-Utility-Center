@@ -194,6 +194,12 @@ MICROWATTS = 1000000
 SANE_CELSIUS = 150
 SANE_WATTS = 2000
 
+# The clock of the card. amdgpu names the clock of its shader engine sclk
+# in hwmon and counts it in hertz. A reading past SANE_MHZ is no clock.
+SCLK_LABEL = "sclk"
+HERTZ_PER_MHZ = 1000000
+SANE_MHZ = 10000
+
 # What the panel keeps of each list: PANEL_PADS, PANEL_SENSORS and
 # PANEL_DRIVES in its ui.h. The answer stops there. An Intel processor
 # reports a sensor for each core, and two of them on one board made an
@@ -646,6 +652,32 @@ def _sane(value, limit):
     return round(value)
 
 
+def card_state(place):
+    """How busy the card is, its memory and its clock, or None for each.
+
+    The load and the memory are files of the PCI device of the card. The
+    clock is a file of its hwmon chip, which is the place that telemetry
+    found, as the power is. amdgpu writes all four. A card of another
+    driver writes none of them, and the panel then shows a dash.
+    """
+    out = {"gpu_load": None, "vram_used": None, "vram_total": None,
+           "gpu_mhz": None}
+    if not place:
+        return out
+    device = os.path.join(place, "device")
+    out["gpu_load"] = _sane(_read_number(
+        os.path.join(device, "gpu_busy_percent")), 100)
+    used = _read_number(os.path.join(device, "mem_info_vram_used"))
+    total = _read_number(os.path.join(device, "mem_info_vram_total"))
+    if total and used is not None and 0 <= used <= total:
+        out["vram_used"], out["vram_total"] = int(used), int(total)
+    if (_read_text(os.path.join(place, "freq1_label")) or "").lower() \
+            == SCLK_LABEL:
+        out["gpu_mhz"] = _sane(_read_number(
+            os.path.join(place, "freq1_input"), HERTZ_PER_MHZ), SANE_MHZ)
+    return out
+
+
 # Names a person reads for the labels the drivers give their sensors. A
 # label not here is shown as the driver writes it.
 SENSOR_NAMES = {"edge": "Edge", "junction": "Junction (Hotspot)",
@@ -685,7 +717,8 @@ def sensor_list(sensors):
 
 
 def telemetry(root=temperature.HWMON_ROOT):
-    """The two temperatures and the power of the card, or a None for each.
+    """The two temperatures, the power of the card and the rest of the
+    card, or a None for each.
 
     The reads are temperature.py's. This file says which chip is the
     processor and which is the card, and temperature.py says which sensor
@@ -710,6 +743,8 @@ def telemetry(root=temperature.HWMON_ROOT):
         "gpu_c": _sane(temperature.read_celsius(gpu["path"]) if gpu else None,
                        SANE_CELSIUS),
         "gpu_w": _sane(watts, SANE_WATTS),
+        # The rest of the card, for the page of its history. See card_state.
+        **card_state(place),
         # Every sensor of the processor and of the card, for the choice on
         # the panel. The two above stay the answer when nobody chose.
         "cpu_sensors": sensor_list(

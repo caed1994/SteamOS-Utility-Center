@@ -42,6 +42,7 @@
 #include "panel_time.h"
 #include "panel_update.h"
 #include "panel_ota.h"
+#include "panel_history.h"
 #include "esp_ota_ops.h"
 
 /* The startup animation, put in the image by main/CMakeLists.txt. It
@@ -87,6 +88,9 @@ static atomic_uint radio_back_ms;
  * flag is read by ui_tick, which keeps the display on while it is set. */
 static panel_offer_t offer_taken;
 static atomic_bool updating;
+/* The history of the page of the card, in PSRAM. Written by ui_tick and
+ * drawn by the screen, both in the LVGL task. */
+static panel_history_t *history;
 static QueueHandle_t actions;
 static QueueHandle_t sounds;
 static SemaphoreHandle_t lock;
@@ -357,10 +361,17 @@ static void ui_tick(lv_timer_t *timer)
          * too, and the display would go dark under the alarm. */
         display_sleeping(true,false);
     }
-    atomic_store(&ui_heartbeat_ms,(uint32_t)(esp_timer_get_time()/1000));
-    if(atomic_load(&display_asleep))return;
+    uint32_t now_ms=(uint32_t)(esp_timer_get_time()/1000);
+    atomic_store(&ui_heartbeat_ms,now_ms);
+    /* The history goes on while the display sleeps: after the set time the
+     * PC is still asked. So a dark display copies the state once for each
+     * step of it, and not at every tick. */
+    bool due=history&&panel_history_due(history,now_ms);
+    if(atomic_load(&display_asleep)&&!due)return;
     panel_state_t copy;
     xSemaphoreTake(lock,portMAX_DELAY); copy=state; xSemaphoreGive(lock);
+    if(due)panel_ui_history_tick(&copy,now_ms);
+    if(atomic_load(&display_asleep))return;
     /* The time of day, read here and not kept in state: it is the clock of
      * this chip, and nothing else writes it. */
     struct tm now;
@@ -726,6 +737,17 @@ static int request(const char *path, const char *action)
     state.cpu_temp=metric(telemetry,"cpu_c",150);
     state.gpu_temp=metric(telemetry,"gpu_c",150);
     state.gpu_watts=metric(telemetry,"gpu_w",2000);
+    /* The rest of the card, for its page. The memory is bytes and passes
+     * an int, so it is read off the double, both or neither. */
+    state.gpu_load=metric(telemetry,"gpu_load",100);
+    state.gpu_mhz=metric(telemetry,"gpu_mhz",10000);
+    cJSON *vram_used=cJSON_GetObjectItemCaseSensitive(telemetry,"vram_used");
+    cJSON *vram_total=cJSON_GetObjectItemCaseSensitive(telemetry,"vram_total");
+    bool vram=cJSON_IsNumber(vram_used)&&cJSON_IsNumber(vram_total)&&vram_total->valuedouble>0
+        &&vram_used->valuedouble>=0&&vram_used->valuedouble<=vram_total->valuedouble;
+    state.vram_used=vram?(uint64_t)vram_used->valuedouble:0;
+    state.vram_total=vram?(uint64_t)vram_total->valuedouble:0;
+    state.answers++;
     state.cpu_sensor_count=sensors_read(state.cpu_sensors,
         cJSON_GetObjectItemCaseSensitive(telemetry,"cpu_sensors"));
     state.gpu_sensor_count=sensors_read(state.gpu_sensors,
@@ -1263,6 +1285,7 @@ void app_main(void)
     actions=xQueueCreate(1,sizeof(panel_action_t));
     assert(lock && actions);
     state.volume=-1; state.cpu_temp=-1; state.gpu_temp=-1; state.gpu_watts=-1;
+    state.gpu_load=-1; state.gpu_mhz=-1;
     state.setup=config.ssid[0]==0;
     /* An address kept from an earlier run. Without this the button appears
      * only after the PC has answered once, which is the case where it is
@@ -1284,6 +1307,14 @@ void app_main(void)
     assert(sounds);
     BaseType_t sound_created=xTaskCreate(sound_task,"panel_sound",6144,NULL,3,NULL);
     assert(sound_created==pdPASS);
+    /* The history of the page of the card: an hour of points and what the
+     * chart draws of it, about 6.5 KB. PSRAM, because the internal memory
+     * is for the network and the drawing. A panel with no PSRAM to spare
+     * shows the page without curves. */
+    history=heap_caps_calloc(1,sizeof(panel_history_t),MALLOC_CAP_SPIRAM);
+    if(history)panel_history_reset(history);
+    else ESP_LOGW("panel_history","No PSRAM for the history; the page shows no curves");
+    panel_ui_history_use(history);
     bsp_display_lock(0);
     panel_ui_create(action_send,setting_set,sound_send,&settings);
     lv_timer_create(ui_tick,200,NULL);

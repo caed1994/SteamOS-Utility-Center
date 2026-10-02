@@ -4,12 +4,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "panel_history.h"
 #include "panel_text.h"
 #include "panel_timer.h"
 
 /* The band of pages that scrolls sideways: the controls, the session and
- * the drives, the game that runs, and the clock with the timer. */
-#define PANEL_PAGES 4
+ * the drives, the game that runs, the clock with the timer, and the card
+ * with its history. */
+#define PANEL_PAGES 5
 
 typedef enum {
     PANEL_VOLUME_DOWN, PANEL_MUTE, PANEL_VOLUME_UP,
@@ -130,6 +132,15 @@ typedef struct {
      * worse than no button. */
     bool can_wake;
     int volume, cpu_temp, gpu_temp, gpu_watts;
+    /* The rest of the card, for its page: how busy it is in per cent and
+     * its clock in MHz, or -1; its memory in bytes, and a total of nought
+     * for none. */
+    int gpu_load, gpu_mhz;
+    uint64_t vram_used, vram_total;
+    /* Counts the answers of the PC. The history takes a point from an
+     * answer, and the readings above stay as they were while the PC is
+     * gone: the count is what tells a new reading from the last one. */
+    uint32_t answers;
     char host[48], message[80];
     /* The controllers, in the order the service sends them. Each charging
      * is a flag and not a word. It was the text that the service sends,
@@ -195,6 +206,13 @@ void panel_ui_pads_open(void);
 void panel_ui_pc_open(void);
 /* The page of the panel itself, which a tap on its battery opens. */
 void panel_ui_self_open(void);
+/* The history of the page of the card, which main.c keeps in PSRAM. Set
+ * once and before the first tick; the screen draws no curve without it. */
+void panel_ui_history_use(panel_history_t *history);
+/* A step of the history, asleep or awake: main.c calls it when
+ * panel_history_due says so. The point is what the tiles show, with the
+ * sensor somebody chose for each. */
+void panel_ui_history_tick(const panel_state_t *state, uint32_t now_ms);
 void panel_ui_update(const panel_state_t *state);
 void panel_ui_confirm(panel_action_t action);
 /* What the screen shows, in a few words for the log: the page of the band,

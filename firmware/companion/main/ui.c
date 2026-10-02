@@ -53,6 +53,40 @@ static uint32_t hold_counted;
 #define TIMER_HOLD_EVERY_MS 400
 /* The alarm stays audible with the sound turned right down. */
 #define ALARM_LEAST_VOLUME 40
+/* The fifth page: the card, and the history of the temperatures and the
+ * power under it. See panel_history.h. The history is main.c's and
+ * outlives a new screen; the objects are children of the screen and go
+ * with a clean, and so does what was drawn. */
+static panel_history_t *history;
+static uint32_t history_answers,history_drawn;
+static bool history_stale=true;
+/* The window the page shows, in minutes. Not stored: a restart starts the
+ * history again in any case. */
+static int history_minutes=30;
+#define HISTORY_WINDOWS 3
+static const int history_windows[HISTORY_WINDOWS]={15,30,60};
+static lv_obj_t *gpu_load_value,*gpu_load_track,*gpu_load_bar,*vram_value,*vram_track,*vram_bar,*gpu_clock_value;
+static lv_obj_t *history_chart,*history_empty,*history_ago,*history_axis[4],*history_buttons[HISTORY_WINDOWS];
+static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
+/* The colours of the three curves, and the legend that names them. The
+ * processor in the blue of the tiles; the card in orange and its power in
+ * green, which read apart from the blue and from each other. */
+#define CURVE_GPU 0xF5A25D
+#define CURVE_WATTS 0x70C256
+static const uint32_t curve_colors[PANEL_HISTORY_SERIES]={BLUE,CURVE_GPU,CURVE_WATTS};
+/* The card of the GPU: three columns, each a name, a value and, for the
+ * load and the memory, a bar. The room of each value is its longest at
+ * 24 px, which check_pages measures: "100 %", the 162 px of "23.9 / 24.0
+ * GB" and "2450 MHz". The chart under it: its place in its card, with the
+ * degrees on the left of it and the watts on the right. */
+#define GPU_COLUMN_X0 16
+#define GPU_COLUMN_X1 146
+#define GPU_COLUMN_X2 326
+#define GPU_BAR_WIDTH 116
+#define CHART_X 52
+#define CHART_Y 66
+#define CHART_WIDTH 356
+#define CHART_HEIGHT 92
 _Static_assert(TXT_SATURDAY==TXT_SUNDAY+6,"the days of the week in a row, from Sunday as tm_wday counts");
 _Static_assert(TXT_DECEMBER==TXT_JANUARY+11,"the months in a row");
 static panel_action_cb_t send_action;
@@ -739,6 +773,113 @@ static void temperatures_show(const panel_state_t *s)
     if(s->online&&cpu>=0)lv_label_set_text_fmt(cpu_value,"%d °C",cpu);else lv_label_set_text(cpu_value,"-- °C");
     if(s->online&&gpu>=0)lv_label_set_text_fmt(gpu_value,"%d °C",gpu);else lv_label_set_text(gpu_value,"-- °C");
 }
+void panel_ui_history_use(panel_history_t *kept){history=kept;history_stale=true;}
+void panel_ui_history_tick(const panel_state_t *s,uint32_t now_ms)
+{
+    if(!history)return;
+    /* A point is an answer. The state keeps the last reading while the PC
+     * is gone, and that reading again is not a measurement. */
+    if(s->online&&s->answers!=history_answers){
+        int values[PANEL_HISTORY_SERIES]={
+            sensor_shown(s->cpu_sensors,s->cpu_sensor_count,local.cpu_sensor,s->cpu_temp),
+            sensor_shown(s->gpu_sensors,s->gpu_sensor_count,local.gpu_sensor,s->gpu_temp),
+            s->gpu_watts};
+        panel_history_offer(history,values);
+    }
+    history_answers=s->answers;
+    panel_history_tick(history,now_ms);
+}
+/* A scale with room around the curve: tens of degrees at least 20 apart,
+ * and watts from nought in steps of 50. */
+static int floor_to(int value,int step){return value>=0?value/step*step:-((-value+step-1)/step*step);}
+static int ceil_to(int value,int step){return -floor_to(-value,step);}
+static void history_show(void)
+{
+    if(!history_chart)return;
+    if(!history_stale&&(!history||history_drawn==history->version))return;
+    history_stale=false;
+    for(int i=0;i<HISTORY_WINDOWS;i++){
+        bool on=history_windows[i]==history_minutes;
+        lv_obj_set_style_border_color(history_buttons[i],lv_color_hex(on?BLUE:EDGE),0);
+        lv_obj_set_style_text_color(history_buttons[i],lv_color_hex(on?BLUE:TEXT),0);
+    }
+    lv_label_set_text_fmt(history_ago,"-%d %s",history_minutes,panel_text(TXT_MINUTES));
+    int found=0,low=0,high=0,cpu_low=0,cpu_high=0,watts_low=0,watts_high=0;
+    if(history){
+        history_drawn=history->version;
+        for(int i=0;i<PANEL_HISTORY_SERIES;i++){
+            int32_t *points=history->drawn[i];
+            found+=panel_history_read(history,(panel_history_series_t)i,history_minutes,points,PANEL_HISTORY_DRAWN);
+            for(int k=0;k<PANEL_HISTORY_DRAWN;k++)if(points[k]==PANEL_HISTORY_GAP)points[k]=LV_CHART_POINT_NONE;
+        }
+    }
+    bool cpu=history&&panel_history_range(history,PANEL_HISTORY_CPU,history_minutes,&cpu_low,&cpu_high);
+    bool gpu=history&&panel_history_range(history,PANEL_HISTORY_GPU,history_minutes,&low,&high);
+    if(cpu&&(!gpu||cpu_low<low))low=cpu_low;
+    if(cpu&&(!gpu||cpu_high>high))high=cpu_high;
+    bool watts=history&&panel_history_range(history,PANEL_HISTORY_WATTS,history_minutes,&watts_low,&watts_high);
+    int bottom=30,top=90,most=300;
+    if(cpu||gpu){
+        bottom=floor_to(low-3,10);top=ceil_to(high+3,10);
+        if(top-bottom<20)top=bottom+20;
+    }
+    if(watts){most=ceil_to(watts_high+watts_high/10+1,50);if(most<50)most=50;}
+    lv_chart_set_axis_range(history_chart,LV_CHART_AXIS_PRIMARY_Y,bottom,top);
+    lv_chart_set_axis_range(history_chart,LV_CHART_AXIS_SECONDARY_Y,0,most);
+    /* A scale with no curve on it is empty: the note in the middle says
+     * why. */
+    if(cpu||gpu){
+        lv_label_set_text_fmt(history_axis[0],"%d °C",top);
+        lv_label_set_text_fmt(history_axis[1],"%d °C",bottom);
+    }else{lv_label_set_text(history_axis[0],"");lv_label_set_text(history_axis[1],"");}
+    if(watts){
+        lv_label_set_text_fmt(history_axis[2],"%d W",most);
+        lv_label_set_text(history_axis[3],"0 W");
+    }else{lv_label_set_text(history_axis[2],"");lv_label_set_text(history_axis[3],"");}
+    if(found)lv_obj_add_flag(history_empty,LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(history_empty,LV_OBJ_FLAG_HIDDEN);
+    lv_chart_refresh(history_chart);
+}
+static void history_window_clicked(lv_event_t *e)
+{
+    int minutes=(int)(intptr_t)lv_event_get_user_data(e);
+    feedback();
+    if(minutes==history_minutes)return;
+    history_minutes=minutes;history_stale=true;
+    history_show();
+}
+/* The load, the memory and the clock of the card. "--" where the
+ * service sent nothing, as on the page of the PC, and for all of them
+ * while the PC is gone: the last reading would read as current. */
+static void card_show(const panel_state_t *s)
+{
+    if(!gpu_load_value)return;
+    if(s->online&&s->gpu_load>=0){
+        lv_label_set_text_fmt(gpu_load_value,"%d %%",s->gpu_load);
+        lv_obj_remove_flag(gpu_load_track,LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_width(gpu_load_bar,GPU_BAR_WIDTH*(s->gpu_load>100?100:s->gpu_load)/100);
+    }else{
+        lv_label_set_text(gpu_load_value,"--");
+        lv_obj_add_flag(gpu_load_track,LV_OBJ_FLAG_HIDDEN);
+    }
+    if(s->online&&s->vram_total>0&&s->vram_used<=s->vram_total){
+        char used[16],total[16],said[40];
+        say_size(used,sizeof used,s->vram_used);
+        say_size(total,sizeof total,s->vram_total);
+        /* One unit for both, as on the page of the PC. */
+        char *unit=strstr(used," GB");
+        if(unit)*unit=0;
+        snprintf(said,sizeof said,"%s / %s",used,total);
+        lv_label_set_text(vram_value,said);
+        lv_obj_remove_flag(vram_track,LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_width(vram_bar,(int32_t)(GPU_BAR_WIDTH*s->vram_used/s->vram_total));
+    }else{
+        lv_label_set_text(vram_value,"--");
+        lv_obj_add_flag(vram_track,LV_OBJ_FLAG_HIDDEN);
+    }
+    if(s->online&&s->gpu_mhz>=0)lv_label_set_text_fmt(gpu_clock_value,"%d MHz",s->gpu_mhz);
+    else lv_label_set_text(gpu_clock_value,"--");
+}
 static void sensor_close(void){if(sensor_layer){lv_obj_delete(sensor_layer);sensor_layer=NULL;}}
 static void sensor_outside(lv_event_t *e){(void)e;sensor_close();}
 /* A row of the menu, by its place: row nought is the choice of the
@@ -986,7 +1127,8 @@ const char *panel_ui_where(void)
     /* Read from where the band stands: a swipe that did not carry far
      * enough left it on the page it was on. */
     static const char *const pages[PANEL_PAGES]={"the first page","the second page",
-                                                 "the third page","the fourth page"};
+                                                 "the third page","the fourth page",
+                                                 "the fifth page"};
     int32_t page=(lv_obj_get_scroll_x(band)+240)/480;
     if(page<0)page=0;
     if(page>PANEL_PAGES-1)page=PANEL_PAGES-1;
@@ -1155,6 +1297,12 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     playing_name=NULL;achievement_count=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
     clock_digits=NULL;clock_date=NULL;timer_value=NULL;timer_minus=NULL;timer_plus=NULL;
     timer_go=NULL;timer_go_label=NULL;timer_reset=NULL;alarm_layer=NULL;
+    gpu_load_value=NULL;gpu_load_track=NULL;gpu_load_bar=NULL;
+    vram_value=NULL;vram_track=NULL;vram_bar=NULL;gpu_clock_value=NULL;
+    history_chart=NULL;history_empty=NULL;history_ago=NULL;
+    for(int i=0;i<4;i++)history_axis[i]=NULL;
+    for(int i=0;i<HISTORY_WINDOWS;i++)history_buttons[i]=NULL;
+    for(int i=0;i<PANEL_HISTORY_SERIES;i++)history_series[i]=NULL;
     for(int i=0;i<PANEL_DRIVES;i++){
         drive_rows[i]=NULL;drive_names[i]=NULL;
         drive_bars[i]=NULL;drive_free[i]=NULL;
@@ -1197,7 +1345,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
         lv_obj_add_flag(pad_values[1],LV_OBJ_FLAG_HIDDEN);
     }
     line(s,0,57,480,1);
-    /* The middle band, which scrolls sideways. Three pages of one screen
+    /* The middle band, which scrolls sideways. Five pages of one screen
      * each, and the head above it and the sensors below it stay where they
      * are: those are the numbers somebody looks at without touching
      * anything, and a page that can carry them away is a page that hides
@@ -1337,6 +1485,90 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     timer_show();
     /* A new screen for a new language, while the timer rings. */
     if(timer.phase==PANEL_TIMER_RINGING)alarm_show();
+    /* The fifth page: the card, and the history under it.
+     *
+     * Three columns over the card: its load and its memory, each with a
+     * bar, and its clock. Under them the history of the two temperatures
+     * and the power, with the degrees on the left and the watts on the
+     * right, and the choice of the window over it. */
+    lv_obj_t *gpu_card=panel(page[4],10,0,460,96,CARD,true);
+    const panel_text_id_t gpu_names[3]={TXT_GPU_LOAD,TXT_GPU_VRAM,TXT_GPU_CLOCK};
+    const int gpu_x[3]={GPU_COLUMN_X0,GPU_COLUMN_X1,GPU_COLUMN_X2};
+    const int gpu_room[3]={GPU_COLUMN_X1-GPU_COLUMN_X0-12,GPU_COLUMN_X2-GPU_COLUMN_X1-10,460-8-GPU_COLUMN_X2};
+    lv_obj_t *gpu_values[3];
+    for(int i=0;i<3;i++){
+        text_at(gpu_card,panel_text(gpu_names[i]),gpu_x[i],12,gpu_room[i],&panel_font_14,MUTED);
+        gpu_values[i]=text_at(gpu_card,"--",gpu_x[i],34,gpu_room[i],&panel_font_24,TEXT);
+        lv_obj_set_height(gpu_values[i],lv_font_get_line_height(&panel_font_24));
+    }
+    gpu_load_value=gpu_values[0];vram_value=gpu_values[1];gpu_clock_value=gpu_values[2];
+    lv_obj_t **tracks[2]={&gpu_load_track,&vram_track},**bars[2]={&gpu_load_bar,&vram_bar};
+    for(int i=0;i<2;i++){
+        *tracks[i]=panel(gpu_card,gpu_x[i],72,GPU_BAR_WIDTH,8,EDGE,false);
+        lv_obj_set_style_radius(*tracks[i],LV_RADIUS_CIRCLE,0);
+        lv_obj_remove_flag(*tracks[i],LV_OBJ_FLAG_CLICKABLE);
+        *bars[i]=panel(*tracks[i],0,0,0,8,BLUE,false);
+        lv_obj_set_style_radius(*bars[i],LV_RADIUS_CIRCLE,0);
+        lv_obj_remove_flag(*bars[i],LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(*tracks[i],LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_t *history_card=panel(page[4],10,106,460,194,CARD,true);
+    text_at(history_card,panel_text(TXT_HISTORY),16,14,120,&panel_font_14,MUTED);
+    for(int i=0;i<HISTORY_WINDOWS;i++){
+        char caption[16];
+        snprintf(caption,sizeof caption,"%d %s",history_windows[i],panel_text(TXT_MINUTES));
+        history_buttons[i]=button(history_card,caption,252+i*66,8,62,32,history_window_clicked,history_windows[i]);
+        lv_obj_set_style_text_font(history_buttons[i],&panel_font_14,0);
+    }
+    /* The legend, one dot and one name for each curve. */
+    const char *legend[PANEL_HISTORY_SERIES]={"CPU °C","GPU °C","GPU W"};
+    for(int i=0;i<PANEL_HISTORY_SERIES;i++){
+        lv_obj_t *mark=panel(history_card,16+i*92,49,10,10,curve_colors[i],false);
+        lv_obj_set_style_radius(mark,LV_RADIUS_CIRCLE,0);
+        lv_obj_remove_flag(mark,LV_OBJ_FLAG_CLICKABLE);
+        text_at(history_card,legend[i],32+i*92,45,72,&panel_font_12,MUTED);
+    }
+    history_chart=lv_chart_create(history_card);
+    lv_obj_set_pos(history_chart,CHART_X,CHART_Y);lv_obj_set_size(history_chart,CHART_WIDTH,CHART_HEIGHT);
+    /* Not a place to press: a swipe over it moves the band. */
+    lv_obj_remove_flag(history_chart,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(history_chart,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(history_chart,LV_OPA_TRANSP,0);
+    lv_obj_set_style_border_width(history_chart,0,0);
+    lv_obj_set_style_radius(history_chart,0,0);
+    lv_obj_set_style_pad_hor(history_chart,0,0);
+    lv_obj_set_style_pad_ver(history_chart,2,0);
+    lv_obj_set_style_line_color(history_chart,lv_color_hex(EDGE),LV_PART_MAIN);
+    lv_obj_set_style_line_width(history_chart,1,LV_PART_MAIN);
+    lv_obj_set_style_line_width(history_chart,2,LV_PART_ITEMS);
+    lv_obj_set_style_width(history_chart,0,LV_PART_INDICATOR);
+    lv_obj_set_style_height(history_chart,0,LV_PART_INDICATOR);
+    lv_chart_set_type(history_chart,LV_CHART_TYPE_LINE);
+    lv_chart_set_div_line_count(history_chart,3,0);
+    lv_chart_set_point_count(history_chart,PANEL_HISTORY_DRAWN);
+    for(int i=0;i<PANEL_HISTORY_SERIES;i++){
+        history_series[i]=lv_chart_add_series(history_chart,lv_color_hex(curve_colors[i]),
+            i==PANEL_HISTORY_WATTS?LV_CHART_AXIS_SECONDARY_Y:LV_CHART_AXIS_PRIMARY_Y);
+        /* The points of the history in place, in PSRAM. Without a history
+         * the chart keeps its own, which are empty. */
+        if(history)lv_chart_set_series_ext_y_array(history_chart,history_series[i],history->drawn[i]);
+    }
+    /* The ends of the two scales, beside the chart. */
+    for(int i=0;i<4;i++){
+        bool right=i>=2,low=i%2;
+        history_axis[i]=text_at(history_card,"",right?CHART_X+CHART_WIDTH+6:0,
+                                low?CHART_Y+CHART_HEIGHT-16:CHART_Y-2,right?44:CHART_X-6,&panel_font_12,MUTED);
+        lv_obj_set_style_text_align(history_axis[i],right?LV_TEXT_ALIGN_LEFT:LV_TEXT_ALIGN_RIGHT,0);
+    }
+    history_ago=text_at(history_card,"",CHART_X,CHART_Y+CHART_HEIGHT+6,120,&panel_font_12,MUTED);
+    lv_obj_t *now=text_at(history_card,panel_text(TXT_HISTORY_NOW),CHART_X+CHART_WIDTH-120,
+                          CHART_Y+CHART_HEIGHT+6,120,&panel_font_12,MUTED);
+    lv_obj_set_style_text_align(now,LV_TEXT_ALIGN_RIGHT,0);
+    history_empty=text_at(history_card,panel_text(TXT_HISTORY_EMPTY),CHART_X,CHART_Y+CHART_HEIGHT/2-10,
+                          CHART_WIDTH,&panel_font_16,MUTED);
+    center_text(history_empty);
+    history_stale=true;
+    history_show();
     /* The temperatures and the power of the card: a tile for the
      * processor, and one for the card that holds its temperature and its
      * power, with a short line between the two. A tap on a tile opens the
@@ -1473,6 +1705,9 @@ static void esp_power_show(const panel_state_t *s)
 }
 void panel_ui_update(const panel_state_t *s)
 {
+    /* Before the test for a new state: the history moves on without one,
+     * and a PC that is gone sends none. */
+    history_show();
     /* Repeated label_set_text_fmt calls allocate and invalidate even unchanged
      * values. Status is polled at 3 s; idle 200 ms UI ticks need no redraw.
      * A padding-only difference can merely cause an extra update, never hide one. */
@@ -1517,6 +1752,7 @@ void panel_ui_update(const panel_state_t *s)
     else{lv_obj_add_flag(wake_button,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(wake_what,LV_OBJ_FLAG_HIDDEN);}
     temperatures_show(s);
     if(s->online&&s->gpu_watts>=0)lv_label_set_text_fmt(power_value,"%d W",s->gpu_watts);else lv_label_set_text(power_value,"-- W");
+    card_show(s);
     lv_label_set_text(message,s->message);
     if(s->message[0])lv_obj_remove_flag(message,LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(message,LV_OBJ_FLAG_HIDDEN);

@@ -20,6 +20,8 @@ static panel_setting_t saved_key;
 static int saved_value,saved_count;
 static void setting(panel_setting_t k,int v,bool save){if(save){saved_key=k;saved_value=v;saved_count++;}}
 static void sound(int volume){(void)volume;}
+// The history of the page of the card, as main.c keeps one.
+static panel_history_t history;
 // A label somebody can see. The hidden ones are still in the tree, and a
 // search that walks into them answers "there it is" about a card that is
 // not on the screen. Every rule below reads this, so every one of them is
@@ -130,6 +132,8 @@ int main(void)
                            LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(screen,flushed);
     panel_settings_t settings={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+    panel_history_reset(&history);
+    panel_ui_history_use(&history);
     panel_ui_create(action,setting,sound,&settings);
 
     // The pages, and the band snaps so there is no place between two.
@@ -1136,7 +1140,153 @@ int main(void)
         assert(complaints==0);
     }
 
-    puts("OK: four pages that snap, the session and its target button, the "
+    // The fifth page: the load, the memory and the clock of the card, and
+    // the history of the temperatures and the power under them.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        // The choice of the junction for the tile of the card, which the
+        // curve of the card follows.
+        panel_settings_t chosen=english;chosen.gpu_sensor=panel_sensor_key("amdgpu/junction");
+        panel_history_reset(&history);
+        panel_ui_history_use(&history);
+        panel_ui_create(action,setting,sound,&chosen);
+        lv_obj_t *screen_now=lv_screen_active();
+        lv_obj_t *band_now=find_band(screen_now);
+        assert(band_now);
+        lv_obj_t *page=lv_obj_get_child(band_now,4);
+        lv_obj_update_layout(screen_now);
+        lv_obj_scroll_to_view(page,LV_ANIM_OFF);
+        lv_obj_update_layout(screen_now);
+        assert(strcmp(panel_ui_where(),"the fifth page")==0);
+        panel_state_t g=base();
+        g.gpu_load=87;g.gpu_mhz=2450;g.vram_used=10522460160ULL;g.vram_total=17163091968ULL;
+        panel_ui_update(&g);
+        assert(label(page,"GPU load")&&label(page,"VRAM")&&label(page,"GPU clock"));
+        assert(label(page,"87 %")&&label(page,"9.8 / 16.0 GB")&&label(page,"2450 MHz"));
+        // Each bar as long as its share: 87 of 100, and 9.8 of 16.0 GB.
+        lv_obj_update_layout(screen_now);
+        lv_obj_t *gpu_card=lv_obj_get_parent(label(page,"87 %"));
+        int bars=0;
+        for(unsigned i=0;i<lv_obj_get_child_count(gpu_card);i++){
+            lv_obj_t *track=lv_obj_get_child(gpu_card,i);
+            if(lv_obj_get_height(track)!=8||lv_obj_get_child_count(track)!=1)continue;
+            int32_t full=lv_obj_get_width(track),filled=lv_obj_get_width(lv_obj_get_child(track,0));
+            assert(bars==0?filled==full*87/100:filled==(int32_t)(full*10522460160ULL/17163091968ULL));
+            bars++;
+        }
+        assert(bars==2);
+        // The longest of each fits its room, with no dots: a full card, the
+        // memory of a card of 24 GB, and a clock past three thousand.
+        g.gpu_load=100;g.gpu_mhz=3100;g.vram_used=25662623334ULL;g.vram_total=25769803776ULL;
+        panel_ui_update(&g);
+        lv_obj_update_layout(screen_now);
+        lv_refr_now(screen);
+        const char *longest[]={"100 %","23.9 / 24.0 GB","3100 MHz"};
+        for(int i=0;i<3;i++){
+            lv_obj_t *value=label(page,longest[i]);
+            assert(value);
+            lv_point_t size;
+            lv_text_get_size(&size,longest[i],&panel_font_24,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+            assert(size.x<=lv_obj_get_width(value));
+            // And inside the card.
+            assert(lv_obj_get_x(value)+size.x<=lv_obj_get_width(gpu_card)-8);
+        }
+        // What the service did not send is "--", and so is all of it while
+        // the PC is gone; the bars go.
+        g.gpu_load=-1;g.gpu_mhz=-1;g.vram_used=0;g.vram_total=0;
+        panel_ui_update(&g);
+        unsigned dashes=0;
+        for(unsigned i=0;i<lv_obj_get_child_count(gpu_card);i++){
+            lv_obj_t *o=lv_obj_get_child(gpu_card,i);
+            if(lv_obj_check_type(o,&lv_label_class)&&strcmp(lv_label_get_text(o),"--")==0)dashes++;
+            if(lv_obj_get_height(o)==8)assert(lv_obj_has_flag(o,LV_OBJ_FLAG_HIDDEN));
+        }
+        assert(dashes==3);
+        g.gpu_load=87;g.gpu_mhz=2450;g.vram_used=10522460160ULL;g.vram_total=17163091968ULL;
+        g.online=false;
+        panel_ui_update(&g);
+        assert(!label(page,"87 %")&&!label(page,"2450 MHz")&&!label(page,"9.8 / 16.0 GB"));
+        g.online=true;
+        // No history yet: a note in the middle, and no scale.
+        panel_ui_update(&g);
+        assert(label(page,"No readings yet"));
+        assert(!label(page,"0 W"));
+        // The curve moves on without a new state: a PC that is gone sends
+        // none, and its gaps still move the time. So the screen draws a
+        // new point when it is handed the state it already has.
+        {
+            panel_state_t fed=g;
+            for(uint32_t at=0;at<=10000;at+=1000){
+                if(at%3000==0)fed.answers++;
+                if(panel_history_due(&history,at))panel_ui_history_tick(&fed,at);
+            }
+            assert(history.count==2);
+            panel_ui_update(&g);
+            assert(!label(page,"No readings yet")&&label(page,"0 W"));
+            panel_history_reset(&history);
+            panel_ui_history_use(&history);
+            panel_ui_update(&g);
+            assert(label(page,"No readings yet"));
+        }
+        // A minute of answers every three seconds: twelve points, with the
+        // reading of the sensor of each tile.
+        static const panel_sensor_t cpu_list[]={{"k10temp/Tctl","Tctl",50},{"k10temp/Tccd1","CCD 1",47}};
+        static const panel_sensor_t gpu_list[]={{"amdgpu/edge","Edge",56},{"amdgpu/junction","Junction (Hotspot)",68}};
+        memcpy(g.cpu_sensors,cpu_list,sizeof cpu_list);g.cpu_sensor_count=2;
+        memcpy(g.gpu_sensors,gpu_list,sizeof gpu_list);g.gpu_sensor_count=2;
+        g.cpu_temp=50;g.gpu_temp=56;g.gpu_watts=245;
+        uint32_t now=0;
+        for(;now<=60000;now+=1000){
+            if(now%3000==0)g.answers++;
+            if(panel_history_due(&history,now))panel_ui_history_tick(&g,now);
+        }
+        assert(history.count==12);
+        int last=(history.next+PANEL_HISTORY_POINTS-1)%PANEL_HISTORY_POINTS;
+        assert(history.points[PANEL_HISTORY_CPU][last]==50);
+        assert(history.points[PANEL_HISTORY_GPU][last]==68);
+        assert(history.points[PANEL_HISTORY_WATTS][last]==245);
+        panel_ui_update(&g);
+        assert(!label(page,"No readings yet"));
+        // The scale: tens of degrees around 50 to 68, and watts from nought
+        // with room above 245.
+        assert(label(page,"80 °C")&&label(page,"40 °C"));
+        assert(label(page,"300 W")&&label(page,"0 W"));
+        // A PC that is gone sends nothing new, and its steps are gaps, not
+        // the last reading again.
+        g.online=false;
+        for(;now<=70000;now+=1000)
+            if(panel_history_due(&history,now))panel_ui_history_tick(&g,now);
+        last=(history.next+PANEL_HISTORY_POINTS-1)%PANEL_HISTORY_POINTS;
+        assert(history.count==14&&history.points[PANEL_HISTORY_CPU][last]==PANEL_HISTORY_GAP);
+        g.online=true;
+        panel_ui_update(&g);
+        // The window: 30 minutes, then the hour.
+        assert(label(page,"-30 min"));
+        click("60 min");
+        assert(label(page,"-60 min")&&!label(page,"-30 min"));
+        // The chart takes no press, so a swipe over it moves the band.
+        lv_obj_t *history_card=lv_obj_get_parent(label(page,"-60 min"));
+        lv_obj_t *chart=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(history_card);i++)
+            if(lv_obj_check_type(lv_obj_get_child(history_card,i),&lv_chart_class))
+                chart=lv_obj_get_child(history_card,i);
+        assert(chart&&!lv_obj_has_flag(chart,LV_OBJ_FLAG_CLICKABLE));
+        assert(lv_chart_get_point_count(chart)==PANEL_HISTORY_DRAWN);
+        lv_refr_now(screen);
+        assert(complaints==0);
+        // A new screen for a new language keeps the history and the window.
+        panel_settings_t german=chosen;german.language=PANEL_GERMAN;
+        panel_ui_create(action,setting,sound,&german);
+        page=lv_obj_get_child(find_band(lv_screen_active()),4);
+        assert(label(page,"GPU-Last")&&label(page,"Verlauf"));
+        assert(label(page,"80 °C")&&label(page,"-60 Min"));
+        assert(!label(page,"Noch keine Werte"));
+        lv_refr_now(screen);
+        assert(complaints==0);
+        panel_ui_create(action,setting,sound,&english);
+    }
+
+    puts("OK: five pages that snap, the session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
          "them drawn with nothing for LVGL to complain about, the battery of "
          "the panel in the corner with the network mark against it, the "
@@ -1144,6 +1294,7 @@ int main(void)
          "display sliders, the clock with a timer that rings, and two "
          "controllers in the head with a page of four behind it, and the "
          "page of the PC that scrolls, and a choice of sensor for each tile "
-         "of the temperatures, and the page of the panel with its update.");
+         "of the temperatures, and the page of the panel with its update, "
+         "and the page of the card with its history.");
     return 0;
 }

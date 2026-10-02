@@ -295,7 +295,11 @@ class AnswerSizeTest(unittest.TestCase):
             for core in range(40):
                 cores["temp%d_input" % (core + 1)] = 99000
                 cores["temp%d_label" % (core + 1)] = "Core %d" % (core + 100)
-        card = {"device/mem_info_vram_total": 1 << 40}
+        card = {"device/mem_info_vram_total": 1 << 40,
+                "device/mem_info_vram_used": 1 << 40,
+                "device/gpu_busy_percent": 100,
+                "freq1_input": companion.SANE_MHZ * companion.HERTZ_PER_MHZ,
+                "freq1_label": "sclk", "power1_average": 1999000000}
         for sensor in range(12):
             card["temp%d_input" % (sensor + 1)] = 99000
             card["temp%d_label" % (sensor + 1)] = "junction%d" % sensor
@@ -368,6 +372,7 @@ class AnswerSizeTest(unittest.TestCase):
         self.assertEqual(len(answer["telemetry"]["gpu_sensors"]),
                          companion.PANEL_SENSORS)
         self.assertEqual(len(answer["playing"]), companion.PLAYING_CHARS)
+        self.assertEqual(answer["telemetry"]["gpu_mhz"], companion.SANE_MHZ)
         size = len(json.dumps(answer, separators=(",", ":")).encode())
         buffer = int(re.search(r"typedef struct \{ char data\[(\d+)\];",
                                self.firmware("main.c")).group(1))
@@ -439,7 +444,57 @@ class TelemetryTest(unittest.TestCase):
     def test_a_machine_with_no_sensors_reports_a_dash_for_each(self):
         self.assertEqual(companion.telemetry("/does/not/exist"),
                          {"cpu_c": None, "gpu_c": None, "gpu_w": None,
+                          "gpu_load": None, "vram_used": None,
+                          "vram_total": None, "gpu_mhz": None,
                           "cpu_sensors": [], "gpu_sensors": []})
+
+    # The board: an RX 9070 XT at work, with 9.8 of 16 GB in use and the
+    # shader clock at 2450 MHz. amdgpu writes the clock in hertz.
+    CARD = {"temp1_input": 56000, "power1_average": 245000000,
+            "freq1_input": 2450000000, "freq1_label": "sclk",
+            "freq2_input": 1258000000, "freq2_label": "mclk",
+            "device/gpu_busy_percent": 87,
+            "device/mem_info_vram_used": 10522460160,
+            "device/mem_info_vram_total": 17163091968}
+
+    def test_the_load_the_memory_and_the_clock_of_the_card(self):
+        said = companion.telemetry(self.machine([("amdgpu", self.CARD)]))
+        self.assertEqual({key: said[key] for key in
+                          ("gpu_load", "vram_used", "vram_total", "gpu_mhz")},
+                         {"gpu_load": 87, "vram_used": 10522460160,
+                          "vram_total": 17163091968, "gpu_mhz": 2450})
+
+    def test_they_come_from_the_card_and_not_the_graphics_part(self):
+        """The Ryzen has its own amdgpu chip, busy with nothing. The values
+        are the ones of the card that the temperature comes from."""
+        small = {"temp1_input": 35000, "freq1_input": 400000000,
+                 "freq1_label": "sclk", "device/gpu_busy_percent": 3,
+                 "device/mem_info_vram_used": 100,
+                 "device/mem_info_vram_total": 512}
+        said = companion.telemetry(self.machine([("amdgpu", small),
+                                                 ("amdgpu", self.CARD)]))
+        self.assertEqual((said["gpu_load"], said["gpu_mhz"],
+                          said["vram_total"]), (87, 2450, 17163091968))
+
+    def test_the_clock_is_the_one_named_sclk(self):
+        """freq2 is the memory clock. A first freq that is not sclk is no
+        shader clock, and the panel gets a dash and not the wrong one."""
+        card = dict(self.CARD, freq1_label="mclk")
+        said = companion.telemetry(self.machine([("amdgpu", card)]))
+        self.assertIsNone(said["gpu_mhz"])
+        card = {key: value for key, value in self.CARD.items()
+                if key != "freq1_label"}
+        said = companion.telemetry(self.machine([("amdgpu", card)]))
+        self.assertIsNone(said["gpu_mhz"])
+
+    def test_what_cannot_be_is_no_reading(self):
+        card = dict(self.CARD, **{"device/gpu_busy_percent": 140,
+                                  "device/mem_info_vram_used": 17163091969,
+                                  "freq1_input": 20000000000})
+        said = companion.telemetry(self.machine([("amdgpu", card)]))
+        self.assertEqual((said["gpu_load"], said["vram_used"],
+                          said["vram_total"], said["gpu_mhz"]),
+                         (None, None, None, None))
 
     def test_a_reading_outside_the_possible_is_no_reading(self):
         root = self.machine([("k10temp", {"temp1_input": 4000000})])
