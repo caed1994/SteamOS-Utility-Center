@@ -38,7 +38,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import desktop, steamapps, steamcontroller, temperature
+from . import desktop, pcinfo, steamapps, steamcontroller, temperature
 
 # The port, and the file that holds the shared secret.
 #
@@ -526,6 +526,48 @@ def telemetry(root=temperature.HWMON_ROOT):
     }
 
 
+# The load of the processor between two answers. See pcinfo.CpuLoad.
+_cpu_load = pcinfo.CpuLoad()
+
+
+def fans(root=temperature.HWMON_ROOT):
+    """The fastest fan of the graphics card and of the rest, in rpm.
+
+    None where no chip of that kind reports a fan, which is the case on a
+    board whose fan chip has no driver loaded. The card is the one that
+    telemetry reads, and the rest is every other chip.
+    """
+    place = _graphics_card(temperature.find_sensors(root))
+    gpu, other = [], []
+    for fan in temperature.find_fans(root):
+        if fan["place"] == place:
+            gpu.append(fan["rpm"])
+        elif fan["chip"].lower() not in GPU_CHIPS:
+            other.append(fan["rpm"])
+    return {"fan": max(other) if other else None,
+            "gpu_fan": max(gpu) if gpu else None}
+
+
+def pc(address=None, root=temperature.HWMON_ROOT):
+    """The page of the PC: the system, the hardware and the network.
+
+    address is the one the panel connected to. See pcinfo.network.
+    """
+    place = _graphics_card(temperature.find_sensors(root))
+    card = os.path.realpath(os.path.join(place, "device")) if place else None
+    out = dict(pcinfo.system())
+    out.update({
+        "uptime": pcinfo.uptime(),
+        "cpu": pcinfo.cpu_model(),
+        "cpu_load": _cpu_load.percent(),
+        "gpu": pcinfo.gpu_model(card),
+        "memory": pcinfo.memory(),
+    })
+    out.update(fans(root))
+    out["network"] = pcinfo.network(address)
+    return out
+
+
 def _is_wired(name, root=NET_ROOT):
     """Whether that card is one a magic packet can reach."""
     path = os.path.join(root, name)
@@ -681,8 +723,12 @@ def session_mode():
     return "game" if desktop.running_game_mode() else "desktop"
 
 
-def status():
-    """Everything one GET answers with."""
+def status(address=None):
+    """Everything one GET answers with.
+
+    address is the one of this machine that the panel connected to, for the
+    page of the PC.
+    """
     return {
         "host": os.uname().nodename,
         # The Steam Controller of 2026 first, because the panel shows the
@@ -703,6 +749,7 @@ def status():
         # game with nothing to count. See steamapps.achievements.
         "achievements": steamapps.now_playing_achievements(),
         "drives": drives(),
+        "pc": pc(address),
     }
 
 
@@ -822,7 +869,8 @@ def make_handler(token, nonces=None):
             if not self.authorized():
                 return self.reply(401, {"error": "unauthorized"})
             if self.path == "/v1/status":
-                return self.reply(200, status())
+                return self.reply(200,
+                                  status(self.connection.getsockname()[0]))
             self.reply(404, {"error": "not found"})
 
         def do_POST(self):

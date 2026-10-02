@@ -61,6 +61,31 @@
                            "Kein Controller verbunden") \
     X(TXT_NO_BATTERY,      "No battery reading",    "Kein Akkustand") \
     X(TXT_PC_AUDIO,        "PC AUDIO",              "PC-TON") \
+    X(TXT_PC_DETAILS,      "PC details",            "PC-Details") \
+    X(TXT_PC_SYSTEM,       "SYSTEM",                "SYSTEM") \
+    X(TXT_PC_HARDWARE,     "HARDWARE",              "HARDWARE") \
+    X(TXT_PC_NETWORK,      "NETWORK",               "NETZWERK") \
+    X(TXT_PC_NAME,         "Name",                  "Gerätename") \
+    X(TXT_PC_OS,           "Operating system",      "Betriebssystem") \
+    X(TXT_PC_BUILD,        "Build",                 "Build-Nummer") \
+    X(TXT_PC_CHANNEL,      "Update channel",        "Update-Kanal") \
+    X(TXT_PC_KERNEL,       "Kernel",                "Kernel") \
+    X(TXT_PC_UPTIME,       "Uptime",                "Laufzeit") \
+    X(TXT_PC_CPU,          "Processor",             "Prozessor") \
+    X(TXT_PC_LOAD,         "CPU load",              "CPU-Last") \
+    X(TXT_PC_GPU,          "Graphics card",         "Grafikkarte") \
+    X(TXT_PC_MEMORY,       "Memory",                "Arbeitsspeicher") \
+    X(TXT_PC_FAN,          "Fans",                  "Lüfter") \
+    X(TXT_PC_GPU_FAN,      "GPU fan",               "GPU-Lüfter") \
+    X(TXT_PC_IP,           "IP address",            "IP-Adresse") \
+    X(TXT_PC_LINK,         "Connection",            "Verbindung") \
+    X(TXT_PC_MAC,          "MAC address",           "MAC-Adresse") \
+    X(TXT_PC_ANSWER,       "Response time",         "Antwortzeit") \
+    X(TXT_WIRED,           "Ethernet",              "LAN") \
+    X(TXT_WIRELESS,        "Wi-Fi",                 "WLAN") \
+    X(TXT_UPTIME_DAYS,     "%d d %d h %d min",      "%d T. %d Std. %d Min.") \
+    X(TXT_UPTIME_HOURS,    "%d h %d min",           "%d Std. %d Min.") \
+    X(TXT_RPM,             "%d rpm",                "%d U/min") \
     X(TXT_PC_VOLUME,       "PC VOLUME",             "PC-LAUTSTÄRKE") \
     X(TXT_PC_CONTROL,      "PC CONTROL",            "PC-STEUERUNG") \
     X(TXT_WAKE,            "Wake",                  "Aufwecken") \

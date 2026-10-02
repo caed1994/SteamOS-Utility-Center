@@ -55,6 +55,26 @@ typedef struct {
     bool charging;
 } panel_pad_t;
 
+/* The PC, as the page behind the head on the left shows it: the system,
+ * the hardware and the network, in that order. A text the service did not
+ * send is empty, a number it did not send is -1, and the screen writes
+ * "--" for both. answer_ms is the time the last answer took, which the
+ * panel measures itself. */
+#define PANEL_PC_TEXT 48
+typedef enum { PANEL_LINK_UNKNOWN, PANEL_LINK_WIRED, PANEL_LINK_WIRELESS } panel_link_t;
+typedef struct {
+    char os[32], build[24], channel[16], kernel[PANEL_PC_TEXT];
+    char cpu[PANEL_PC_TEXT], gpu[PANEL_PC_TEXT];
+    char ip[16], mac[18];
+    int32_t uptime_s;
+    int cpu_load, fan_rpm, gpu_fan_rpm;
+    /* Bytes. A total of nought means nothing to show. */
+    uint64_t memory_used, memory_total;
+    panel_link_t link;
+    int link_mbit;
+    int answer_ms;
+} panel_pc_t;
+
 /* What powers this panel, as its own power chip answers.
  *
  * Three answers and not two. A board whose chip did not answer says
@@ -82,6 +102,7 @@ typedef struct {
      * would have made that comparison fail in silence. */
     panel_pad_t pads[PANEL_PADS];
     int pad_count;
+    panel_pc_t pc;
     char setup_ssid[32], setup_password[32];
     /* The second page. game_mode says which session runs, playing holds
      * the name of the game or nothing at all, and the drives are however
@@ -123,6 +144,8 @@ void panel_ui_create(panel_action_cb_t callback, panel_setting_cb_t setting_cb, 
 void panel_ui_settings_open(void);
 /* The page of the controllers, which a tap on the head opens. */
 void panel_ui_pads_open(void);
+/* The page of the PC, which a tap on the left of the head opens. */
+void panel_ui_pc_open(void);
 void panel_ui_update(const panel_state_t *state);
 void panel_ui_confirm(panel_action_t action);
 /* What the screen shows, in a few words for the log: the page of the band,

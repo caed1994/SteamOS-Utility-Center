@@ -85,7 +85,10 @@ static SemaphoreHandle_t lock;
 static panel_state_t state;
 static panel_config_t config;
 
-typedef struct { char data[4096]; size_t length; bool overflow; } response_t;
+/* took_us is the time of the request, from the first byte out to the
+ * last one in. The page of the PC shows it as the time the PC takes to
+ * answer. */
+typedef struct { char data[4096]; size_t length; bool overflow; int64_t took_us; } response_t;
 
 static panel_settings_t settings_load(void)
 {
@@ -525,7 +528,9 @@ static int attempt(const char *path, const char *action, response_t *out)
         esp_http_client_set_header(client,"Content-Type","application/json");
         esp_http_client_set_post_field(client,payload,strlen(payload));
     }
+    int64_t began=esp_timer_get_time();
     esp_err_t err=esp_http_client_perform(client);
+    out->took_us=esp_timer_get_time()-began;
     int status=esp_http_client_get_status_code(client);
     /* A 401 is an answer and not a failure. esp_http_client takes it for
      * HTTP authentication of its own, finds no header for that and fails
@@ -537,6 +542,54 @@ static int attempt(const char *path, const char *action, response_t *out)
     last_http_error=err;
     esp_http_client_cleanup(client);
     return code;
+}
+
+/* A text of the page of the PC, cut to its room, or nothing. */
+static void pc_text(char *out,size_t room,const cJSON *object,const char *key)
+{
+    const cJSON *value=cJSON_GetObjectItemCaseSensitive(object,key);
+    snprintf(out,room,"%s",cJSON_IsString(value)?value->valuestring:"");
+}
+/* A count of the page of the PC, or -1 for none and for one past limit. */
+static int pc_number(const cJSON *object,const char *key,double limit)
+{
+    const cJSON *value=cJSON_GetObjectItemCaseSensitive(object,key);
+    return cJSON_IsNumber(value)&&value->valuedouble>=0&&value->valuedouble<=limit
+        ?(int)value->valuedouble:-1;
+}
+/* The page of the PC out of its object. A service older than this firmware
+ * sends none, and the page then shows "--" in each row. */
+static void pc_read(panel_pc_t *pc,const cJSON *object)
+{
+    memset(pc,0,sizeof *pc);
+    pc_text(pc->os,sizeof pc->os,object,"os");
+    pc_text(pc->build,sizeof pc->build,object,"build");
+    pc_text(pc->channel,sizeof pc->channel,object,"channel");
+    pc_text(pc->kernel,sizeof pc->kernel,object,"kernel");
+    pc_text(pc->cpu,sizeof pc->cpu,object,"cpu");
+    pc_text(pc->gpu,sizeof pc->gpu,object,"gpu");
+    /* Ten years of seconds, and a count past that is not an uptime. */
+    pc->uptime_s=pc_number(object,"uptime",10.0*366*24*3600);
+    pc->cpu_load=pc_number(object,"cpu_load",100);
+    pc->fan_rpm=pc_number(object,"fan",100000);
+    pc->gpu_fan_rpm=pc_number(object,"gpu_fan",100000);
+    const cJSON *memory=cJSON_GetObjectItemCaseSensitive(object,"memory");
+    const cJSON *used=cJSON_GetObjectItemCaseSensitive(memory,"used");
+    const cJSON *total=cJSON_GetObjectItemCaseSensitive(memory,"total");
+    if(cJSON_IsNumber(used)&&cJSON_IsNumber(total)&&total->valuedouble>0
+       &&used->valuedouble>=0&&used->valuedouble<=total->valuedouble){
+        pc->memory_used=(uint64_t)used->valuedouble;
+        pc->memory_total=(uint64_t)total->valuedouble;
+    }
+    const cJSON *network=cJSON_GetObjectItemCaseSensitive(object,"network");
+    pc_text(pc->ip,sizeof pc->ip,network,"ip");
+    pc_text(pc->mac,sizeof pc->mac,network,"mac");
+    const cJSON *kind=cJSON_GetObjectItemCaseSensitive(network,"kind");
+    pc->link=!cJSON_IsString(kind)?PANEL_LINK_UNKNOWN
+        :strcmp(kind->valuestring,"wired")==0?PANEL_LINK_WIRED
+        :strcmp(kind->valuestring,"wireless")==0?PANEL_LINK_WIRELESS:PANEL_LINK_UNKNOWN;
+    pc->link_mbit=pc_number(network,"speed",1000000);
+    pc->answer_ms=-1;
 }
 
 static int request(const char *path, const char *action)
@@ -551,6 +604,7 @@ static int request(const char *path, const char *action)
     if (code==401) code=attempt(path,action,out);
     if (code!=200 || action) { free(out); return code; }
     cJSON *root=cJSON_Parse(out->data);
+    int answer_ms=(int)(out->took_us/1000);
     free(out);
     if (!cJSON_IsObject(root)) { cJSON_Delete(root); return 0; }
     cJSON *items=cJSON_GetObjectItemCaseSensitive(root,"controllers");
@@ -580,6 +634,9 @@ static int request(const char *path, const char *action)
         pad->charging=cJSON_IsString(charging)
             &&strcmp(charging->valuestring,"Charging")==0;
     }
+    panel_pc_t pc;
+    pc_read(&pc,cJSON_GetObjectItemCaseSensitive(root,"pc"));
+    pc.answer_ms=answer_ms;
     cJSON *volume=cJSON_GetObjectItemCaseSensitive(audio,"percent");
     cJSON *muted=cJSON_GetObjectItemCaseSensitive(audio,"muted");
     /* The second and third pages. Each one is optional: a service that is
@@ -591,6 +648,7 @@ static int request(const char *path, const char *action)
     xSemaphoreTake(lock,portMAX_DELAY);
     memcpy(state.pads,pads,sizeof state.pads);
     state.pad_count=pad_count;
+    state.pc=pc;
     state.volume=cJSON_IsNumber(volume) && volume->valueint>=0 && volume->valueint<=100 ? volume->valueint : -1;
     state.muted=cJSON_IsTrue(muted);
     cJSON *telemetry=cJSON_GetObjectItemCaseSensitive(root,"telemetry");

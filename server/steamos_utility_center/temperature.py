@@ -140,6 +140,26 @@ def find_sensors(root=HWMON_ROOT):
     return found
 
 
+def find_fans(root=HWMON_ROOT):
+    """Returns each fan on the machine, as a dictionary.
+
+    Each dictionary has chip, place, the directory of that chip, and rpm.
+    A fan that stands still says nought, which is an answer: a graphics
+    card with no load stops its fans.
+    """
+    found = []
+    for chip_dir in sorted(glob.glob(os.path.join(root, "hwmon*"))):
+        chip = _read_text(os.path.join(chip_dir, "name")) or "?"
+        for path in sorted(glob.glob(os.path.join(chip_dir, "fan*_input"))):
+            try:
+                rpm = int(_read_text(path) or "")
+            except ValueError:
+                continue
+            if 0 <= rpm < 100000:
+                found.append({"chip": chip, "place": chip_dir, "rpm": rpm})
+    return found
+
+
 def _rank(chip, label):
     """Returns the quality of this sensor as an answer. Lower is better."""
     lowered_chip = chip.lower()

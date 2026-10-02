@@ -103,7 +103,7 @@ class BandTest(unittest.TestCase):
         """Those are the numbers somebody reads without touching anything.
         A page that can carry them away is a page that hides them."""
         code = self.source()
-        for built in ("connection=text_at(s,", "pad_area=panel(s,",
+        for built in ("pc_area=head_area(s,", "pad_area=head_area(s,",
                       "lv_obj_t *foot=panel(s,"):
             self.assertIn(built, code,
                           "this belongs to the screen and not to a page")

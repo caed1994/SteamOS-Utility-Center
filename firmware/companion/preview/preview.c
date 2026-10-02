@@ -37,6 +37,15 @@ int main(int argc,char **argv)
                                       {"Xbox Controller",-1,false}};
     memcpy(s.pads,pads,sizeof pads);s.pad_count=4;
     if(argc>2&&strcmp(argv[2],"pad")==0)s.pad_count=1;
+    /* The page of the PC, as the board answers. "pc" opens it and "pc-end"
+     * scrolls it to its end. */
+    static const panel_pc_t pc={.os="SteamOS 3.9.2",.build="20260925.100",.channel="Beta",
+        .kernel="7.2.7-valve1-1-neptune-72-gc8730d37f9c6",.cpu="AMD Ryzen 7 9800X3D",
+        .gpu="Radeon RX 9070/9070 XT/9070 GRE",.ip="192.168.178.42",.mac="a8:a1:59:3c:21:7e",
+        .uptime_s=2*86400+4*3600+13*60,.cpu_load=12,.fan_rpm=1180,.gpu_fan_rpm=0,
+        .memory_used=9876543210ULL,.memory_total=33554432000ULL,.link=PANEL_LINK_WIRED,
+        .link_mbit=2500,.answer_ms=38};
+    s.pc=pc;
     /* The battery of the panel itself, for the corner of the main screen.
      * A real board shows this only once its power chip answers. */
     s.esp_supply=PANEL_SUPPLY_BATTERY;s.esp_battery=87;
@@ -91,6 +100,12 @@ int main(int argc,char **argv)
         }
     }
     if(argc>2&&strcmp(argv[2],"pads")==0)panel_ui_pads_open();
+    if(argc>2&&strncmp(argv[2],"pc",2)==0)panel_ui_pc_open();
+    if(argc>2&&strcmp(argv[2],"pc-end")==0){
+        lv_obj_t *page=lv_obj_get_child(lv_screen_active(),-1);
+        lv_obj_update_layout(page);
+        lv_obj_scroll_to_y(page,LV_COORD_MAX,LV_ANIM_OFF);
+    }
     if(argc>2&&strcmp(argv[2],"confirm")==0)panel_ui_confirm(PANEL_POWEROFF);
     if(argc>2&&strncmp(argv[2],"settings",8)==0)panel_ui_settings_open();
     /* The settings scroll, and the end of them is a page of its own to

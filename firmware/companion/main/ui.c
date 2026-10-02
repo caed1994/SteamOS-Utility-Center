@@ -76,6 +76,40 @@ static lv_obj_t *settings_screen, *sound_value, *sound_status;
 #define PAD_BAR_LEFT 56
 #define PAD_BAR_WIDTH 368
 static lv_obj_t *pad_area,*pad_icons[PAD_HEAD],*pad_values[PAD_HEAD];
+/* The left of the head, the PC and its connection, which opens the page of
+ * the PC. */
+static lv_obj_t *pc_area;
+/* The page of the PC: three cards, the system, the hardware and the
+ * network, with a row for each thing in them. */
+enum { PC_NAME, PC_OS, PC_BUILD, PC_CHANNEL, PC_KERNEL, PC_UPTIME,
+       PC_CPU, PC_LOAD, PC_GPU, PC_MEMORY, PC_FAN, PC_GPU_FAN,
+       PC_IP, PC_LINK, PC_MAC, PC_ANSWER, PC_ROWS };
+#define PC_GROUPS 3
+static const struct { uint8_t group; panel_text_id_t name; } pc_rows[PC_ROWS]={
+    {0,TXT_PC_NAME},{0,TXT_PC_OS},{0,TXT_PC_BUILD},{0,TXT_PC_CHANNEL},
+    {0,TXT_PC_KERNEL},{0,TXT_PC_UPTIME},
+    {1,TXT_PC_CPU},{1,TXT_PC_LOAD},{1,TXT_PC_GPU},{1,TXT_PC_MEMORY},
+    {1,TXT_PC_FAN},{1,TXT_PC_GPU_FAN},
+    {2,TXT_PC_IP},{2,TXT_PC_LINK},{2,TXT_PC_MAC},{2,TXT_PC_ANSWER}};
+static const panel_text_id_t pc_titles[PC_GROUPS]={TXT_PC_SYSTEM,TXT_PC_HARDWARE,TXT_PC_NETWORK};
+static lv_obj_t *pc_screen,*pc_none,*pc_cards[PC_GROUPS],*pc_values[PC_ROWS];
+static lv_obj_t *pc_memory_track,*pc_memory_bar;
+/* The cards of the page of the PC: the title of a card, a row for each
+ * thing 30 apart, the bar of the memory under its row, and the room at
+ * the end of a card and between two. A row is one line at 14 px, its name
+ * on the left and its value on the right: "Radeon RX 9070/9070 XT/9070
+ * GRE" fits the value at that size, and a longer one ends in dots. */
+#define PC_CARD_TOP 78
+#define PC_TITLE_ROOM 40
+#define PC_ROW_STEP 30
+#define PC_BAR_ROOM 14
+#define PC_CARD_END 10
+#define PC_CARD_GAP 14
+#define PC_NAME_WIDTH 140
+#define PC_VALUE_X 150
+#define PC_VALUE_WIDTH 272
+#define PC_BAR_WIDTH 404
+static void say_size(char *out,size_t room,uint64_t bytes);
 /* The page of the controllers, one card for each of four. */
 static lv_obj_t *pads_screen,*pads_none;
 static lv_obj_t *pad_cards[PANEL_PADS],*pad_names[PANEL_PADS],*pad_levels[PANEL_PADS];
@@ -425,7 +459,7 @@ static void pads_show(const panel_state_t *s)
 static void pads_close(lv_event_t *e){(void)e;feedback();pads_forget();}
 void panel_ui_pads_open(void)
 {
-    if(pads_screen||settings_screen||setup_screen)return;
+    if(pads_screen||pc_screen||settings_screen||setup_screen)return;
     pads_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
     button(pads_screen,panel_text(TXT_BACK),12,8,112,44,pads_close,0);
     text_at(pads_screen,panel_text(TXT_CONTROLLERS),136,20,200,&panel_font_20,TEXT);
@@ -454,12 +488,163 @@ void panel_ui_pads_open(void)
     if(last_state_valid)pads_show(&last_state);
 }
 static void pads_clicked(lv_event_t *e){(void)e;feedback();panel_ui_pads_open();}
+/* A place of the head that opens a page: no face of its own, and a shade
+ * while a finger is on it. */
+static lv_obj_t *head_area(lv_obj_t *s,int x,int width,lv_event_cb_t opens)
+{
+    lv_obj_t *o=panel(s,x,0,width,57,BG,false);
+    lv_obj_set_style_bg_opa(o,LV_OPA_TRANSP,0);
+    lv_obj_set_style_bg_color(o,lv_color_hex(EDGE),LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(o,LV_OPA_40,LV_STATE_PRESSED);
+    lv_obj_add_event_cb(o,opens,LV_EVENT_CLICKED,NULL);
+    return o;
+}
+/* Every pointer into the page of the PC, dropped. The rule of
+ * settings_drop: this only drops, and pc_forget deletes as well. */
+static void pc_drop(void)
+{
+    pc_screen=NULL;pc_none=NULL;pc_memory_track=NULL;pc_memory_bar=NULL;
+    for(int i=0;i<PC_GROUPS;i++)pc_cards[i]=NULL;
+    for(int i=0;i<PC_ROWS;i++)pc_values[i]=NULL;
+}
+static void pc_forget(void)
+{
+    if(pc_screen)lv_obj_delete(pc_screen);
+    pc_drop();
+}
+static void pc_say(int row,const char *text)
+{
+    if(pc_values[row])lv_label_set_text(pc_values[row],text&&text[0]?text:"--");
+}
+/* The uptime in days, hours and minutes, and with no days below one. */
+static void pc_uptime(char *out,size_t room,int32_t seconds)
+{
+    if(seconds<0){snprintf(out,room,"--");return;}
+    int days=(int)(seconds/86400),hours=(int)(seconds%86400/3600),minutes=(int)(seconds%3600/60);
+    if(days>0)snprintf(out,room,panel_text(TXT_UPTIME_DAYS),days,hours,minutes);
+    else snprintf(out,room,panel_text(TXT_UPTIME_HOURS),hours,minutes);
+}
+static void pc_count(char *out,size_t room,const char *format,int value)
+{
+    if(value<0)snprintf(out,room,"--");
+    else snprintf(out,room,format,value);
+}
+/* The card the PC answers through: what it is, and how fast where the
+ * kernel says. 1000 Mbit/s and up is written in Gbit/s, as a box says it. */
+static void pc_link(char *out,size_t room,const panel_pc_t *pc)
+{
+    if(pc->link==PANEL_LINK_UNKNOWN){snprintf(out,room,"--");return;}
+    const char *kind=panel_text(pc->link==PANEL_LINK_WIRED?TXT_WIRED:TXT_WIRELESS);
+    if(pc->link_mbit<=0)snprintf(out,room,"%s",kind);
+    else if(pc->link_mbit>=1000&&pc->link_mbit%1000==0)snprintf(out,room,"%s, %d Gbit/s",kind,pc->link_mbit/1000);
+    else if(pc->link_mbit>=1000)snprintf(out,room,"%s, %d.%d Gbit/s",kind,pc->link_mbit/1000,pc->link_mbit%1000/100);
+    else snprintf(out,room,"%s, %d Mbit/s",kind,pc->link_mbit);
+}
+static void pc_show(const panel_state_t *s)
+{
+    if(!pc_screen)return;
+    /* What a PC that does not answer said last is no answer to show. */
+    for(int i=0;i<PC_GROUPS;i++){
+        if(s->online)lv_obj_remove_flag(pc_cards[i],LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(pc_cards[i],LV_OBJ_FLAG_HIDDEN);
+    }
+    if(s->online)lv_obj_add_flag(pc_none,LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(pc_none,LV_OBJ_FLAG_HIDDEN);
+    if(!s->online)return;
+    const panel_pc_t *pc=&s->pc;
+    char said[64];
+    pc_say(PC_NAME,s->host);
+    pc_say(PC_OS,pc->os);
+    pc_say(PC_BUILD,pc->build);
+    pc_say(PC_CHANNEL,pc->channel);
+    pc_say(PC_KERNEL,pc->kernel);
+    pc_uptime(said,sizeof said,pc->uptime_s);pc_say(PC_UPTIME,said);
+    pc_say(PC_CPU,pc->cpu);
+    pc_count(said,sizeof said,"%d %%",pc->cpu_load);pc_say(PC_LOAD,said);
+    pc_say(PC_GPU,pc->gpu);
+    if(pc->memory_total>0){
+        char used[16],total[16];
+        say_size(used,sizeof used,pc->memory_used);
+        say_size(total,sizeof total,pc->memory_total);
+        /* One unit for both: "9.2 / 31.3 GB" and not "9.2 GB / 31.3 GB". */
+        char *unit=strstr(used," GB");
+        if(unit)*unit=0;
+        snprintf(said,sizeof said,"%s / %s",used,total);
+        pc_say(PC_MEMORY,said);
+        lv_obj_remove_flag(pc_memory_track,LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_width(pc_memory_bar,(int32_t)(PC_BAR_WIDTH*pc->memory_used/pc->memory_total));
+    }else{
+        pc_say(PC_MEMORY,"");
+        lv_obj_add_flag(pc_memory_track,LV_OBJ_FLAG_HIDDEN);
+    }
+    pc_count(said,sizeof said,panel_text(TXT_RPM),pc->fan_rpm);pc_say(PC_FAN,said);
+    pc_count(said,sizeof said,panel_text(TXT_RPM),pc->gpu_fan_rpm);pc_say(PC_GPU_FAN,said);
+    pc_say(PC_IP,pc->ip);
+    pc_link(said,sizeof said,pc);pc_say(PC_LINK,said);
+    pc_say(PC_MAC,pc->mac);
+    pc_count(said,sizeof said,"%d ms",pc->answer_ms);pc_say(PC_ANSWER,said);
+}
+static void pc_close(lv_event_t *e){(void)e;feedback();pc_forget();}
+void panel_ui_pc_open(void)
+{
+    if(pc_screen||pads_screen||settings_screen||setup_screen)return;
+    pc_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    button(pc_screen,panel_text(TXT_BACK),12,8,112,44,pc_close,0);
+    text_at(pc_screen,panel_text(TXT_PC_DETAILS),136,20,320,&panel_font_20,TEXT);
+    line(pc_screen,0,62,480,1);
+    /* More than a screen holds, so it scrolls up and down, the way the
+     * settings do. */
+    lv_obj_add_flag(pc_screen,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(pc_screen,LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(pc_screen,LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_pad_bottom(pc_screen,20,0);
+    pc_none=text_at(pc_screen,panel_text(TXT_PC_OFFLINE),20,220,440,&panel_font_18,MUTED);
+    center_text(pc_none);
+    int top=PC_CARD_TOP;
+    for(int g=0;g<PC_GROUPS;g++){
+        int rows=0;
+        for(int r=0;r<PC_ROWS;r++)if(pc_rows[r].group==g)rows++;
+        int height=PC_TITLE_ROOM+rows*PC_ROW_STEP+(g==1?PC_BAR_ROOM:0)+PC_CARD_END;
+        lv_obj_t *card=panel(pc_screen,20,top,440,height,CARD,true);
+        lv_obj_remove_flag(card,LV_OBJ_FLAG_CLICKABLE);
+        pc_cards[g]=card;
+        text_at(card,panel_text(pc_titles[g]),18,14,300,&panel_font_12,MUTED);
+        int y=PC_TITLE_ROOM;
+        for(int r=0;r<PC_ROWS;r++){
+            if(pc_rows[r].group!=g)continue;
+            /* One line each, with a height of one line: a label as wide as
+             * its text wraps, and the dots of LONG_DOT need the height. */
+            int32_t high=lv_font_get_line_height(&panel_font_14);
+            lv_obj_t *name=text_at(card,panel_text(pc_rows[r].name),18,y,PC_NAME_WIDTH,&panel_font_14,MUTED);
+            lv_obj_set_height(name,high);
+            pc_values[r]=text_at(card,"--",PC_VALUE_X,y,PC_VALUE_WIDTH,&panel_font_14,TEXT);
+            lv_obj_set_height(pc_values[r],high);
+            lv_obj_set_style_text_align(pc_values[r],LV_TEXT_ALIGN_RIGHT,0);
+            y+=PC_ROW_STEP;
+            if(r==PC_MEMORY){
+                /* The bar of the memory, under its row, as long as the share
+                 * in use. */
+                pc_memory_track=panel(card,18,y-8,PC_BAR_WIDTH,8,EDGE,false);
+                lv_obj_set_style_radius(pc_memory_track,LV_RADIUS_CIRCLE,0);
+                lv_obj_remove_flag(pc_memory_track,LV_OBJ_FLAG_CLICKABLE);
+                pc_memory_bar=panel(pc_memory_track,0,0,0,8,BLUE,false);
+                lv_obj_set_style_radius(pc_memory_bar,LV_RADIUS_CIRCLE,0);
+                lv_obj_remove_flag(pc_memory_bar,LV_OBJ_FLAG_CLICKABLE);
+                y+=PC_BAR_ROOM;
+            }
+        }
+        top+=height+PC_CARD_GAP;
+    }
+    if(last_state_valid)pc_show(&last_state);
+}
+static void pc_clicked(lv_event_t *e){(void)e;feedback();panel_ui_pc_open();}
 const char *panel_ui_where(void)
 {
     if(setup_screen)return "the setup";
     if(overlay)return "a question";
     if(settings_screen)return "the settings";
     if(pads_screen)return "the controllers";
+    if(pc_screen)return "the PC";
     if(!band)return "no screen";
     /* Read from where the band stands: a swipe that did not carry far
      * enough left it on the page it was on. */
@@ -622,8 +807,9 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * panel_ui_settings_open returns at once and the page never opens
      * again. check_navigation builds the screens with that page open. */
     settings_drop();
-    /* The page of the controllers too, for the same reason. */
-    pads_drop();
+    /* The pages of the controllers and of the PC too, for the same
+     * reason. */
+    pads_drop();pc_drop();
     /* The band and everything on the second and third pages are children
      * of this screen too. A pointer kept past the clean above is a pointer
      * to freed memory, and panel_ui_update writes through these. */
@@ -644,19 +830,22 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     /* The font of a label that names none, so that no text on this screen
      * falls back to a built-in font without the German letters. */
     lv_obj_set_style_text_font(s,&panel_font_16,0);
-    icon(s,&icon_monitor,14,19,MUTED);line(s,50,16,1,28);
-    connection=text_at(s,panel_text(TXT_PC_OFFLINE),62,22,140,&panel_font_14,TEXT);
-    dot=panel(s,202,26,9,9,0x60758A,false);lv_obj_set_style_radius(dot,LV_RADIUS_CIRCLE,0);
+    /* The PC and its connection, and the whole of it one place to tap: the
+     * page of the PC opens from it. */
+    pc_area=head_area(s,0,234,pc_clicked);
+    lv_obj_t *monitor=icon(pc_area,&icon_monitor,14,19,MUTED);
+    lv_obj_remove_flag(monitor,LV_OBJ_FLAG_CLICKABLE);
+    line(pc_area,50,16,1,28);
+    connection=text_at(pc_area,panel_text(TXT_PC_OFFLINE),62,22,140,&panel_font_14,TEXT);
+    lv_obj_remove_flag(connection,LV_OBJ_FLAG_CLICKABLE);
+    dot=panel(pc_area,202,26,9,9,0x60758A,false);lv_obj_set_style_radius(dot,LV_RADIUS_CIRCLE,0);
+    lv_obj_remove_flag(dot,LV_OBJ_FLAG_CLICKABLE);
     line(s,234,16,1,28);
     /* The controllers, two side by side over the whole right of the head,
      * with no caption: the icon says what the number is. The value stands
      * at the height of the middle of its icon. A tap anywhere on the two
      * opens the page of the controllers, which has room for four. */
-    pad_area=panel(s,235,0,245,57,BG,false);
-    lv_obj_set_style_bg_opa(pad_area,LV_OPA_TRANSP,0);
-    lv_obj_set_style_bg_color(pad_area,lv_color_hex(EDGE),LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(pad_area,LV_OPA_40,LV_STATE_PRESSED);
-    lv_obj_add_event_cb(pad_area,pads_clicked,LV_EVENT_CLICKED,NULL);
+    pad_area=head_area(s,235,245,pads_clicked);
     {
         int32_t high=lv_font_get_line_height(&panel_font_16);
         for(int i=0;i<PAD_HEAD;i++){
@@ -934,7 +1123,7 @@ void panel_ui_update(const panel_state_t *s)
     memcpy(&last_state,s,sizeof(*s));last_state_valid=true;
     if(sound_status)lv_label_set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
     if(s->setup){
-        settings_forget();pads_forget();
+        settings_forget();pads_forget();pc_forget();
         if(!setup_screen){
             if(overlay){lv_obj_delete(overlay);overlay=NULL;}
             setup_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
@@ -948,6 +1137,7 @@ void panel_ui_update(const panel_state_t *s)
     lv_obj_set_style_bg_color(dot,lv_color_hex(s->online?0x70C256:0x60758A),0);
     pads_head(s);
     pads_show(s);
+    pc_show(s);
     esp_power_show(s);
     bool audio=s->online&&s->volume>=0;
     lv_label_set_text(audio_status,!audio?"--":s->muted?panel_text(TXT_MUTED):panel_text(TXT_ACTIVE));

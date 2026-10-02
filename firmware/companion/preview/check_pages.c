@@ -755,12 +755,141 @@ int main(void)
         assert(complaints==0);
     }
 
+    // The page of the PC: the left of the head opens it, and it scrolls
+    // up and down through the system, the hardware and the network.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_state_t c=base();
+        strcpy(c.host,"FractalMachine");
+        panel_pc_t pc={.os="SteamOS 3.9.2",.build="20260925.100",.channel="Beta",
+            .kernel="7.2.7-valve1-1-neptune-72-gc8730d37f9c6",.cpu="AMD Ryzen 7 9800X3D",
+            .gpu="Radeon RX 9070/9070 XT/9070 GRE",.ip="192.168.178.42",.mac="a8:a1:59:3c:21:7e",
+            .uptime_s=2*86400+4*3600+13*60,.cpu_load=12,.fan_rpm=1180,.gpu_fan_rpm=0,
+            .memory_used=10ULL<<30,.memory_total=32ULL<<30,.link=PANEL_LINK_WIRED,
+            .link_mbit=1000,.answer_ms=38};
+        c.pc=pc;
+        panel_ui_update(&c);
+        lv_obj_t *screen_now=lv_screen_active();
+        lv_obj_t *left=lv_obj_get_parent(label(screen_now,panel_text(TXT_PC_ONLINE)));
+        assert(left&&left!=screen_now);
+        lv_obj_send_event(left,LV_EVENT_CLICKED,NULL);
+        assert(label(screen_now,panel_text(TXT_PC_DETAILS)));
+        assert(strcmp(panel_ui_where(),"the PC")==0);
+        // The other page does not open over this one.
+        panel_ui_pads_open();
+        assert(strcmp(panel_ui_where(),"the PC")==0);
+        lv_obj_t *page=lv_obj_get_child(screen_now,-1);
+        static const char *const shown[]={"FractalMachine","SteamOS 3.9.2","20260925.100",
+            "Beta","2 d 4 h 13 min","AMD Ryzen 7 9800X3D","12 %",
+            "Radeon RX 9070/9070 XT/9070 GRE","10.0 / 32.0 GB","1180 rpm","0 rpm",
+            "192.168.178.42","Ethernet, 1 Gbit/s","a8:a1:59:3c:21:7e","38 ms"};
+        for(unsigned i=0;i<sizeof shown/sizeof *shown;i++)assert(label(page,shown[i]));
+        // In the order of the page: the system, the hardware, the network.
+        lv_obj_update_layout(screen_now);
+        lv_area_t system_at,hardware_at,network_at;
+        lv_obj_get_coords(label(page,panel_text(TXT_PC_SYSTEM)),&system_at);
+        lv_obj_get_coords(label(page,panel_text(TXT_PC_HARDWARE)),&hardware_at);
+        lv_obj_get_coords(label(page,panel_text(TXT_PC_NETWORK)),&network_at);
+        assert(system_at.y1<hardware_at.y1&&hardware_at.y1<network_at.y1);
+        // More than a screen, so it scrolls, and only up and down.
+        assert(lv_obj_has_flag(page,LV_OBJ_FLAG_SCROLLABLE));
+        assert(lv_obj_get_scroll_dir(page)==LV_DIR_VER);
+        assert(lv_obj_get_scroll_bottom(page)>0);
+        // Each row is one line. Its value fits, the name of the card does,
+        // and the bar of the memory is as long as its share.
+        // The kernel is longer than its room and ends in dots, which LVGL
+        // writes into the text. Its label is the one after its name.
+        lv_obj_t *kernel_name=label(page,panel_text(TXT_PC_KERNEL));
+        lv_obj_t *kernel=lv_obj_get_child(lv_obj_get_parent(kernel_name),
+                                          lv_obj_get_index(kernel_name)+1);
+        assert(strncmp(lv_label_get_text(kernel),"7.2.7-valve1",12)==0);
+        assert(lv_obj_get_height(kernel)==lv_font_get_line_height(&panel_font_14));
+        lv_point_t room;
+        lv_obj_t *gpu=label(page,"Radeon RX 9070/9070 XT/9070 GRE");
+        lv_text_get_size(&room,lv_label_get_text(gpu),&panel_font_14,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+        assert(room.x<=lv_obj_get_width(gpu));
+        lv_obj_t *memory_row=label(page,"10.0 / 32.0 GB");
+        lv_obj_t *card=lv_obj_get_parent(memory_row);
+        lv_obj_t *track=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+            lv_obj_t *o=lv_obj_get_child(card,i);
+            if(lv_obj_get_child_count(o)==1&&!lv_obj_check_type(o,&lv_label_class))track=o;
+        }
+        assert(track&&lv_obj_get_width(lv_obj_get_child(track,0))==lv_obj_get_width(track)*10/32);
+        // A number nobody sent is "--", and so is a text.
+        panel_pc_t none={.uptime_s=-1,.cpu_load=-1,.fan_rpm=-1,.gpu_fan_rpm=-1,.link_mbit=-1,.answer_ms=-1};
+        c.pc=none;
+        panel_ui_update(&c);
+        unsigned dashes=0;
+        for(unsigned g=0;g<lv_obj_get_child_count(page);g++){
+            lv_obj_t *one=lv_obj_get_child(page,g);
+            for(unsigned i=0;i<lv_obj_get_child_count(one);i++){
+                lv_obj_t *o=lv_obj_get_child(one,i);
+                if(lv_obj_check_type(o,&lv_label_class)&&strcmp(lv_label_get_text(o),"--")==0)dashes++;
+            }
+        }
+        // Every row but the name, which the PC sends with every answer.
+        assert(dashes==15);
+        assert(!label(page,"10.0 / 32.0 GB"));
+        // A PC that does not answer: the page says so and shows no card.
+        c.pc=pc;c.online=false;
+        panel_ui_update(&c);
+        assert(label(page,panel_text(TXT_PC_OFFLINE)));
+        assert(!label(page,"SteamOS 3.9.2")&&!label(page,panel_text(TXT_PC_SYSTEM)));
+        c.online=true;
+        panel_ui_update(&c);
+        assert(label(page,"SteamOS 3.9.2"));
+        lv_refr_now(screen);
+        assert(complaints==0);
+        click(panel_text(TXT_BACK));
+        assert(!label(screen_now,panel_text(TXT_PC_DETAILS)));
+        // German, and a link of 2.5 Gbit/s. Every name of a row fits its
+        // room in both languages.
+        panel_settings_t german={.brightness=70,.sound_volume=30,.language=PANEL_GERMAN};
+        panel_ui_create(action,setting,sound,&german);
+        c.pc.link_mbit=2500;
+        panel_ui_update(&c);
+        panel_ui_pc_open();
+        assert(label(lv_screen_active(),"PC-Details"));
+        assert(label(lv_screen_active(),"LAN, 2.5 Gbit/s"));
+        assert(label(lv_screen_active(),"2 T. 4 Std. 13 Min."));
+        assert(label(lv_screen_active(),"1180 U/min"));
+        for(int language=0;language<2;language++){
+            panel_text_set(language==0?PANEL_ENGLISH:PANEL_GERMAN);
+            static const panel_text_id_t names[]={TXT_PC_NAME,TXT_PC_OS,TXT_PC_BUILD,
+                TXT_PC_CHANNEL,TXT_PC_KERNEL,TXT_PC_UPTIME,TXT_PC_CPU,TXT_PC_LOAD,
+                TXT_PC_GPU,TXT_PC_MEMORY,TXT_PC_FAN,TXT_PC_GPU_FAN,TXT_PC_IP,
+                TXT_PC_LINK,TXT_PC_MAC,TXT_PC_ANSWER};
+            for(unsigned i=0;i<sizeof names/sizeof *names;i++){
+                lv_text_get_size(&room,panel_text(names[i]),&panel_font_14,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+                assert(room.x<=140);
+            }
+        }
+        panel_text_set(PANEL_GERMAN);
+        // The setup takes the page away, and a new screen drops it.
+        c.setup=true;
+        panel_ui_update(&c);
+        assert(!label(lv_screen_active(),"PC-Details"));
+        c.setup=false;
+        panel_ui_create(action,setting,sound,&english);
+        panel_ui_pc_open();
+        panel_ui_create(action,setting,sound,&english);
+        assert(!label(lv_screen_active(),panel_text(TXT_PC_DETAILS)));
+        panel_ui_pc_open();
+        assert(label(lv_screen_active(),panel_text(TXT_PC_DETAILS)));
+        lv_refr_now(screen);
+        assert(complaints==0);
+        panel_ui_create(action,setting,sound,&english);
+    }
+
     puts("OK: four pages that snap, the session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
          "them drawn with nothing for LVGL to complain about, the battery of "
          "the panel in the corner with the network mark against it, the "
          "achievements of the game under its name, room under both "
          "display sliders, the clock with a timer that rings, and two "
-         "controllers in the head with a page of four behind it.");
+         "controllers in the head with a page of four behind it, and the "
+         "page of the PC that scrolls.");
     return 0;
 }
