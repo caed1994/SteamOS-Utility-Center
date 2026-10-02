@@ -299,7 +299,7 @@ class StatusTest(unittest.TestCase):
     def test_the_handler_gives_the_address_the_panel_reached(self):
         source = open(os.path.join(REPO, "server", "steamos_utility_center",
                                    "companion.py")).read()
-        self.assertIn("status(self.connection.getsockname()[0])", source)
+        self.assertIn("status(self.connection.getsockname()[0],", source)
 
 
 if __name__ == "__main__":

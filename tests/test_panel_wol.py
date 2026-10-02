@@ -122,12 +122,16 @@ class TheActionTest(unittest.TestCase):
         """main.c holds a table of names indexed by the action, and the
         guard around it is a range. An action put in the middle makes every
         button below it send the name of another one."""
-        header = read("ui.h")
+        header = without_comments(read("ui.h"))
         order = re.search(r"typedef enum \{(.*?)\} panel_action_t;",
                           header, re.S).group(1)
         names = re.findall(r"PANEL_[A-Z_]+", order)
-        self.assertEqual(names[-1], "PANEL_WAKE")
-        self.assertEqual(names[-2], "PANEL_SETUP")
+        # The panel performs the wake and the update itself, so both come
+        # after PANEL_SETUP and outside the table.
+        self.assertIn("PANEL_WAKE", names)
+        self.assertGreater(names.index("PANEL_WAKE"),
+                           names.index("PANEL_SETUP"))
+        self.assertEqual(names[names.index("PANEL_SETUP") + 1], "PANEL_WAKE")
 
     def test_the_names_table_still_stops_before_it(self):
         code = without_comments(read("main.c"))

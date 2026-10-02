@@ -491,7 +491,7 @@ class FlashGuardTest(unittest.TestCase):
         self.assertRegex(text, r'for attempt in \$\(seq 1 "\$ATTEMPTS"\)')
         # The whole write is one function, so a retry repeats all of it and
         # not the last part of it.
-        self.assertRegex(text, r"(?s)write_it\(\) \{.*0x10000 \"\$APPLICATION\"")
+        self.assertRegex(text, r"(?s)write_it\(\) \{.*0x20000 \"\$APPLICATION\"")
         self.assertIn("if write_it; then", text)
 
     def test_a_write_that_never_finishes_says_what_that_leaves(self):

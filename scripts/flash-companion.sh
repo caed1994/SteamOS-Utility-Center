@@ -6,7 +6,7 @@
 #
 #   ./scripts/flash-companion.sh /dev/ttyACM0 [image directory]
 #
-# No ESP-IDF and no toolchain. This needs three files that a build leaves
+# No ESP-IDF and no toolchain. This needs four files that a build leaves
 # behind, and esptool, which it puts in a virtual environment in the home
 # directory of the caller. The rootfs of SteamOS is read-only, so pip has
 # nowhere else to write, and "pip install --user" lands where the next system
@@ -110,11 +110,14 @@ else
     say "No udevadm here, so nothing checked which board is on $PORT."
 fi
 
-# The three parts of an image, at the offsets the partition table gives.
+# The four parts of an image, at the offsets the partition table gives.
+# OTADATA is the empty otadata, which makes the first of the two slots the
+# one that boots, whatever an update over the network chose before.
 BOOTLOADER="$BUILD/bootloader/bootloader.bin"
 PARTITIONS="$BUILD/partition_table/partition-table.bin"
+OTADATA="$BUILD/ota_data_initial.bin"
 APPLICATION="$BUILD/steamos_companion.bin"
-for part in "$BOOTLOADER" "$PARTITIONS" "$APPLICATION"; do
+for part in "$BOOTLOADER" "$PARTITIONS" "$OTADATA" "$APPLICATION"; do
     [[ -f "$part" ]] || die "no firmware in $BUILD ($(basename "$part") is missing).
 Update the panel, which brings the image, or build one yourself:
   cd firmware/companion && idf.py set-target esp32s3 && idf.py build"
@@ -132,15 +135,18 @@ assert m.version('esptool') == '$ESPTOOL_VERSION'" 2>/dev/null; then
         || die "could not install esptool. Is this machine on the network?"
 fi
 
-# The offsets are the ones the partition table in firmware/companion gives.
-# They are spelled here because this script runs with no ESP-IDF to ask.
+# The offsets are the ones the partition table in firmware/companion gives:
+# otadata and the first slot of the firmware. They are spelled here because
+# this script runs with no ESP-IDF to ask, and tests/test_panel_update.py
+# holds them equal to the table.
 write_it() {
     "$VENV/bin/python" -m esptool --chip "$CHIP" --port "$PORT" --baud "$BAUD" \
         --before default_reset --after hard_reset write_flash \
         --flash_mode dio --flash_freq 80m --flash_size 16MB \
         0x0 "$BOOTLOADER" \
         0x8000 "$PARTITIONS" \
-        0x10000 "$APPLICATION"
+        0xf000 "$OTADATA" \
+        0x20000 "$APPLICATION"
 }
 
 # Again, rather than the person again.

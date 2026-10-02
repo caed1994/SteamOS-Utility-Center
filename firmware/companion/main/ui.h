@@ -22,8 +22,10 @@ typedef enum {
     PANEL_SETUP,
     /* After PANEL_SETUP on purpose. Everything below it is a name that
      * main.c sends to the service, and the dispatch there reads that table
-     * by this number. These last two are done by the panel itself. */
-    PANEL_WAKE
+     * by this number. These last ones are done by the panel itself:
+     * PANEL_UPDATE takes the firmware the PC offers. */
+    PANEL_WAKE,
+    PANEL_UPDATE
 } panel_action_t;
 
 /* One drive, as the second page draws it.
@@ -88,6 +90,27 @@ typedef struct {
     int answer_ms;
 } panel_pc_t;
 
+/* The panel itself, as its page of information shows it. The texts are
+ * empty and the numbers nought where the panel has none yet. */
+typedef struct {
+    char version[32], ssid[33], ip[16], mac[18], server[64];
+    int rssi;
+    uint32_t uptime_s, heap_free, psram_free;
+} panel_self_t;
+
+/* An update of the firmware over the network. offered is the version of a
+ * firmware the PC offers and this panel takes, see panel_update.c, and
+ * empty for none. The phase says where an update that began is; percent
+ * counts the download. failure is the text that says why one failed. */
+typedef enum { PANEL_UPDATE_NONE, PANEL_UPDATE_RUNNING,
+               PANEL_UPDATE_RESTARTING, PANEL_UPDATE_FAILED } panel_update_phase_t;
+typedef struct {
+    char offered[32];
+    panel_update_phase_t phase;
+    int percent;
+    panel_text_id_t failure;
+} panel_update_t;
+
 /* What powers this panel, as its own power chip answers.
  *
  * Three answers and not two. A board whose chip did not answer says
@@ -118,6 +141,8 @@ typedef struct {
     panel_pc_t pc;
     panel_sensor_t cpu_sensors[PANEL_SENSORS], gpu_sensors[PANEL_SENSORS];
     int cpu_sensor_count, gpu_sensor_count;
+    panel_self_t self;
+    panel_update_t update;
     char setup_ssid[32], setup_password[32];
     /* The second page. game_mode says which session runs, playing holds
      * the name of the game or nothing at all, and the drives are however
@@ -135,7 +160,7 @@ typedef struct {
      * percentage and means something only for PANEL_SUPPLY_BATTERY. */
     panel_supply_t esp_supply;
     int esp_battery;
-    bool esp_charging;
+    bool esp_charging, esp_cable;
     /* The time of day for the fourth page, local, as struct tm counts:
      * weekday from 0 for Sunday, month from 1. clock_set is false until
      * the network has set the clock. */
@@ -168,6 +193,8 @@ void panel_ui_settings_open(void);
 void panel_ui_pads_open(void);
 /* The page of the PC, which a tap on the left of the head opens. */
 void panel_ui_pc_open(void);
+/* The page of the panel itself, which a tap on its battery opens. */
+void panel_ui_self_open(void);
 void panel_ui_update(const panel_state_t *state);
 void panel_ui_confirm(panel_action_t action);
 /* What the screen shows, in a few words for the log: the page of the band,

@@ -53,6 +53,11 @@ jobs:
           set -euo pipefail
           . "$IDF_PATH/export.sh"
           cd firmware/companion
+          # The number of this build and its commit go into the image. The
+          # panel takes an update over the network only for a higher number,
+          # and the run number of this job only counts up. See CMakeLists.txt.
+          export PANEL_BUILD="$GITHUB_RUN_NUMBER"
+          export PANEL_COMMIT="${GITHUB_SHA:0:7}"
           idf.py set-target esp32s3
           idf.py build
 
@@ -176,6 +181,7 @@ jobs:
           mkdir -p "$out/bootloader" "$out/partition_table"
           cp "$build/bootloader/bootloader.bin"               "$out/bootloader/"
           cp "$build/partition_table/partition-table.bin"     "$out/partition_table/"
+          cp "$build/ota_data_initial.bin"                    "$out/"
           cp "$build/steamos_companion.bin"                   "$out/"
           # The fingerprint of the source this was built from. The page reads
           # it and refuses an image that does not match the firmware beside
@@ -184,8 +190,8 @@ jobs:
             'from steamos_utility_center import companion; print(companion.firmware_fingerprint("."))' \
             > "$out/built-from"
           ( cd "$out" && sha256sum bootloader/bootloader.bin \
-              partition_table/partition-table.bin steamos_companion.bin \
-              > SHA256SUMS )
+              partition_table/partition-table.bin ota_data_initial.bin \
+              steamos_companion.bin > SHA256SUMS )
           ls -l "$out"
 
       # The reader of crash dumps, against the file it exists for.

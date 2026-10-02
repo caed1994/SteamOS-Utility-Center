@@ -26,3 +26,13 @@
 bool panel_auth_sign(const char *token, const char *method, const char *path,
                      const char *nonce, const char *body, size_t body_length,
                      char out[PANEL_AUTH_HEX]);
+
+// The signature of an offer of a firmware: the number of the build, its
+// size and its SHA-256, under the token. The same message is built by
+// offer_signature() in companion.py. See panel_update.h.
+bool panel_auth_offer(const char *token, int build, unsigned long size,
+                      const char *sha256, char out[PANEL_AUTH_HEX]);
+
+// Two signatures alike, in a time that does not depend on where they
+// differ. false for a missing one.
+bool panel_auth_equal(const char *one, const char *other);

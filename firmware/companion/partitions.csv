@@ -1,6 +1,21 @@
-# Name,   Type, SubType, Offset,  Size, Flags
-# Note: if you change the phy_init or app partition offset, make sure to change the offset in Kconfig.projbuild
-nvs,      data, nvs,     0x9000,  0x6000,
-phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, ,        8M,
-storage,  data, spiffs,  ,        7M,
+# Name,   Type, SubType, Offset,   Size, Flags
+# The flash of the panel is 16 MB, and this is all of it.
+#
+# Two slots for the firmware, so the panel can write a new one over the
+# network while the old one runs, and fall back to the old one when the new
+# one does not start. otadata says which slot boots. Each slot is 7 MB for
+# an image of 2.2 MB, room for the firmware to triple.
+#
+# nvs stays where it was and as large as it was. It holds the network, the
+# address of the PC, the token and the settings of the panel, so a board
+# written with this table keeps all of them.
+#
+# storage is unused for now: what is left of the 16 MB, kept for data of a
+# later firmware. scripts/flash-companion.sh writes to these offsets, and
+# tests/test_panel_update.py holds the two equal.
+nvs,      data, nvs,     0x9000,   0x6000,
+otadata,  data, ota,     0xf000,   0x2000,
+phy_init, data, phy,     0x11000,  0x1000,
+ota_0,    app,  ota_0,   0x20000,  0x700000,
+ota_1,    app,  ota_1,   0x720000, 0x700000,
+storage,  data, spiffs,  0xe20000, 0x1e0000,

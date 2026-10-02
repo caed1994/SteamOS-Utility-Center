@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -247,6 +248,131 @@ class NumberedTest(unittest.TestCase):
             answer = companion.status()
         self.assertEqual([one["name"] for one in answer["controllers"]],
                          ["Steam Controller 1", "Steam Controller 2"])
+
+
+class AnswerSizeTest(unittest.TestCase):
+    """The answer of the status against the buffer the panel reads it into.
+
+    The panel reads the answer into one buffer, and an answer past its end
+    is no answer at all: the panel then says that the PC does not answer.
+    So every list stops where the panel stops reading, and the largest
+    answer this service gives fills half the buffer at the most.
+    """
+
+    machine = machine
+
+    @staticmethod
+    def firmware(name):
+        with open(os.path.join(REPO, "firmware", "companion", "main", name),
+                  encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_the_lists_stop_where_the_panel_stops(self):
+        header = self.firmware("ui.h")
+        for name in ("PANEL_PADS", "PANEL_SENSORS", "PANEL_DRIVES"):
+            found = re.search(r"#define %s (\d+)" % name, header)
+            self.assertIsNotNone(found, name)
+            self.assertEqual(int(found.group(1)), getattr(companion, name),
+                             name)
+        kept = re.search(r"char playing\[(\d+)\];", header)
+        self.assertEqual(int(kept.group(1)) - 1, companion.PLAYING_CHARS)
+
+    def test_a_sensor_for_each_core_is_six_for_the_panel(self):
+        """coretemp reports the package and then every core. The best one
+        stays first."""
+        files = {"temp1_input": 61000, "temp1_label": "Package id 0"}
+        for core in range(24):
+            files["temp%d_input" % (core + 2)] = 50000 + core
+            files["temp%d_label" % (core + 2)] = "Core %d" % core
+        said = companion.telemetry(self.machine([("coretemp", files)]))
+        self.assertEqual(len(said["cpu_sensors"]), companion.PANEL_SENSORS)
+        self.assertEqual(said["cpu_c"], said["cpu_sensors"][0]["c"])
+
+    def largest(self):
+        """The status with every list full and every text at its end."""
+        cores = {}
+        for chip in range(2):
+            for core in range(40):
+                cores["temp%d_input" % (core + 1)] = 99000
+                cores["temp%d_label" % (core + 1)] = "Core %d" % (core + 100)
+        card = {"device/mem_info_vram_total": 1 << 40}
+        for sensor in range(12):
+            card["temp%d_input" % (sensor + 1)] = 99000
+            card["temp%d_label" % (sensor + 1)] = "junction%d" % sensor
+        root = self.machine([("coretemp", cores), ("coretemp", cores),
+                             ("amdgpu", card)])
+        real = companion.telemetry
+        pad = {"name": "P" * 63, "percent": 100, "status": "Discharging"}
+        drive = {"name": "D" * 63, "total": 1 << 50, "free": 1 << 50}
+        sha = "f" * 64
+        offer = mock.Mock()
+        offer.signed.return_value = {"build": 99999999, "version": "V" * 31,
+                                     "size": companion.SLOT_BYTES,
+                                     "sha256": sha, "sign": sha}
+        name = mock.Mock(nodename="H" * 64)
+        with mock.patch.object(companion.steamcontroller, "batteries",
+                               return_value=[pad] * 8), \
+                mock.patch.object(companion, "controllers",
+                                  return_value=[pad] * 8), \
+                mock.patch.object(companion, "audio",
+                                  return_value={"percent": 100,
+                                                "muted": False}), \
+                mock.patch.object(companion, "telemetry",
+                                  side_effect=lambda: real(root)), \
+                mock.patch.object(companion, "wake_target",
+                                  return_value={"interface": "I" * 15,
+                                                "mac": "ff:" * 5 + "ff"}), \
+                mock.patch.object(companion.steamapps, "now_playing",
+                                  return_value="G" * 300), \
+                mock.patch.object(companion.steamapps,
+                                  "now_playing_achievements",
+                                  return_value={"achieved": 99999,
+                                                "total": 99999}), \
+                mock.patch.object(companion, "drives",
+                                  return_value=[drive] * 12), \
+                mock.patch.object(companion.pcinfo, "system",
+                                  return_value={"os": "O" * 31,
+                                                "build": "B" * 23,
+                                                "channel": "C" * 15,
+                                                "kernel": "K" * 47}), \
+                mock.patch.object(companion.pcinfo, "uptime",
+                                  return_value=10 * 366 * 24 * 3600), \
+                mock.patch.object(companion.pcinfo, "cpu_model",
+                                  return_value="C" * 47), \
+                mock.patch.object(companion._cpu_load, "percent",
+                                  return_value=100), \
+                mock.patch.object(companion.pcinfo, "gpu_model",
+                                  return_value="G" * 47), \
+                mock.patch.object(companion.pcinfo, "memory",
+                                  return_value={"used": 1 << 40,
+                                                "total": 1 << 40}), \
+                mock.patch.object(companion, "fans",
+                                  return_value={"fan": 99999,
+                                                "gpu_fan": 99999}), \
+                mock.patch.object(companion.pcinfo, "network",
+                                  return_value={"ip": "255.255.255.255",
+                                                "kind": "wireless",
+                                                "speed": 100000,
+                                                "mac": "ff:" * 5 + "ff"}), \
+                mock.patch.object(companion.os, "uname", return_value=name):
+            return companion.status("255.255.255.255", "t" * 64, offer)
+
+    def test_the_largest_answer_fills_half_the_buffer_at_most(self):
+        """Half, so a field added later has room before it breaks the
+        panel. This test then says how close it came."""
+        answer = self.largest()
+        self.assertEqual(len(answer["controllers"]), companion.PANEL_PADS)
+        self.assertEqual(len(answer["drives"]), companion.PANEL_DRIVES)
+        self.assertEqual(len(answer["telemetry"]["cpu_sensors"]),
+                         companion.PANEL_SENSORS)
+        self.assertEqual(len(answer["telemetry"]["gpu_sensors"]),
+                         companion.PANEL_SENSORS)
+        self.assertEqual(len(answer["playing"]), companion.PLAYING_CHARS)
+        size = len(json.dumps(answer, separators=(",", ":")).encode())
+        buffer = int(re.search(r"typedef struct \{ char data\[(\d+)\];",
+                               self.firmware("main.c")).group(1))
+        self.assertLessEqual(size, buffer // 2,
+                             "the largest answer is %d bytes" % size)
 
 
 class TelemetryTest(unittest.TestCase):
@@ -717,7 +843,7 @@ class FirmwareImageTest(unittest.TestCase):
             handle.write("# notes\n")
         self.assertEqual(companion.firmware_fingerprint(root), before)
 
-    def test_an_image_is_all_three_parts_or_none(self):
+    def test_an_image_is_all_four_parts_or_none(self):
         root = self.tree()
         place = self.image(root, companion.PREBUILT_DIR)
         self.assertTrue(companion.image_is_complete(place))

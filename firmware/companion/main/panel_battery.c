@@ -389,3 +389,10 @@ bool panel_battery_read(panel_supply_t *supply, int *percent, bool *charging)
     charger_watch(status1, status2);
     return true;
 }
+
+bool panel_battery_cable(void)
+{
+    uint8_t status1 = 0;
+    if (!chip || read_register(AXP2101_STATUS1, &status1) != ESP_OK) return false;
+    return (status1 & (1u << 5)) != 0;
+}

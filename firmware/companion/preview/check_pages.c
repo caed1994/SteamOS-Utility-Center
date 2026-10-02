@@ -1028,6 +1028,114 @@ int main(void)
         assert(complaints==0);
     }
 
+    // The page of the panel itself: a tap on its network and battery opens
+    // it, and it offers an update only when the PC offers a newer one.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_state_t u=base();
+        static const panel_self_t self={.version="61-1eec536",.ssid="FRITZ!Box 7590",
+            .ip="192.168.178.57",.mac="24:58:7c:12:ab:cd",.server="192.168.178.42:8765",
+            .rssi=-58,.uptime_s=3*3600+12*60,.heap_free=142*1024,.psram_free=6400*1024};
+        u.self=self;u.esp_supply=PANEL_SUPPLY_BATTERY;u.esp_battery=87;
+        panel_ui_update(&u);
+        lv_obj_t *screen_now=lv_screen_active();
+        lv_obj_t *corner=lv_obj_get_parent(label(screen_now,LV_SYMBOL_WIFI));
+        assert(corner&&corner!=screen_now);
+        lv_obj_send_event(corner,LV_EVENT_CLICKED,NULL);
+        assert(label(screen_now,panel_text(TXT_SELF_TITLE)));
+        assert(strcmp(panel_ui_where(),"the panel")==0);
+        static const char *const rows[]={"Build 61 (1eec536)","3 h 12 min","142 KB, PSRAM 6.2 MB",
+            "FRITZ!Box 7590","-58 dBm","192.168.178.57","24:58:7c:12:ab:cd",
+            "192.168.178.42:8765","87 %"};
+        for(unsigned i=0;i<sizeof rows/sizeof *rows;i++)assert(label(screen_now,rows[i]));
+        assert(label(screen_now,panel_text(TXT_ON_BATTERY)));
+        // No offer, no card of the update, and the cards close up.
+        assert(!label(screen_now,panel_text(TXT_UPDATE_NOW)));
+        lv_obj_update_layout(screen_now);
+        int32_t network_alone=lv_obj_get_y(lv_obj_get_parent(label(screen_now,panel_text(TXT_PC_NETWORK))));
+        // An offer: the card under the firmware, with its build and its
+        // button.
+        snprintf(u.update.offered,sizeof u.update.offered,"64-2b7f0c1");
+        panel_ui_update(&u);
+        lv_obj_update_layout(screen_now);
+        assert(label(screen_now,"Build 64 (2b7f0c1)"));
+        lv_obj_t *now=lv_obj_get_parent(label(screen_now,panel_text(TXT_UPDATE_NOW)));
+        assert(!lv_obj_has_state(now,LV_STATE_DISABLED));
+        int32_t update_at=lv_obj_get_y(lv_obj_get_parent(label(screen_now,panel_text(TXT_UPDATE))));
+        int32_t firmware_at=lv_obj_get_y(lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_FIRMWARE))));
+        int32_t network_after=lv_obj_get_y(lv_obj_get_parent(label(screen_now,panel_text(TXT_PC_NETWORK))));
+        assert(firmware_at<update_at&&update_at<network_after&&network_alone<network_after);
+        // It asks first, and the answer sends the update.
+        click(panel_text(TXT_UPDATE_NOW));
+        assert(label(screen_now,panel_text(TXT_CONFIRM_UPDATE)));
+        actions=0;
+        click(panel_text(TXT_CONFIRM));
+        assert(actions==1&&last_action==PANEL_UPDATE);
+        // The battery guard: below 20 per cent on the cell, the button waits
+        // and the card says why. Charging or a cable lets it go.
+        u.esp_battery=12;
+        panel_ui_update(&u);
+        assert(lv_obj_has_state(now,LV_STATE_DISABLED));
+        assert(label(screen_now,panel_text(TXT_UPDATE_POWER)));
+        u.esp_charging=true;
+        panel_ui_update(&u);
+        assert(!lv_obj_has_state(now,LV_STATE_DISABLED)&&!label(screen_now,panel_text(TXT_UPDATE_POWER)));
+        u.esp_charging=false;u.esp_cable=true;
+        panel_ui_update(&u);
+        assert(!lv_obj_has_state(now,LV_STATE_DISABLED));
+        assert(label(screen_now,panel_text(TXT_CHARGED)));
+        u.esp_cable=false;u.esp_battery=20;
+        panel_ui_update(&u);
+        assert(!lv_obj_has_state(now,LV_STATE_DISABLED));
+        // A PC that does not answer has nothing to send.
+        u.online=false;
+        panel_ui_update(&u);
+        assert(lv_obj_has_state(now,LV_STATE_DISABLED));
+        u.online=true;
+        // The screen while it writes, over everything, with its share.
+        u.update.phase=PANEL_UPDATE_RUNNING;u.update.percent=45;
+        panel_ui_update(&u);
+        assert(strcmp(panel_ui_where(),"an update")==0);
+        assert(label(screen_now,panel_text(TXT_UPDATE_RUNNING))&&label(screen_now,"45 %"));
+        assert(label(screen_now,panel_text(TXT_UPDATE_KEEP_ON)));
+        lv_obj_update_layout(screen_now);
+        lv_obj_t *layer=lv_obj_get_child(screen_now,-1);
+        assert(lv_obj_get_width(layer)==480&&lv_obj_get_height(layer)==480);
+        u.update.phase=PANEL_UPDATE_RESTARTING;u.update.percent=100;
+        panel_ui_update(&u);
+        assert(label(screen_now,panel_text(TXT_UPDATE_RESTART))&&label(screen_now,"100 %"));
+        // A failure takes the screen away and says why on the card.
+        u.update.phase=PANEL_UPDATE_FAILED;u.update.failure=TXT_UPDATE_BROKEN;
+        panel_ui_update(&u);
+        assert(!label(screen_now,panel_text(TXT_UPDATE_RUNNING)));
+        assert(label(screen_now,"Update failed: The firmware arrived damaged."));
+        assert(!lv_obj_has_state(now,LV_STATE_DISABLED));
+        // A failure with no offer left keeps the card, without a button
+        // that works.
+        u.update.offered[0]=0;
+        panel_ui_update(&u);
+        assert(label(screen_now,"Update failed: The firmware arrived damaged."));
+        assert(lv_obj_has_state(now,LV_STATE_DISABLED));
+        lv_refr_now(screen);
+        assert(complaints==0);
+        // German, then the setup takes the page away.
+        panel_settings_t german={.brightness=70,.sound_volume=30,.language=PANEL_GERMAN};
+        panel_ui_create(action,setting,sound,&german);
+        assert(!label(lv_screen_active(),"Panel-Info"));
+        panel_ui_update(&u);
+        panel_ui_self_open();
+        assert(label(lv_screen_active(),"Panel-Info"));
+        assert(label(lv_screen_active(),"Update fehlgeschlagen: Die Firmware kam beschädigt an."));
+        u.setup=true;
+        panel_ui_update(&u);
+        assert(!label(lv_screen_active(),"Panel-Info"));
+        u.setup=false;
+        panel_ui_create(action,setting,sound,&english);
+        lv_refr_now(screen);
+        assert(complaints==0);
+    }
+
     puts("OK: four pages that snap, the session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
          "them drawn with nothing for LVGL to complain about, the battery of "
@@ -1036,6 +1144,6 @@ int main(void)
          "display sliders, the clock with a timer that rings, and two "
          "controllers in the head with a page of four behind it, and the "
          "page of the PC that scrolls, and a choice of sensor for each tile "
-         "of the temperatures.");
+         "of the temperatures, and the page of the panel with its update.");
     return 0;
 }

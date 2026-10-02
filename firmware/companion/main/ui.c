@@ -11,6 +11,7 @@
 #include "panel_ui_sleep.h"
 #include "panel_timer.h"
 #include "panel_fonts.h"
+#include "panel_update.h"
 
 #define BG 0x0C1721
 #define CARD 0x111F2B
@@ -77,6 +78,17 @@ static lv_obj_t *settings_screen, *sound_value, *sound_status;
 #define PAD_NAME_WIDTH 250
 #define PAD_BAR_WIDTH 368
 static lv_obj_t *pad_area,*pad_icons[PAD_HEAD],*pad_values[PAD_HEAD];
+/* The page of the panel itself: its firmware, an update when the PC offers
+ * one, its network and its power. A column, so the card of the update
+ * takes no room while there is none. */
+enum { SELF_VERSION, SELF_UPTIME, SELF_MEMORY,
+       SELF_WIFI, SELF_SIGNAL, SELF_IP, SELF_MAC, SELF_SERVER,
+       SELF_CHARGE, SELF_SUPPLY, SELF_ROWS };
+static lv_obj_t *self_screen,*self_values[SELF_ROWS];
+static lv_obj_t *update_card,*update_offered,*update_note,*update_button;
+/* The screen over everything while an update writes, which nothing closes:
+ * the panel restarts at its end, or the page says why it did not. */
+static lv_obj_t *update_layer,*update_title,*update_bar,*update_percent,*update_hint;
 /* The menu that chooses the sensor of a tile, and which tile it is for. */
 static lv_obj_t *sensor_layer;
 static bool sensor_gpu;
@@ -112,6 +124,9 @@ static lv_obj_t *pc_memory_track,*pc_memory_bar;
 #define SENSOR_TITLE_ROOM 62
 #define SENSOR_ROW_STEP 50
 #define SENSOR_BOX_END 14
+/* The card of the update: its row, two lines for what it has to say, and
+ * the button at its end. */
+#define UPDATE_CARD_HEIGHT 172
 #define PC_CARD_TOP 78
 #define PC_TITLE_ROOM 40
 #define PC_ROW_STEP 30
@@ -178,7 +193,7 @@ void panel_ui_confirm(panel_action_t action)
     if (overlay) return;
     pending=action;
     overlay=panel(lv_screen_active(),0,0,480,480,BG,false);lv_obj_set_style_bg_opa(overlay,LV_OPA_90,0);
-    const char *caption=action==PANEL_SUSPEND?panel_text(TXT_CONFIRM_SUSPEND):action==PANEL_REBOOT?panel_text(TXT_CONFIRM_REBOOT):action==PANEL_POWEROFF?panel_text(TXT_CONFIRM_OFF):(action==PANEL_DESKTOP_MODE||action==PANEL_GAME_MODE)?panel_text(TXT_CONFIRM_MODE):panel_text(TXT_CONFIRM_SETUP);
+    const char *caption=action==PANEL_SUSPEND?panel_text(TXT_CONFIRM_SUSPEND):action==PANEL_REBOOT?panel_text(TXT_CONFIRM_REBOOT):action==PANEL_POWEROFF?panel_text(TXT_CONFIRM_OFF):(action==PANEL_DESKTOP_MODE||action==PANEL_GAME_MODE)?panel_text(TXT_CONFIRM_MODE):action==PANEL_UPDATE?panel_text(TXT_CONFIRM_UPDATE):panel_text(TXT_CONFIRM_SETUP);
     lv_obj_t *box=panel(overlay,20,132,440,216,CARD,true);
     text_at(box,caption,20,26,400,&panel_font_20,TEXT);
     /* A second line only where there is something to say. Switching the
@@ -186,6 +201,7 @@ void panel_ui_confirm(panel_action_t action)
      * repeats the obvious is a sentence somebody reads once and then
      * reads past. */
     const char *what=action==PANEL_SETUP?panel_text(TXT_SETUP_WHAT)
+        :action==PANEL_UPDATE?panel_text(TXT_UPDATE_WHAT)
         :(action==PANEL_DESKTOP_MODE||action==PANEL_GAME_MODE)?""
         :panel_text(TXT_CONFIRM_HERE);
     if(what[0])text_at(box,what,20,66,400,&panel_font_16,MUTED);
@@ -518,7 +534,7 @@ static void pads_show(const panel_state_t *s)
 static void pads_close(lv_event_t *e){(void)e;feedback();pads_forget();}
 void panel_ui_pads_open(void)
 {
-    if(pads_screen||pc_screen||settings_screen||setup_screen)return;
+    if(pads_screen||pc_screen||self_screen||settings_screen||setup_screen)return;
     pads_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
     button(pads_screen,panel_text(TXT_BACK),12,8,112,44,pads_close,0);
     text_at(pads_screen,panel_text(TXT_CONTROLLERS),136,20,200,&panel_font_20,TEXT);
@@ -649,7 +665,7 @@ static void pc_show(const panel_state_t *s)
 static void pc_close(lv_event_t *e){(void)e;feedback();pc_forget();}
 void panel_ui_pc_open(void)
 {
-    if(pc_screen||pads_screen||settings_screen||setup_screen)return;
+    if(pc_screen||pads_screen||self_screen||settings_screen||setup_screen)return;
     pc_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
     button(pc_screen,panel_text(TXT_BACK),12,8,112,44,pc_close,0);
     text_at(pc_screen,panel_text(TXT_PC_DETAILS),136,20,320,&panel_font_20,TEXT);
@@ -755,7 +771,7 @@ static void sensor_row(lv_obj_t *box,int row,int y,const char *name,int celsius,
  * screen, as a question is. */
 static void sensor_menu(bool gpu)
 {
-    if(sensor_layer||overlay||settings_screen||pads_screen||pc_screen||setup_screen)return;
+    if(sensor_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen||update_layer||setup_screen)return;
     const panel_state_t *s=&last_state;
     int count=!last_state_valid?0:gpu?s->gpu_sensor_count:s->cpu_sensor_count;
     if(count<0)count=0;
@@ -781,6 +797,180 @@ static void sensor_menu(bool gpu)
                    s->online?list[i].celsius:-1,known&&panel_sensor_key(list[i].id)==chosen);
 }
 static void cpu_tile_clicked(lv_event_t *e){(void)e;feedback();sensor_menu(false);}
+/* "Build 61 (1eec536)", out of the version "61-1eec536". */
+static void say_version(char *out,size_t room,const char *version)
+{
+    if(!version[0]){snprintf(out,room,"--");return;}
+    char number[16]="";
+    size_t length=strcspn(version,"-");
+    if(length>=sizeof number)length=sizeof number-1;
+    memcpy(number,version,length);number[length]=0;
+    const char *rest=version[length]=='-'?version+length+1:"";
+    snprintf(out,room,panel_text(TXT_SELF_BUILD),number,rest[0]?rest:"--");
+}
+static void self_drop(void)
+{
+    self_screen=NULL;update_card=NULL;update_offered=NULL;update_note=NULL;update_button=NULL;
+    for(int i=0;i<SELF_ROWS;i++)self_values[i]=NULL;
+}
+static void self_forget(void)
+{
+    if(self_screen)lv_obj_delete(self_screen);
+    self_drop();
+}
+static void self_say(int row,const char *text)
+{
+    if(self_values[row])lv_label_set_text(self_values[row],text&&text[0]?text:"--");
+}
+static bool update_power_ok(const panel_state_t *s)
+{
+    bool on_battery=s->esp_supply==PANEL_SUPPLY_BATTERY&&!s->esp_cable;
+    return !on_battery||s->esp_charging||s->esp_battery>=PANEL_UPDATE_LEAST_BATTERY;
+}
+static void self_show(const panel_state_t *s)
+{
+    if(!self_screen)return;
+    const panel_self_t *self=&s->self;
+    char said[64];
+    say_version(said,sizeof said,self->version);self_say(SELF_VERSION,said);
+    pc_uptime(said,sizeof said,(int32_t)self->uptime_s);self_say(SELF_UPTIME,said);
+    snprintf(said,sizeof said,"%u KB, PSRAM %u.%u MB",(unsigned)(self->heap_free/1024),
+             (unsigned)(self->psram_free/1048576),(unsigned)(self->psram_free%1048576*10/1048576));
+    self_say(SELF_MEMORY,self->heap_free?said:"");
+    self_say(SELF_WIFI,self->ssid);
+    if(self->rssi<0){snprintf(said,sizeof said,"%d dBm",self->rssi);self_say(SELF_SIGNAL,said);}
+    else self_say(SELF_SIGNAL,"");
+    self_say(SELF_IP,self->ip);
+    self_say(SELF_MAC,self->mac);
+    self_say(SELF_SERVER,self->server);
+    if(s->esp_supply==PANEL_SUPPLY_BATTERY){
+        snprintf(said,sizeof said,"%d %%%s",s->esp_battery,s->esp_charging?" " LV_SYMBOL_CHARGE:"");
+        self_say(SELF_CHARGE,said);
+    }else self_say(SELF_CHARGE,"");
+    self_say(SELF_SUPPLY,s->esp_supply==PANEL_SUPPLY_UNKNOWN?""
+             :s->esp_supply==PANEL_SUPPLY_CABLE?panel_text(TXT_SELF_CABLE)
+             :s->esp_charging?panel_text(TXT_CHARGING)
+             :s->esp_cable?panel_text(TXT_CHARGED)
+             :panel_text(TXT_ON_BATTERY));
+    /* The card of the update: there for an offer and for an update that
+     * failed, and nowhere else. */
+    const panel_update_t *update=&s->update;
+    bool failed=update->phase==PANEL_UPDATE_FAILED;
+    if(!update->offered[0]&&!failed){lv_obj_add_flag(update_card,LV_OBJ_FLAG_HIDDEN);return;}
+    lv_obj_remove_flag(update_card,LV_OBJ_FLAG_HIDDEN);
+    say_version(said,sizeof said,update->offered);
+    lv_label_set_text(update_offered,update->offered[0]?said:"--");
+    /* What stands in the way, or what went wrong the last time. The
+     * battery first: it is the one somebody can change now. */
+    bool power=update_power_ok(s);
+    char note[128]="";
+    uint32_t color=MUTED;
+    if(!power)snprintf(note,sizeof note,"%s",panel_text(TXT_UPDATE_POWER));
+    else if(failed&&update->failure!=TXT_UPDATE_POWER){
+        snprintf(note,sizeof note,panel_text(TXT_UPDATE_FAILED),panel_text(update->failure));
+        color=RED;
+    }
+    lv_label_set_text(update_note,note);
+    lv_obj_set_style_text_color(update_note,lv_color_hex(color),0);
+    bool can=s->online&&update->offered[0]&&power;
+    if(can)lv_obj_remove_state(update_button,LV_STATE_DISABLED);
+    else lv_obj_add_state(update_button,LV_STATE_DISABLED);
+}
+static void update_clicked(lv_event_t *e){(void)e;feedback();panel_ui_confirm(PANEL_UPDATE);}
+static void self_close(lv_event_t *e){(void)e;feedback();self_forget();}
+/* A card of the page, its title and a row for each of its rows. */
+static lv_obj_t *self_card(lv_obj_t *column,panel_text_id_t title,const int *rows,int count,const panel_text_id_t *names)
+{
+    lv_obj_t *card=panel(column,0,0,440,PC_TITLE_ROOM+count*PC_ROW_STEP+PC_CARD_END,CARD,true);
+    lv_obj_remove_flag(card,LV_OBJ_FLAG_CLICKABLE);
+    text_at(card,panel_text(title),18,14,300,&panel_font_12,MUTED);
+    int32_t high=lv_font_get_line_height(&panel_font_14);
+    for(int i=0;i<count;i++){
+        int y=PC_TITLE_ROOM+i*PC_ROW_STEP;
+        lv_obj_t *name=text_at(card,panel_text(names[i]),18,y,PC_NAME_WIDTH,&panel_font_14,MUTED);
+        lv_obj_set_height(name,high);
+        self_values[rows[i]]=text_at(card,"--",PC_VALUE_X,y,PC_VALUE_WIDTH,&panel_font_14,TEXT);
+        lv_obj_set_height(self_values[rows[i]],high);
+        lv_obj_set_style_text_align(self_values[rows[i]],LV_TEXT_ALIGN_RIGHT,0);
+    }
+    return card;
+}
+void panel_ui_self_open(void)
+{
+    if(self_screen||pc_screen||pads_screen||settings_screen||setup_screen||sensor_layer)return;
+    self_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    button(self_screen,panel_text(TXT_BACK),12,8,112,44,self_close,0);
+    text_at(self_screen,panel_text(TXT_SELF_TITLE),136,20,320,&panel_font_20,TEXT);
+    line(self_screen,0,62,480,1);
+    lv_obj_add_flag(self_screen,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(self_screen,LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(self_screen,LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_pad_bottom(self_screen,20,0);
+    lv_obj_t *column=lv_obj_create(self_screen);
+    lv_obj_remove_style_all(column);
+    lv_obj_set_pos(column,20,PC_CARD_TOP);
+    lv_obj_set_size(column,440,LV_SIZE_CONTENT);
+    lv_obj_remove_flag(column,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(column,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(column,LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(column,PC_CARD_GAP,0);
+    static const int firmware[]={SELF_VERSION,SELF_UPTIME,SELF_MEMORY};
+    static const panel_text_id_t firmware_names[]={TXT_SELF_VERSION,TXT_PC_UPTIME,TXT_SELF_MEMORY};
+    self_card(column,TXT_SELF_FIRMWARE,firmware,3,firmware_names);
+    /* The update, under the firmware it replaces. */
+    update_card=panel(column,0,0,440,UPDATE_CARD_HEIGHT,CARD,true);
+    lv_obj_remove_flag(update_card,LV_OBJ_FLAG_CLICKABLE);
+    text_at(update_card,panel_text(TXT_UPDATE),18,14,300,&panel_font_12,MUTED);
+    lv_obj_t *name=text_at(update_card,panel_text(TXT_UPDATE_OFFERED),18,PC_TITLE_ROOM,PC_NAME_WIDTH,&panel_font_14,MUTED);
+    lv_obj_set_height(name,lv_font_get_line_height(&panel_font_14));
+    update_offered=text_at(update_card,"--",PC_VALUE_X,PC_TITLE_ROOM,PC_VALUE_WIDTH,&panel_font_14,BLUE);
+    lv_obj_set_style_text_align(update_offered,LV_TEXT_ALIGN_RIGHT,0);
+    update_note=text_at(update_card,"",18,PC_TITLE_ROOM+PC_ROW_STEP,404,&panel_font_14,MUTED);
+    lv_label_set_long_mode(update_note,LV_LABEL_LONG_WRAP);
+    update_button=button(update_card,panel_text(TXT_UPDATE_NOW),18,UPDATE_CARD_HEIGHT-58,404,44,update_clicked,0);
+    lv_obj_set_style_bg_color(update_button,lv_color_hex(BLUE),0);
+    lv_obj_set_style_text_color(update_button,lv_color_hex(BG),0);
+    lv_obj_add_flag(update_card,LV_OBJ_FLAG_HIDDEN);
+    static const int network[]={SELF_WIFI,SELF_SIGNAL,SELF_IP,SELF_MAC,SELF_SERVER};
+    static const panel_text_id_t network_names[]={TXT_WIRELESS,TXT_SELF_SIGNAL,TXT_PC_IP,TXT_PC_MAC,TXT_SELF_SERVER};
+    self_card(column,TXT_PC_NETWORK,network,5,network_names);
+    static const int power[]={SELF_CHARGE,SELF_SUPPLY};
+    static const panel_text_id_t power_names[]={TXT_SELF_CHARGE,TXT_SELF_SUPPLY};
+    self_card(column,TXT_SELF_POWER,power,2,power_names);
+    if(last_state_valid)self_show(&last_state);
+}
+static void self_clicked(lv_event_t *e){(void)e;feedback();panel_ui_self_open();}
+/* The screen of an update that writes, over everything, with its share
+ * done. It stays until the restart; a failure takes it away and the page
+ * of the panel says why. */
+static void update_layer_show(const panel_state_t *s)
+{
+    bool busy=s->update.phase==PANEL_UPDATE_RUNNING||s->update.phase==PANEL_UPDATE_RESTARTING;
+    if(!busy){
+        if(update_layer){lv_obj_delete(update_layer);update_layer=NULL;}
+        return;
+    }
+    if(!update_layer){
+        update_layer=panel(lv_screen_active(),0,0,480,480,BG,false);
+        lv_obj_t *box=panel(update_layer,20,140,440,200,CARD,true);
+        lv_obj_remove_flag(box,LV_OBJ_FLAG_CLICKABLE);
+        update_title=text_at(box,"",20,22,400,&panel_font_20,TEXT);
+        lv_obj_t *track=panel(box,20,78,400,12,EDGE,false);
+        lv_obj_set_style_radius(track,LV_RADIUS_CIRCLE,0);
+        lv_obj_remove_flag(track,LV_OBJ_FLAG_CLICKABLE);
+        update_bar=panel(track,0,0,0,12,BLUE,false);
+        lv_obj_set_style_radius(update_bar,LV_RADIUS_CIRCLE,0);
+        lv_obj_remove_flag(update_bar,LV_OBJ_FLAG_CLICKABLE);
+        update_percent=text_at(box,"",20,104,400,&panel_font_24,BLUE);
+        update_hint=text_at(box,"",20,150,400,&panel_font_16,MUTED);
+    }
+    bool restarting=s->update.phase==PANEL_UPDATE_RESTARTING;
+    int percent=s->update.percent<0?0:s->update.percent>100?100:s->update.percent;
+    lv_label_set_text(update_title,panel_text(TXT_UPDATE_RUNNING));
+    lv_obj_set_width(update_bar,400*percent/100);
+    lv_label_set_text_fmt(update_percent,"%d %%",percent);
+    lv_label_set_text(update_hint,panel_text(restarting?TXT_UPDATE_RESTART:TXT_UPDATE_KEEP_ON));
+}
 static void gpu_tile_clicked(lv_event_t *e){(void)e;feedback();sensor_menu(true);}
 const char *panel_ui_where(void)
 {
@@ -790,6 +980,8 @@ const char *panel_ui_where(void)
     if(settings_screen)return "the settings";
     if(pads_screen)return "the controllers";
     if(pc_screen)return "the PC";
+    if(update_layer)return "an update";
+    if(self_screen)return "the panel";
     if(!band)return "no screen";
     /* Read from where the band stands: a swipe that did not carry far
      * enough left it on the page it was on. */
@@ -954,7 +1146,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     settings_drop();
     /* The pages of the controllers and of the PC too, for the same
      * reason. */
-    pads_drop();pc_drop();
+    pads_drop();pc_drop();self_drop();
+    update_layer=NULL;
     /* The band and everything on the second and third pages are children
      * of this screen too. A pointer kept past the clean above is a pointer
      * to freed memory, and panel_ui_update writes through these. */
@@ -1191,7 +1384,12 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_remove_style_all(status);
     lv_obj_set_pos(status,330,436);lv_obj_set_size(status,136,44);
     lv_obj_remove_flag(status,LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_remove_flag(status,LV_OBJ_FLAG_CLICKABLE);
+    /* A tap on the network and the battery of the panel opens the page of
+     * the panel itself. */
+    lv_obj_set_style_bg_color(status,lv_color_hex(EDGE),LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(status,LV_OPA_40,LV_STATE_PRESSED);
+    lv_obj_set_style_radius(status,6,0);
+    lv_obj_add_event_cb(status,self_clicked,LV_EVENT_CLICKED,NULL);
     lv_obj_set_flex_flow(status,LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(status,LV_FLEX_ALIGN_END,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(status,10,0);
@@ -1282,7 +1480,7 @@ void panel_ui_update(const panel_state_t *s)
     memcpy(&last_state,s,sizeof(*s));last_state_valid=true;
     if(sound_status)lv_label_set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
     if(s->setup){
-        settings_forget();pads_forget();pc_forget();sensor_close();
+        settings_forget();pads_forget();pc_forget();sensor_close();self_forget();
         if(!setup_screen){
             if(overlay){lv_obj_delete(overlay);overlay=NULL;}
             setup_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
@@ -1297,6 +1495,8 @@ void panel_ui_update(const panel_state_t *s)
     pads_head(s);
     pads_show(s);
     pc_show(s);
+    self_show(s);
+    update_layer_show(s);
     esp_power_show(s);
     bool audio=s->online&&s->volume>=0;
     lv_label_set_text(audio_status,!audio?"--":s->muted?panel_text(TXT_MUTED):panel_text(TXT_ACTIVE));

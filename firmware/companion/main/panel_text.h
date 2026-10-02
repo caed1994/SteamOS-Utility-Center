@@ -61,6 +61,35 @@
                            "Kein Controller verbunden") \
     X(TXT_NO_BATTERY,      "No battery reading",    "Kein Akkustand") \
     X(TXT_PC_AUDIO,        "PC AUDIO",              "PC-TON") \
+    X(TXT_SELF_TITLE,      "Panel info",            "Panel-Info") \
+    X(TXT_SELF_FIRMWARE,   "FIRMWARE",              "FIRMWARE") \
+    X(TXT_SELF_VERSION,    "Version",               "Version") \
+    X(TXT_SELF_BUILD,      "Build %s (%s)",         "Build %s (%s)") \
+    X(TXT_SELF_MEMORY,     "Free memory",           "Freier Speicher") \
+    X(TXT_SELF_SIGNAL,     "Signal",                "Signal") \
+    X(TXT_SELF_SERVER,     "PC address",            "PC-Adresse") \
+    X(TXT_SELF_POWER,      "POWER",                 "STROMVERSORGUNG") \
+    X(TXT_SELF_CHARGE,     "Charge",                "Ladestand") \
+    X(TXT_SELF_SUPPLY,     "Supply",                "Versorgung") \
+    X(TXT_SELF_CABLE,      "Cable",                 "Kabel") \
+    X(TXT_UPDATE,          "UPDATE",                "UPDATE") \
+    X(TXT_UPDATE_OFFERED,  "Available",             "Verfügbar") \
+    X(TXT_UPDATE_NOW,      "Update now",            "Jetzt aktualisieren") \
+    X(TXT_UPDATE_POWER,    "Below 20 %, connect the cable first.", \
+                           "Unter 20 % bitte erst das Kabel anschließen.") \
+    X(TXT_UPDATE_RUNNING,  "Updating the panel",    "Panel wird aktualisiert") \
+    X(TXT_UPDATE_KEEP_ON,  "Do not switch it off.", "Bitte nicht ausschalten.") \
+    X(TXT_UPDATE_RESTART,  "The panel restarts.",   "Das Panel startet neu.") \
+    X(TXT_UPDATE_FAILED,   "Update failed: %s",     "Update fehlgeschlagen: %s") \
+    X(TXT_UPDATE_NO_ANSWER,"The PC did not send the firmware.", \
+                           "Der PC hat die Firmware nicht geschickt.") \
+    X(TXT_UPDATE_BROKEN,   "The firmware arrived damaged.", \
+                           "Die Firmware kam beschädigt an.") \
+    X(TXT_UPDATE_WRITE,    "The panel could not write it.", \
+                           "Das Panel konnte sie nicht schreiben.") \
+    X(TXT_CONFIRM_UPDATE,  "Update the panel?",     "Panel aktualisieren?") \
+    X(TXT_UPDATE_WHAT,     "It restarts afterwards.", \
+                           "Es startet danach neu.") \
     X(TXT_CPU_TEMPERATURE, "CPU temperature",       "CPU-Temperatur") \
     X(TXT_GPU_TEMPERATURE, "GPU temperature",       "GPU-Temperatur") \
     X(TXT_SENSOR_AUTO,     "Automatic",             "Automatisch") \

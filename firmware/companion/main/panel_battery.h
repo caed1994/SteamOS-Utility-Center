@@ -18,3 +18,9 @@ esp_err_t panel_battery_init(void);
  * is then PANEL_SUPPLY_UNKNOWN. percent means something only for
  * PANEL_SUPPLY_BATTERY. */
 bool panel_battery_read(panel_supply_t *supply, int *percent, bool *charging);
+
+/* Whether a cable feeds the panel, as the power chip says: its input is
+ * good. false when the chip was not found or did not answer. A panel full
+ * on its cable charges no more, so this and not the charging tells the
+ * cable from the battery. Reads, and writes nothing. */
+bool panel_battery_cable(void);

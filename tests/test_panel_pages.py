@@ -55,12 +55,13 @@ class ActionTableTest(unittest.TestCase):
                          "the table and the actions below PANEL_SETUP have "
                          "drifted apart, so a button sends another name")
 
-    def test_the_two_local_ones_stay_at_the_end(self):
+    def test_the_local_ones_stay_at_the_end(self):
         """Everything before PANEL_SETUP is a name the service performs.
-        One put in the middle shifts every action under it."""
+        One put in the middle shifts every action under it. The panel does
+        the setup, the wake and the update itself."""
         names = actions()
-        self.assertEqual(names[-1], "PANEL_WAKE")
-        self.assertEqual(names[-2], "PANEL_SETUP")
+        self.assertEqual(names[-3:], ["PANEL_SETUP", "PANEL_WAKE",
+                                      "PANEL_UPDATE"])
 
     def test_the_session_presses_name_where_to_go(self):
         names = actions()

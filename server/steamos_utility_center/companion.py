@@ -7,10 +7,11 @@ The panel is an ESP32-S3 with a 4 inch touch screen on the wall. It has no
 cable to this machine. It asks over the network every three seconds, and it
 sends a press as a second request. firmware/companion holds its side.
 
-This service answers two paths and nothing else:
+This service answers three paths and nothing else:
 
     GET  /v1/status     the controllers, the audio and the sensors
     POST /v1/action     one of the named presses
+    GET  /v1/firmware   the firmware of the panel, for its update
 
 It runs in the session of the desktop user and never as root. That is not a
 limitation to work around, it is the design: `systemctl suspend` and `wpctl`
@@ -193,6 +194,18 @@ MICROWATTS = 1000000
 SANE_CELSIUS = 150
 SANE_WATTS = 2000
 
+# What the panel keeps of each list: PANEL_PADS, PANEL_SENSORS and
+# PANEL_DRIVES in its ui.h. The answer stops there. An Intel processor
+# reports a sensor for each core, and two of them on one board made an
+# answer that the buffer of the panel did not hold. The panel reads such
+# an answer as no answer at all.
+PANEL_PADS = 4
+PANEL_SENSORS = 6
+PANEL_DRIVES = 3
+# The name of the game, as long as the panel keeps it. It keeps 63 bytes,
+# and those are inside the first 63 characters.
+PLAYING_CHARS = 63
+
 # The card a magic packet has to name, and where to read it.
 #
 # Wake on LAN is a thing wired cards do. A radio that sleeps hears nothing,
@@ -231,9 +244,12 @@ PREBUILT_DIR = os.path.join(FIRMWARE_DIR, "prebuilt")
 BUILD_DIR = os.path.join(FIRMWARE_DIR, "build")
 STAMP_NAME = "built-from"
 
-# The three parts of an image, at the names an ESP-IDF build gives them.
+# The four parts of an image, at the names an ESP-IDF build gives them.
+# ota_data_initial.bin is the empty otadata, which makes the first slot the
+# one that boots after a flash over USB.
 IMAGE_PARTS = (os.path.join("bootloader", "bootloader.bin"),
                os.path.join("partition_table", "partition-table.bin"),
+               "ota_data_initial.bin",
                "steamos_companion.bin")
 
 # What the build reads. Everything else under firmware/companion is a note or
@@ -270,9 +286,9 @@ def firmware_fingerprint(root="."):
 
 
 def image_is_complete(where):
-    """Whether that directory holds all three parts of an image.
+    """Whether that directory holds all four parts of an image.
 
-    All three or none. A directory with one of them is a build that stopped,
+    All four or none. A directory with one of them is a build that stopped,
     and a flash from it leaves a board that does not start.
     """
     return all(os.path.isfile(os.path.join(where, part))
@@ -286,6 +302,139 @@ def image_stamp(where):
             return handle.read().strip()
     except OSError:
         return ""
+
+
+# The update of the panel over the network.
+#
+# The service offers the image that a flash over USB would write: the one CI
+# built, in the copy of the toolbox the installer keeps, and only while its
+# stamp matches the source beside it. A clone that runs this service from
+# its own tree offers the image of that tree.
+#
+# The panel takes it only when the number of the build is higher than its
+# own, and only when the offer carries a signature with the token: the
+# answer to a status crosses the network unsigned, and the signature is what
+# keeps a stranger on that network from offering an image of their own. The
+# panel checks the SHA-256 of what it downloaded against the offer before it
+# boots it. See firmware/companion/main/panel_update.c.
+FIRMWARE_PATH = "/v1/firmware"
+# esp_app_desc_t, which an ESP-IDF image carries after its header of 24
+# bytes and the header of its first segment of 8. Its version is the
+# PROJECT_VER of the build, "61-1eec536", at 16 bytes into it.
+IMAGE_MAGIC = 0xE9
+APP_DESC_OFFSET = 32
+APP_DESC_MAGIC = 0xABCD5432
+VERSION_AT = 16
+VERSION_BYTES = 32
+# A slot of the partition table. An image larger than that fits no slot.
+SLOT_BYTES = 0x700000
+# Where the installer keeps its copy of the toolbox, beside this package.
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+OFFER_ROOTS = (os.path.join(os.path.dirname(PACKAGE_DIR), "source"),
+               os.path.dirname(os.path.dirname(PACKAGE_DIR)))
+
+
+def image_version(path):
+    """The version an ESP-IDF image carries, or None for no such image."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(APP_DESC_OFFSET + VERSION_AT + VERSION_BYTES)
+    except OSError:
+        return None
+    if len(head) < APP_DESC_OFFSET + VERSION_AT + VERSION_BYTES:
+        return None
+    if head[0] != IMAGE_MAGIC:
+        return None
+    magic = int.from_bytes(head[APP_DESC_OFFSET:APP_DESC_OFFSET + 4],
+                           "little")
+    if magic != APP_DESC_MAGIC:
+        return None
+    raw = head[APP_DESC_OFFSET + VERSION_AT:]
+    return raw.split(b"\0")[0].decode("ascii", errors="replace")
+
+
+def build_number(version):
+    """The number of a build, out of its version: 61 for "61-1eec536".
+
+    0 for a version with no number in front, which is a build made by hand
+    and lower than every build of the job.
+    """
+    found = re.match(r"\d+", version or "")
+    return int(found.group(0)) if found else 0
+
+
+def offer_signature(token, build, size, sha256):
+    """What the panel checks an offer against. See panel_update.c."""
+    message = "firmware\n%d\n%d\n%s" % (build, size, sha256)
+    return hmac.new(token.encode(), message.encode(),
+                    hashlib.sha256).hexdigest()
+
+
+class FirmwareOffer:
+    """The image the service offers, read once for each image.
+
+    The fingerprint of the source and the SHA-256 of the image take a moment
+    each, and the panel asks every three seconds. So both are read again
+    only when the image on the disk changes.
+    """
+
+    def __init__(self, roots=OFFER_ROOTS):
+        self.roots = roots
+        self._seen = None
+        self._found = None
+        self._lock = threading.Lock()
+
+    def _image(self):
+        for root in self.roots:
+            where = os.path.join(root, PREBUILT_DIR)
+            if not image_is_complete(where):
+                continue
+            path = os.path.join(where, "steamos_companion.bin")
+            return root, where, path
+        return None
+
+    def current(self):
+        """{"build", "version", "size", "sha256", "path"}, or None."""
+        found = self._image()
+        if not found:
+            return None
+        root, where, path = found
+        try:
+            info = os.stat(path)
+        except OSError:
+            return None
+        seen = (path, info.st_mtime_ns, info.st_size,
+                image_stamp(where))
+        with self._lock:
+            if seen == self._seen:
+                return self._found
+        offer = None
+        version = image_version(path)
+        if (version is not None and 0 < info.st_size <= SLOT_BYTES
+                and image_stamp(where) == firmware_fingerprint(root)):
+            digest = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for block in iter(lambda: handle.read(1 << 16), b""):
+                    digest.update(block)
+            offer = {"build": build_number(version), "version": version,
+                     "size": info.st_size, "sha256": digest.hexdigest(),
+                     "path": path}
+        with self._lock:
+            self._seen, self._found = seen, offer
+        return offer
+
+    def signed(self, token):
+        """The offer as the status carries it: no path, and signed."""
+        offer = self.current()
+        if not offer or not token:
+            return None
+        return {"build": offer["build"], "version": offer["version"],
+                "size": offer["size"], "sha256": offer["sha256"],
+                "sign": offer_signature(token, offer["build"], offer["size"],
+                                        offer["sha256"])}
+
+
+_firmware = FirmwareOffer()
 
 
 def addresses():
@@ -564,10 +713,11 @@ def telemetry(root=temperature.HWMON_ROOT):
         # Every sensor of the processor and of the card, for the choice on
         # the panel. The two above stay the answer when nobody chose.
         "cpu_sensors": sensor_list(
-            [one for one in sensors if one["chip"].lower() in CPU_CHIPS]),
+            [one for one in sensors
+             if one["chip"].lower() in CPU_CHIPS])[:PANEL_SENSORS],
         "gpu_sensors": sensor_list(
             [one for one in sensors
-             if os.path.dirname(one["path"]) == place]),
+             if os.path.dirname(one["path"]) == place])[:PANEL_SENSORS],
     }
 
 
@@ -768,18 +918,20 @@ def session_mode():
     return "game" if desktop.running_game_mode() else "desktop"
 
 
-def status(address=None):
+def status(address=None, token=None, offer=None):
     """Everything one GET answers with.
 
     address is the one of this machine that the panel connected to, for the
-    page of the PC.
+    page of the PC. token signs the offer of a firmware: see FirmwareOffer.
     """
+    offer = _firmware if offer is None else offer
     return {
         "host": os.uname().nodename,
         # The Steam Controller of 2026 first, because the panel shows the
         # first two and the kernel never reports that controller while Steam
         # runs. See steamcontroller.py.
-        "controllers": numbered(steamcontroller.batteries() + controllers()),
+        "controllers": numbered(steamcontroller.batteries() +
+                                controllers())[:PANEL_PADS],
         "audio": audio(),
         "telemetry": telemetry(),
         # For the Wake button. None where this machine has no wired card,
@@ -789,12 +941,14 @@ def status(address=None):
         "session": session_mode(),
         # "" most of the time, and that is not a fault: most of the time
         # no game runs and the panel then shows nothing.
-        "playing": steamapps.now_playing(),
+        "playing": (steamapps.now_playing() or "")[:PLAYING_CHARS],
         # {"achieved": 49, "total": 60}, or None for no game and for a
         # game with nothing to count. See steamapps.achievements.
         "achievements": steamapps.now_playing_achievements(),
-        "drives": drives(),
+        "drives": drives()[:PANEL_DRIVES],
         "pc": pc(address),
+        # The firmware for the panel, or None. See FirmwareOffer.
+        "firmware": offer.signed(token),
     }
 
 
@@ -867,9 +1021,10 @@ class Nonces:
             return self._open.pop(value, None) is not None
 
 
-def make_handler(token, nonces=None):
+def make_handler(token, nonces=None, offer=None):
     """The request handler for one token."""
     nonces = Nonces() if nonces is None else nonces
+    offer = _firmware if offer is None else offer
 
     class Handler(BaseHTTPRequestHandler):
         # The log of BaseHTTPRequestHandler goes to stderr, which is the
@@ -915,8 +1070,36 @@ def make_handler(token, nonces=None):
                 return self.reply(401, {"error": "unauthorized"})
             if self.path == "/v1/status":
                 return self.reply(200,
-                                  status(self.connection.getsockname()[0]))
+                                  status(self.connection.getsockname()[0],
+                                         token, offer))
+            if self.path == FIRMWARE_PATH:
+                return self.send_firmware()
             self.reply(404, {"error": "not found"})
+
+        def send_firmware(self):
+            """The image of the offer, as it is on the disk.
+
+            The panel compares its SHA-256 with the signed offer before it
+            boots it, so what goes out here needs no signature of its own.
+            The socket waits five seconds on each block at most, which the
+            panel meets: it erases its slot before it asks.
+            """
+            found = offer.current()
+            if not found:
+                return self.reply(404, {"error": "no firmware"})
+            try:
+                handle = open(found["path"], "rb")
+            except OSError:
+                return self.reply(404, {"error": "no firmware"})
+            with handle:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(found["size"]))
+                self.send_header(NONCE_HEADER, nonces.issue())
+                self.end_headers()
+                for block in iter(lambda: handle.read(1 << 14), b""):
+                    self.wfile.write(block)
 
         def do_POST(self):
             # The body is read before the check, because the signature

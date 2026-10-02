@@ -40,6 +40,9 @@
 #include "panel_wol.h"
 #include "panel_clock.h"
 #include "panel_time.h"
+#include "panel_update.h"
+#include "panel_ota.h"
+#include "esp_ota_ops.h"
 
 /* The startup animation, put in the image by main/CMakeLists.txt. It
  * belongs to Valve and not to this project; assets/ORIGIN-BOOT-ANIMATION
@@ -79,6 +82,11 @@ static atomic_bool radio_resting;
 /* When the radio came back, for the line that says how long the join took
  * after it. Nought when no join after a rest is under way. */
 static atomic_uint radio_back_ms;
+/* The firmware the PC offers and this panel takes, see panel_update.c, and
+ * whether an update runs. The network task alone writes the offer; the
+ * flag is read by ui_tick, which keeps the display on while it is set. */
+static panel_offer_t offer_taken;
+static atomic_bool updating;
 static QueueHandle_t actions;
 static QueueHandle_t sounds;
 static SemaphoreHandle_t lock;
@@ -88,7 +96,7 @@ static panel_config_t config;
 /* took_us is the time of the request, from the first byte out to the
  * last one in. The page of the PC shows it as the time the PC takes to
  * answer. */
-typedef struct { char data[4096]; size_t length; bool overflow; int64_t took_us; } response_t;
+typedef struct { char data[8192]; size_t length; bool overflow; int64_t took_us; } response_t;
 
 static panel_settings_t settings_load(void)
 {
@@ -330,6 +338,10 @@ static void ui_tick(lv_timer_t *timer)
         if(panel_ui_timer_stop()){
             alarm_woke=false;
             ESP_LOGI("panel_timer","Stopped by the button");
+        }else if(atomic_load(&updating)){
+            /* The progress stays in view. A dark panel in the middle of an
+             * update reads as one that is off. */
+            ESP_LOGI("panel_power","The button waits for the update");
         }else display_sleeping(!atomic_load(&display_asleep),true);
     }
     if(atomic_load(&display_asleep)){
@@ -338,6 +350,7 @@ static void ui_tick(lv_timer_t *timer)
         if(!atomic_load(&asleep_by_hand) && panel_display_touched())
             display_sleeping(false,false);
     }else if(display_sleep_after>0 && !panel_ui_timer_ringing() &&
+             !atomic_load(&updating) &&
              lv_display_get_inactive_time(NULL)
                  >= (uint32_t)display_sleep_after*60u*1000u){
         /* Not while it rings: a minute of no touch is a minute of ringing
@@ -621,6 +634,34 @@ static void pc_read(panel_pc_t *pc,const cJSON *object)
     pc->answer_ms=-1;
 }
 
+/* The firmware of the offer, taken when panel_update_wanted says so, and
+ * dropped otherwise. A service older than this firmware sends none. */
+static void offer_read(const cJSON *firmware)
+{
+    panel_offer_t offer;
+    memset(&offer,0,sizeof offer);
+    const cJSON *build=cJSON_GetObjectItemCaseSensitive(firmware,"build");
+    const cJSON *size=cJSON_GetObjectItemCaseSensitive(firmware,"size");
+    if(cJSON_IsNumber(build)&&cJSON_IsNumber(size)&&build->valuedouble>0
+       &&build->valuedouble<1e8&&size->valuedouble>0&&size->valuedouble<=PANEL_UPDATE_SLOT_BYTES){
+        offer.build=(int)build->valuedouble;
+        offer.size=(uint32_t)size->valuedouble;
+        pc_text(offer.version,sizeof offer.version,firmware,"version");
+        pc_text(offer.sha256,sizeof offer.sha256,firmware,"sha256");
+        pc_text(offer.sign,sizeof offer.sign,firmware,"sign");
+    }
+    bool wanted=panel_update_wanted(config.token,panel_update_build(panel_ota_version()),&offer);
+    if(!wanted)memset(&offer,0,sizeof offer);
+    offer_taken=offer;
+    const char *now=wanted?offer.version:"";
+    xSemaphoreTake(lock,portMAX_DELAY);
+    /* A failure belongs to the offer it failed with. Another offer, or
+     * none, starts with a clean card. */
+    if(strcmp(state.update.offered,now)!=0&&state.update.phase==PANEL_UPDATE_FAILED)
+        state.update.phase=PANEL_UPDATE_NONE;
+    snprintf(state.update.offered,sizeof state.update.offered,"%s",now);
+    xSemaphoreGive(lock);
+}
 static int request(const char *path, const char *action)
 {
     response_t *out=calloc(1,sizeof(*out));
@@ -666,6 +707,7 @@ static int request(const char *path, const char *action)
     panel_pc_t pc;
     pc_read(&pc,cJSON_GetObjectItemCaseSensitive(root,"pc"));
     pc.answer_ms=answer_ms;
+    offer_read(cJSON_GetObjectItemCaseSensitive(root,"firmware"));
     cJSON *volume=cJSON_GetObjectItemCaseSensitive(audio,"percent");
     cJSON *muted=cJSON_GetObjectItemCaseSensitive(audio,"muted");
     /* The second and third pages. Each one is optional: a service that is
@@ -839,6 +881,144 @@ static void radio_rest(bool rest)
     ESP_LOGI("panel_wifi","Radio on again, joining the network");
 }
 
+/* The nonce of an answer and nothing else, for the download of a firmware:
+ * its body goes to the slot and not to a buffer. */
+static esp_err_t nonce_only(esp_http_client_event_t *event)
+{
+    if (event->event_id==HTTP_EVENT_ON_HEADER) remember_nonce(event);
+    return ESP_OK;
+}
+static void update_phase(panel_update_phase_t phase,int percent,panel_text_id_t failure)
+{
+    xSemaphoreTake(lock,portMAX_DELAY);
+    state.update.phase=phase;state.update.percent=percent;state.update.failure=failure;
+    xSemaphoreGive(lock);
+}
+/* The image of the offer, from the PC into the other slot.
+ *
+ * Signed like every other request, with the nonce of the last answer, and
+ * once more on a 401, which carries a fresh one. The slot was erased
+ * before this asks, so the blocks go to the flash as fast as they come and
+ * the service never waits long on one. */
+static bool download(const panel_offer_t *offer,panel_text_id_t *why)
+{
+    *why=TXT_UPDATE_NO_ANSWER;
+    for(int round=0;round<2;round++){
+        char url[224],auth[PANEL_AUTH_HEX];
+        snprintf(url,sizeof(url),"%s%s",config.server,PANEL_UPDATE_PATH);
+        esp_http_client_config_t cfg={.url=url,.timeout_ms=10000,.event_handler=nonce_only,
+                                      .disable_auto_redirect=true,.buffer_size=4096};
+        esp_http_client_handle_t client=esp_http_client_init(&cfg);
+        if(!client)return false;
+        if(panel_auth_sign(config.token,"GET",PANEL_UPDATE_PATH,panel_nonce,"",0,auth)){
+            esp_http_client_set_header(client,PANEL_NONCE_HEADER,panel_nonce);
+            esp_http_client_set_header(client,PANEL_AUTH_HEADER,auth);
+        }
+        if(esp_http_client_open(client,0)!=ESP_OK){
+            esp_http_client_cleanup(client);
+            return false;
+        }
+        int64_t length=esp_http_client_fetch_headers(client);
+        int status=esp_http_client_get_status_code(client);
+        if(status==401&&round==0){
+            esp_http_client_close(client);esp_http_client_cleanup(client);
+            continue;
+        }
+        if(status!=200||length!=(int64_t)offer->size){
+            ESP_LOGW("panel_update","The PC answered %d with %" PRId64 " bytes for %" PRIu32,
+                     status,length,offer->size);
+            esp_http_client_close(client);esp_http_client_cleanup(client);
+            return false;
+        }
+        char *block=malloc(PANEL_UPDATE_BLOCK);
+        if(!block)*why=TXT_UPDATE_WRITE;
+        uint32_t got=0;
+        int shown=-1;
+        while(block&&got<offer->size){
+            int read=esp_http_client_read(client,block,PANEL_UPDATE_BLOCK);
+            if(read<=0)break;
+            if(panel_ota_write(block,(size_t)read)!=ESP_OK){*why=TXT_UPDATE_WRITE;break;}
+            got+=(uint32_t)read;
+            int percent=(int)((uint64_t)got*100/offer->size);
+            if(percent!=shown){shown=percent;update_phase(PANEL_UPDATE_RUNNING,percent,TXT_UPDATE_FAILED);}
+        }
+        free(block);
+        esp_http_client_close(client);esp_http_client_cleanup(client);
+        return got==offer->size;
+    }
+    return false;
+}
+/* An update, from the tap on the panel to the restart.
+ *
+ * The power is asked again here and not only on the screen, which can be
+ * a few seconds behind. A failure leaves the running firmware as it was
+ * and says why on the page of the panel; the offer stays, so a tap tries
+ * again. */
+static void firmware_update(void)
+{
+    panel_offer_t offer=offer_taken;
+    if(!offer.build)return;
+    xSemaphoreTake(lock,portMAX_DELAY);
+    bool on_battery=state.esp_supply==PANEL_SUPPLY_BATTERY&&!state.esp_cable;
+    int percent=state.esp_battery;bool charging=state.esp_charging;
+    bool online=state.online;
+    xSemaphoreGive(lock);
+    if(!panel_update_power_ok(on_battery,percent,charging)){
+        update_phase(PANEL_UPDATE_FAILED,0,TXT_UPDATE_POWER);
+        return;
+    }
+    if(!online||!connected()){
+        update_phase(PANEL_UPDATE_FAILED,0,TXT_UPDATE_NO_ANSWER);
+        return;
+    }
+    atomic_store(&updating,true);
+    update_phase(PANEL_UPDATE_RUNNING,0,TXT_UPDATE_FAILED);
+    ESP_LOGI("panel_update","Updating from %s to %s",panel_ota_version(),offer.version);
+    panel_text_id_t why=TXT_UPDATE_WRITE;
+    if(panel_ota_begin(offer.size)==ESP_OK&&download(&offer,&why)){
+        esp_err_t err=panel_ota_finish(offer.sha256);
+        if(err==ESP_OK){
+            update_phase(PANEL_UPDATE_RESTARTING,100,TXT_UPDATE_FAILED);
+            ESP_LOGI("panel_update","%s is written; restarting into it",offer.version);
+            /* Long enough to read that it restarts. */
+            vTaskDelay(pdMS_TO_TICKS(2500));
+            esp_restart();
+        }
+        why=err==ESP_ERR_INVALID_CRC||err==ESP_ERR_INVALID_SIZE||err==ESP_ERR_OTA_VALIDATE_FAILED
+            ?TXT_UPDATE_BROKEN:TXT_UPDATE_WRITE;
+    }
+    panel_ota_abort();
+    ESP_LOGW("panel_update","The update to %s failed; %s stays",offer.version,panel_ota_version());
+    update_phase(PANEL_UPDATE_FAILED,0,why);
+    atomic_store(&updating,false);
+}
+/* The panel itself, for its page: the firmware, the network and the
+ * memory. With the battery, every five seconds. */
+static void self_read(void)
+{
+    panel_self_t self;
+    memset(&self,0,sizeof self);
+    snprintf(self.version,sizeof self.version,"%s",panel_ota_version());
+    snprintf(self.ssid,sizeof self.ssid,"%s",config.ssid);
+    const char *server=config.server;
+    if(strncmp(server,"http://",7)==0)server+=7;
+    snprintf(self.server,sizeof self.server,"%.63s",server);
+    esp_netif_t *netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t info;
+    if(netif&&esp_netif_get_ip_info(netif,&info)==ESP_OK&&info.ip.addr)
+        snprintf(self.ip,sizeof self.ip,IPSTR,IP2STR(&info.ip));
+    uint8_t mac[6];
+    if(esp_wifi_get_mac(WIFI_IF_STA,mac)==ESP_OK)
+        snprintf(self.mac,sizeof self.mac,"%02x:%02x:%02x:%02x:%02x:%02x",
+                 mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+    wifi_ap_record_t ap;
+    if(connected()&&esp_wifi_sta_get_ap_info(&ap)==ESP_OK)self.rssi=ap.rssi;
+    self.uptime_s=(uint32_t)(esp_timer_get_time()/1000000);
+    self.heap_free=(uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    self.psram_free=(uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    xSemaphoreTake(lock,portMAX_DELAY);state.self=self;xSemaphoreGive(lock);
+}
+
 static void network_task(void *arg)
 {
     (void)arg;
@@ -856,7 +1036,7 @@ static void network_task(void *arg)
     /* Due at once, so the corner of the screen fills at the first turn
      * and not five seconds after the rest. */
     TickType_t last_battery=xTaskGetTickCount()-pdMS_TO_TICKS(5000);
-    bool rest_wanted=false,was_connected=false;
+    bool rest_wanted=false,was_connected=false,trial_over=false;
     /* The answer of the last poll, for the line when it changes. */
     int answered=-1;
     for (;;) {
@@ -886,10 +1066,12 @@ static void network_task(void *arg)
             last_battery=xTaskGetTickCount();
             panel_supply_t supply;int percent;bool charging;
             panel_battery_read(&supply,&percent,&charging);
+            bool cable=panel_battery_cable();
+            self_read();
             xSemaphoreTake(lock,portMAX_DELAY);
             panel_supply_t was=state.esp_supply;
             state.esp_supply=supply;state.esp_battery=percent;
-            state.esp_charging=charging;
+            state.esp_charging=charging;state.esp_cable=cable;
             xSemaphoreGive(lock);
             /* A line when the supply changes and not at every reading: a
              * cable in or out is an event, a gauge at 87 is not. */
@@ -932,6 +1114,11 @@ static void network_task(void *arg)
         panel_action_t action;
         if (xQueueReceive(actions,&action,pdMS_TO_TICKS(100))==pdTRUE) {
             if (action==PANEL_SETUP) { portal_start(); continue; }
+            if (action==PANEL_UPDATE) {
+                firmware_update();
+                last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
+                continue;
+            }
             if (action==PANEL_WAKE) {
                 bool sent=wake_the_pc();
                 xSemaphoreTake(lock,portMAX_DELAY);
@@ -959,6 +1146,11 @@ static void network_task(void *arg)
             xTaskGetTickCount()-last_poll>=pdMS_TO_TICKS(3000)) {
             last_poll=xTaskGetTickCount();
             int code=connected() ? request("/v1/status",NULL) : 0;
+            /* A firmware on trial is kept once the PC answered it: it
+             * starts, draws, joins the network and talks to the service.
+             * Until then a restart goes back to the firmware before it.
+             * See panel_ota.h. */
+            if (code==200 && !trial_over) { trial_over=true; panel_ota_confirm(); }
             xSemaphoreTake(lock,portMAX_DELAY);
             state.online=code==200;
             /* Something to say, and nothing where there is nothing.

@@ -63,9 +63,22 @@ int main(int argc,char **argv)
         {"amdgpu/junction","Junction (Hotspot)",68},{"amdgpu/mem","VRAM",60}};
     memcpy(s.cpu_sensors,cpu_sensors,sizeof cpu_sensors);s.cpu_sensor_count=2;
     memcpy(s.gpu_sensors,gpu_sensors,sizeof gpu_sensors);s.gpu_sensor_count=3;
+    /* The panel itself, and an update the PC offers. "self" opens its
+     * page, "self-low" is a battery too low for the update, "self-failed"
+     * an update that failed, and "updating" the screen while one writes. */
+    static const panel_self_t self={.version="61-1eec536",.ssid="FRITZ!Box 7590",
+        .ip="192.168.178.57",.mac="24:58:7c:12:ab:cd",.server="192.168.178.42:8765",
+        .rssi=-58,.uptime_s=3*3600+12*60,.heap_free=142*1024,.psram_free=6400*1024};
+    s.self=self;
+    snprintf(s.update.offered,sizeof s.update.offered,"64-2b7f0c1");
+    if(argc>2&&strcmp(argv[2],"self-failed")==0){
+        s.update.phase=PANEL_UPDATE_FAILED;s.update.failure=TXT_UPDATE_BROKEN;
+    }
+    if(argc>2&&strcmp(argv[2],"updating")==0){s.update.phase=PANEL_UPDATE_RUNNING;s.update.percent=45;}
     /* The battery of the panel itself, for the corner of the main screen.
      * A real board shows this only once its power chip answers. */
     s.esp_supply=PANEL_SUPPLY_BATTERY;s.esp_battery=87;
+    if(argc>2&&strcmp(argv[2],"self-low")==0){s.esp_battery=12;s.esp_charging=false;}
     if(argc>2&&strcmp(argv[2],"offline")==0){s.online=false;s.wifi=false;}
     /* Offline, with an address to wake the PC at. The control card shows
      * its other face here. See panel_wol.c. */
@@ -117,6 +130,7 @@ int main(int argc,char **argv)
         }
     }
     if(argc>2&&strcmp(argv[2],"pads")==0)panel_ui_pads_open();
+    if(argc>2&&strncmp(argv[2],"self",4)==0)panel_ui_self_open();
     if(argc>2&&strstr(argv[2],"-menu")){
         const char *reading=strncmp(argv[2],"gpu",3)==0?"56 °C":"49 °C";
         lv_obj_t *value=find_label(lv_screen_active(),reading);

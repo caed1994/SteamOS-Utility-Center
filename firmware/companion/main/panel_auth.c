@@ -60,3 +60,32 @@ bool panel_auth_sign(const char *token, const char *method, const char *path,
     to_hex(mac, sizeof(mac), out);
     return true;
 }
+
+bool panel_auth_offer(const char *token, int build, unsigned long size,
+                      const char *sha256, char out[PANEL_AUTH_HEX])
+{
+    if (!token || !sha256 || !out) return false;
+    const mbedtls_md_info_t *sha = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (!sha) return false;
+    char message[MESSAGE_ROOM];
+    int written = snprintf(message, sizeof(message), "firmware\n%d\n%lu\n%s",
+                           build, size, sha256);
+    if (written < 0 || (size_t)written >= sizeof(message)) return false;
+    unsigned char mac[32];
+    if (mbedtls_md_hmac(sha, (const unsigned char *)token, strlen(token),
+                        (const unsigned char *)message, (size_t)written,
+                        mac) != 0) return false;
+    to_hex(mac, sizeof(mac), out);
+    return true;
+}
+
+bool panel_auth_equal(const char *one, const char *other)
+{
+    if (!one || !other) return false;
+    size_t length = strlen(one);
+    if (length != strlen(other) || length == 0) return false;
+    unsigned char differ = 0;
+    for (size_t i = 0; i < length; i++)
+        differ |= (unsigned char)(one[i] ^ other[i]);
+    return differ == 0;
+}
