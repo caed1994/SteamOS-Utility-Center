@@ -10,7 +10,8 @@ first, so that each change is checked against numbers from the board.
 firmware/companion/main/panel_frames.c counts the frames, and the harness
 in tests/c/panel-frames-harness.c drives it here. The rules below hold
 where the frames come from, when the count stands still, and the pace of
-the refresh and of the tasks around the drawing.
+the refresh and of the tasks around the drawing. The last rules hold the
+internal memory that the radio gives back to the display.
 """
 
 from __future__ import annotations
@@ -278,6 +279,20 @@ class WhereTest(unittest.TestCase):
                      os.path.join(COMPANION, "preview", "CMakeLists.txt")):
             with open(path, encoding="utf-8") as handle:
                 self.assertIn("panel_frames.c", handle.read(), path)
+
+
+class RoomTest(unittest.TestCase):
+    """The panel read 43 KB of internal memory free and 22 KB at the least.
+    Each change that makes the scroll faster takes some of it, so the radio
+    gives some back first."""
+
+    def test_the_radio_keeps_no_code_in_iram_and_its_buffers_in_psram(self):
+        settings = defaults()
+        for line in ("CONFIG_ESP_WIFI_IRAM_OPT=n", "CONFIG_ESP_WIFI_RX_IRAM_OPT=n",
+                     "CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y"):
+            self.assertRegex(settings, r"(?m)^%s$" % re.escape(line))
+        # No other option puts the code of the radio back into IRAM.
+        self.assertNotRegex(settings, r"(?m)^CONFIG_ESP_WIFI_(SLP|EXTRA)_IRAM_OPT=y")
 
 
 if __name__ == "__main__":

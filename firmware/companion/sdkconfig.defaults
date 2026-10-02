@@ -119,6 +119,23 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
 
 # Two time servers for the clock page, and the first one from DHCP: the
 # router names one when it has one. See main/panel_time.c.
+# Internal memory back for the display, at a cost the radio does not feel.
+#
+# The page of the panel read 43 KB of internal memory free and 22 KB at the
+# least, and each change that makes the scroll faster takes some of it.
+#
+# The Wi-Fi library keeps its most called code in IRAM, about 19 KB on this
+# build (libpp and libnet80211 in the map). Out of it, that code runs from
+# the cache like the rest, and the radio is a little slower. The panel asks
+# the PC a small question every few seconds, and an update takes a few
+# seconds more.
+#
+# The buffers of Wi-Fi and lwIP come out of PSRAM first, and out of the
+# internal memory only when PSRAM has none. They are what fills the
+# internal memory when the radio is busy.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 # lwIP on core 0 with the radio. It ran on either core, and at priority
 # 18 a burst of the network took core 1 from the drawing.
 CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
