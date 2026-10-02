@@ -694,10 +694,15 @@ class SleepTimeoutTest(unittest.TestCase):
         self.assertIn("panel_display_touched()", tick)
 
     def test_a_touch_leaves_a_display_the_button_switched_off(self):
+        """The touch, and since a later firmware the lift, stand inside
+        the test of the reason."""
         tick = self.tick()
-        self.assertRegex(
-            tick, r"!atomic_load\(&asleep_by_hand\)\s*&&\s*panel_display_touched",
-            "the reason has to be read before a touch wakes anything")
+        guarded = re.search(r"if\(!atomic_load\(&asleep_by_hand\)\)\{(.*?)\n        \}",
+                            tick, re.S)
+        self.assertIsNotNone(guarded,
+                             "the reason has to be read before a touch wakes anything")
+        self.assertIn("panel_display_touched()", guarded.group(1))
+        self.assertEqual(tick.count("panel_display_touched()"), 1)
 
     def test_the_button_says_it_was_the_button(self):
         """One door for both, so the state and the reason cannot drift.

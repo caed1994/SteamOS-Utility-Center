@@ -117,7 +117,12 @@ static lv_obj_t *pad_area,*pad_icons[PAD_HEAD],*pad_values[PAD_HEAD];
  * takes no room while there is none. */
 enum { SELF_VERSION, SELF_UPTIME, SELF_MEMORY,
        SELF_WIFI, SELF_SIGNAL, SELF_IP, SELF_MAC, SELF_SERVER,
-       SELF_CHARGE, SELF_SUPPLY, SELF_ROWS };
+       SELF_CHARGE, SELF_SUPPLY, SELF_VBAT, SELF_PHASE, SELF_VBUS,
+       SELF_VSYS, SELF_DIE, SELF_HELD,
+       SELF_CHARGE_MA, SELF_CHARGE_MV, SELF_INPUT_MA, SELF_ROWS };
+/* The phases of the charge in a row, as the power chip counts them: see
+ * panel_power_detail_t. */
+_Static_assert(TXT_PHASE_IDLE==TXT_PHASE_TRICKLE+5,"the six phases of the charge in a row");
 static lv_obj_t *self_screen,*self_values[SELF_ROWS];
 static lv_obj_t *update_card,*update_offered,*update_note,*update_button;
 /* The screen over everything while an update writes, which nothing closes:
@@ -328,6 +333,12 @@ static void tones_changed(lv_event_t *e)
     feedback();
 }
 static void test_sound(lv_event_t *e){(void)e;if(play_sound)play_sound(local.sound_volume);}
+static void lift_changed(lv_event_t *e)
+{
+    local.lift_wake=lv_obj_has_state(lv_event_get_target(e),LV_STATE_CHECKED);
+    if(save_setting)save_setting(PANEL_LIFT_WAKE,local.lift_wake,true);
+    feedback();
+}
 /* Every pointer into the settings screen, dropped.
  *
  * One list and not four. The back button, the language button, the setup
@@ -392,8 +403,8 @@ void panel_ui_settings_open(void)
      * slider to whatever comes next: the line between the rows, or the
      * edge of the card. The second row was squeezed against the bottom
      * until the board showed it, and check_pages holds the two gaps
-     * equal. */
-    lv_obj_t *display=panel(settings_screen,20,78,440,228,CARD,true);
+     * equal. A third row under them holds the switch for a lift. */
+    lv_obj_t *display=panel(settings_screen,20,78,440,300,CARD,true);
     icon(display,&icon_sun,16,18,MUTED);
     text_at(display,panel_text(TXT_BRIGHTNESS),62,16,268,&panel_font_18,TEXT);
     brightness_label=text_at(display,"",338,16,88,&panel_font_18,BLUE);
@@ -411,7 +422,18 @@ void panel_ui_settings_open(void)
     text_at(display,panel_text(TXT_SLEEP_AFTER_WHAT),20,155,404,&panel_font_12,MUTED);
     slider_range(display,200,0,SLEEP_CHOICES-1,sleep_index(local.sleep_after),
                  PANEL_SLEEP_AFTER);
-    lv_obj_t *sound=panel(settings_screen,20,320,440,216,CARD,true);
+    /* A lift brings the display back, after the set time and not after
+     * the button. It belongs to the time: it is the other way out of the
+     * sleep that time starts. */
+    line(display,18,224,402,1);
+    text_at(display,panel_text(TXT_LIFT_WAKE),20,240,330,&panel_font_18,TEXT);
+    text_at(display,panel_text(TXT_LIFT_WAKE_WHAT),20,268,336,&panel_font_12,MUTED);
+    lv_obj_t *lift=lv_switch_create(display);lv_obj_set_pos(lift,358,241);lv_obj_set_size(lift,58,30);
+    lv_obj_set_style_bg_color(lift,lv_color_hex(BLUE),LV_PART_INDICATOR|LV_STATE_CHECKED);
+    lv_obj_set_ext_click_area(lift,8);
+    if(local.lift_wake)lv_obj_add_state(lift,LV_STATE_CHECKED);
+    lv_obj_add_event_cb(lift,lift_changed,LV_EVENT_VALUE_CHANGED,NULL);
+    lv_obj_t *sound=panel(settings_screen,20,392,440,216,CARD,true);
     icon(sound,&icon_volume_2,12,12,MUTED);
     text_at(sound,panel_text(TXT_TONES),70,16,240,&panel_font_18,TEXT);
     text_at(sound,panel_text(TXT_TONES_WHAT),70,44,340,&panel_font_12,MUTED);
@@ -434,11 +456,11 @@ void panel_ui_settings_open(void)
      * a stray finger lands. It still asks before it starts, the same
      * question as before, and the setup screen that follows closes this
      * one: see settings_forget in panel_ui_update. */
-    lv_obj_t *link=panel(settings_screen,20,550,440,84,CARD,true);
+    lv_obj_t *link=panel(settings_screen,20,622,440,84,CARD,true);
     text_at(link,panel_text(TXT_CONNECTION),20,16,240,&panel_font_18,TEXT);
     text_at(link,panel_text(TXT_SETUP_WHAT),20,44,240,&panel_font_12,MUTED);
     button(link,panel_text(TXT_SETUP),276,20,144,44,clicked,PANEL_SETUP);
-    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,648,440,&panel_font_12,MUTED);
+    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,720,440,&panel_font_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
 /* What a controller says in the head and on its card: the battery, the
@@ -963,6 +985,48 @@ static void self_say(int row,const char *text)
 {
     if(self_values[row])lv_label_set_text(self_values[row],text&&text[0]?text:"--");
 }
+/* Millivolts as volts with two places, "3.98 V", and nothing for none. */
+static void say_volts(char *out,size_t room,int mv)
+{
+    if(mv<0){out[0]=0;return;}
+    int centivolts=(mv+5)/10;
+    snprintf(out,room,"%d.%02d V",centivolts/100,centivolts%100);
+}
+static void say_milliamps(char *out,size_t room,int ma)
+{
+    if(ma<0)out[0]=0;
+    else snprintf(out,room,"%d mA",ma);
+}
+/* The power chip in detail: the rows under the charge and the supply,
+ * and the settings of the charger in a card of their own. */
+static void self_detail_show(const panel_power_detail_t *d)
+{
+    char said[96];
+    say_volts(said,sizeof said,d->vbat_mv);self_say(SELF_VBAT,said);
+    self_say(SELF_PHASE,d->phase>=0&&d->phase<=5?panel_text((panel_text_id_t)(TXT_PHASE_TRICKLE+d->phase)):"");
+    say_volts(said,sizeof said,d->vbus_mv);self_say(SELF_VBUS,said);
+    say_volts(said,sizeof said,d->vsys_mv);self_say(SELF_VSYS,said);
+    if(d->die_c!=PANEL_NO_DEGREES)snprintf(said,sizeof said,"%d °C",d->die_c);else said[0]=0;
+    self_say(SELF_DIE,said);
+    /* What holds the charge current down, and "nothing" for nothing:
+     * a chip that answered says so as much as one that names a reason. */
+    if(d->charge_ma<0)said[0]=0;
+    else{
+        const panel_text_id_t why[3]={TXT_HELD_HEAT,TXT_HELD_CURRENT,TXT_HELD_VOLTAGE};
+        const bool held[3]={d->held_heat,d->held_current,d->held_voltage};
+        said[0]=0;
+        for(int i=0;i<3;i++){
+            if(!held[i])continue;
+            if(said[0])strncat(said,", ",sizeof said-strlen(said)-1);
+            strncat(said,panel_text(why[i]),sizeof said-strlen(said)-1);
+        }
+        if(!said[0])snprintf(said,sizeof said,"%s",panel_text(TXT_HELD_NOTHING));
+    }
+    self_say(SELF_HELD,said);
+    say_milliamps(said,sizeof said,d->charge_ma);self_say(SELF_CHARGE_MA,said);
+    say_volts(said,sizeof said,d->charge_mv);self_say(SELF_CHARGE_MV,said);
+    say_milliamps(said,sizeof said,d->input_ma);self_say(SELF_INPUT_MA,said);
+}
 static bool update_power_ok(const panel_state_t *s)
 {
     bool on_battery=s->esp_supply==PANEL_SUPPLY_BATTERY&&!s->esp_cable;
@@ -993,6 +1057,7 @@ static void self_show(const panel_state_t *s)
              :s->esp_charging?panel_text(TXT_CHARGING)
              :s->esp_cable?panel_text(TXT_CHARGED)
              :panel_text(TXT_ON_BATTERY));
+    self_detail_show(&s->esp_detail);
     /* The card of the update: there for an offer and for an update that
      * failed, and nowhere else. */
     const panel_update_t *update=&s->update;
@@ -1075,9 +1140,16 @@ void panel_ui_self_open(void)
     static const int network[]={SELF_WIFI,SELF_SIGNAL,SELF_IP,SELF_MAC,SELF_SERVER};
     static const panel_text_id_t network_names[]={TXT_WIRELESS,TXT_SELF_SIGNAL,TXT_PC_IP,TXT_PC_MAC,TXT_SELF_SERVER};
     self_card(column,TXT_PC_NETWORK,network,5,network_names);
-    static const int power[]={SELF_CHARGE,SELF_SUPPLY};
-    static const panel_text_id_t power_names[]={TXT_SELF_CHARGE,TXT_SELF_SUPPLY};
-    self_card(column,TXT_SELF_POWER,power,2,power_names);
+    static const int power[]={SELF_CHARGE,SELF_SUPPLY,SELF_VBAT,SELF_PHASE,
+                              SELF_VBUS,SELF_VSYS,SELF_DIE,SELF_HELD};
+    static const panel_text_id_t power_names[]={TXT_SELF_CHARGE,TXT_SELF_SUPPLY,
+        TXT_SELF_VBAT,TXT_SELF_PHASE,TXT_SELF_VBUS,TXT_SELF_VSYS,TXT_SELF_DIE,TXT_SELF_HELD};
+    self_card(column,TXT_SELF_POWER,power,8,power_names);
+    /* What the charger is set to: the current and the voltage it charges
+     * at, and the most it takes from the cable. */
+    static const int charger[]={SELF_CHARGE_MA,SELF_CHARGE_MV,SELF_INPUT_MA};
+    static const panel_text_id_t charger_names[]={TXT_SELF_CHARGE_MA,TXT_SELF_CHARGE_MV,TXT_SELF_INPUT_MA};
+    self_card(column,TXT_SELF_CHARGER,charger,3,charger_names);
     if(last_state_valid)self_show(&last_state);
 }
 static void self_clicked(lv_event_t *e){(void)e;feedback();panel_ui_self_open();}

@@ -97,9 +97,20 @@ static void walk(panel_language_t language)
     lv_slider_set_value(volume,45,LV_ANIM_OFF);lv_obj_send_event(volume,LV_EVENT_RELEASED,NULL);
     assert(last_key==PANEL_SOUND_VOLUME && last_value==45 && last_save);
     click(panel_text(TXT_TEST_TONE));assert(sounds==1 && actions==0);
-    skip=0;lv_obj_t *sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(sw);
+    // The switch of the tones is the second one: the first is the lift,
+    // in the card of the display above it.
+    skip=1;lv_obj_t *sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(sw);
     lv_obj_add_state(sw,LV_STATE_CHECKED);lv_obj_send_event(sw,LV_EVENT_VALUE_CHANGED,NULL);
     assert(last_key==PANEL_TOUCH_TONES && last_value==1 && sounds==2);
+    // The lift: off as the settings came, on with a tap, and saved each
+    // way.
+    skip=0;lv_obj_t *lift=kind(lv_screen_active(),&lv_switch_class,&skip);
+    assert(lift && lift!=sw && !lv_obj_has_state(lift,LV_STATE_CHECKED));
+    assert(label(lv_screen_active(),panel_text(TXT_LIFT_WAKE)));
+    lv_obj_add_state(lift,LV_STATE_CHECKED);lv_obj_send_event(lift,LV_EVENT_VALUE_CHANGED,NULL);
+    assert(last_key==PANEL_LIFT_WAKE && last_value==1 && last_save);
+    lv_obj_remove_state(lift,LV_STATE_CHECKED);lv_obj_send_event(lift,LV_EVENT_VALUE_CHANGED,NULL);
+    assert(last_key==PANEL_LIFT_WAKE && last_value==0 && last_save);
     panel_ui_update(&offline);assert(label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
     click(panel_text(TXT_BACK));assert(!label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
     open_settings();
@@ -111,18 +122,21 @@ static void walk(panel_language_t language)
         snprintf(wanted,sizeof wanted,"10 %s",panel_text(TXT_MINUTES));
         assert(label(lv_screen_active(),wanted));
     }
-    skip=0;sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(lv_obj_has_state(sw,LV_STATE_CHECKED));
-    assert(settings==8 && actions==0);
+    skip=1;sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(lv_obj_has_state(sw,LV_STATE_CHECKED));
+    // The lift as it was left: off again.
+    skip=0;lift=kind(lv_screen_active(),&lv_switch_class,&skip);
+    assert(lift && !lv_obj_has_state(lift,LV_STATE_CHECKED));
+    assert(settings==10 && actions==0);
     // The button in the corner carries the name of the other language. A
     // press on it builds both screens again, and the person stays here.
     panel_language_t next=other(language);
     click(panel_language_name(next));
     assert(panel_text_language()==next);
     assert(last_key==PANEL_LANGUAGE && last_value==(int)next && last_save);
-    assert(settings==9 && actions==0);
+    assert(settings==11 && actions==0);
     assert(label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
     assert(label(lv_screen_active(),"55 %") && label(lv_screen_active(),"45 %"));
-    skip=0;sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(lv_obj_has_state(sw,LV_STATE_CHECKED));
+    skip=1;sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(lv_obj_has_state(sw,LV_STATE_CHECKED));
     // The setup lives here now and no longer in a corner of the main
     // screen, where a stray finger lands. It still asks first, and the
     // question stands over the settings rather than behind them.

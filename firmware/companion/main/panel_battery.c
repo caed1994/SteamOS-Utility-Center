@@ -6,9 +6,9 @@
 // The 4B carries an AXP2101, which charges a cell and keeps a gauge of it.
 // Nothing in the board support speaks to it, so this does. A power chip
 // decides which rails of the board have power, and one wrong write to it
-// can switch off the rail this code runs on. So it reads, and writes three
-// fields of the charger and nothing else: see charger_set. The rules in
-// tests/test_panel_battery.py hold that.
+// can switch off the rail this code runs on. So it reads, and writes four
+// fields and nothing else: three of the charger and one of the ADC. See
+// charger_set. The rules in tests/test_panel_battery.py hold that.
 //
 // The addresses and the bits are those of XPowersLib, the driver that the
 // makers of these boards use themselves:
@@ -35,18 +35,24 @@
 /* The gauge, in per cent. */
 #define AXP2101_PERCENT  0xA4
 
-/* The charger, read for the line in the log below. charger_set writes a
- * field of three of them, and only those. The numbers and the bits are
- * those of the AXP2101 datasheet V1.4, chapter 6.13.2, which XPowersLib
- * carries in its datasheet/ directory. */
+/* The charger, read for the line in the log below and for the page of
+ * the panel. charger_set writes a field of four of them, and only those.
+ * The numbers and the bits are those of the AXP2101 datasheet V1.4,
+ * chapter 6.13.2, which XPowersLib carries in its datasheet/ directory. */
 #define AXP2101_VINDPM          0x15  /* 3:0, 3.88 V and 80 mV a step */
 #define AXP2101_INPUT_LIMIT     0x16  /* 2:0, see input_limit_ma */
 #define AXP2101_CHARGER_ON      0x18  /* bit 1, the cell charger */
-#define AXP2101_ADC_ON          0x30  /* bit 1, the ADC of the TS pin */
+#define AXP2101_ADC_ON          0x30  /* 4:0, the channels of the ADC */
 #define AXP2101_VBAT_HIGH       0x34  /* with 0x35, the cell in mV */
 #define AXP2101_VBAT_LOW        0x35
 #define AXP2101_TS_HIGH         0x36  /* with 0x37, the TS pin in 0.5 mV */
 #define AXP2101_TS_LOW          0x37
+#define AXP2101_VBUS_HIGH       0x38  /* with 0x39, the input in mV */
+#define AXP2101_VBUS_LOW        0x39
+#define AXP2101_VSYS_HIGH       0x3A  /* with 0x3B, the system rail in mV */
+#define AXP2101_VSYS_LOW        0x3B
+#define AXP2101_TDIE_HIGH       0x3C  /* with 0x3D, the die: see die_celsius */
+#define AXP2101_TDIE_LOW        0x3D
 #define AXP2101_TS_CONTROL      0x50  /* bit 4: 0 when TS can stop the charger */
 #define AXP2101_JEITA           0x58  /* bit 0 */
 #define AXP2101_PRECHARGE       0x61  /* 3:0, 25 mA a step */
@@ -74,6 +80,12 @@
 #define TS_APART_MASK           0x10
 #define CHGLED_TYPE_A           0x01
 #define CHGLED_MASK             0x07
+/* Bits 4:2 of REG 30: the ADC channels of the temperature of the die, of
+ * the system voltage and of the input voltage. All three are 0 after a
+ * reset (datasheet V1.4, 6.13.2.29). Bits 1:0, the TS pin and the cell,
+ * are on from the reset and stay as they are. */
+#define ADC_MEASURE             0x1C
+#define ADC_MEASURE_MASK        0x1C
 _Static_assert(CHARGE_CURRENT_MA <= PANEL_CELL_MAH / 2,
                "more than half the cell an hour is too fast for it");
 _Static_assert(CHARGE_CURRENT_CODE == 8 + (CHARGE_CURRENT_MA - 200) / 100,
@@ -121,8 +133,9 @@ static void set_field(uint8_t reg, uint8_t mask, uint8_t bits, const char *what)
     ESP_LOGI(tag, "%s: 0x%02x from 0x%02x to 0x%02x", what, reg, before, after);
 }
 
-/* The three settings of the charger that this panel needs, and the only
- * writes to the chip anywhere in this firmware.
+/* The three settings of the charger that this panel needs, the channels
+ * of the ADC that its page reads, and the only writes to the chip
+ * anywhere in this firmware.
  *
  * Read off the board, before this existed: the panel charged slowly, with
  * a charger and a cable that charge a Switch 2 fast, and off as slowly as
@@ -151,7 +164,13 @@ static void set_field(uint8_t reg, uint8_t mask, uint8_t bits, const char *what)
  * high a voltage (datasheet V1.4, table 6-4). Its owner allowed this
  * third write after the first two.
  *
- * All three keep their values while the chip has power, and the chip has
+ * The ADC. It measures the cell and the TS pin from the reset, and the
+ * input, the system rail and the die only when bits 4:2 of 0x30 say so.
+ * The page of the panel shows those three. Measuring switches no rail
+ * and changes nothing of the charge. Its owner allowed this fourth write
+ * for the page.
+ *
+ * All four keep their values while the chip has power, and the chip has
  * power from the cell when the panel is off. So the panel charges at this
  * speed, and shows it, off as well, until the cell is unplugged.
  * Everything else stays at what the chip came with: the rails, the target
@@ -164,6 +183,8 @@ static void charger_set(void)
               "charge current 1000 mA");
     set_field(AXP2101_CHGLED, CHGLED_MASK, CHGLED_TYPE_A,
               "charge LED on while charging");
+    set_field(AXP2101_ADC_ON, ADC_MEASURE_MASK, ADC_MEASURE,
+              "measure the input, the system rail and the die");
 }
 
 /* One register for the log line, or -1 when the chip did not answer. */
@@ -395,4 +416,52 @@ bool panel_battery_cable(void)
     uint8_t status1 = 0;
     if (!chip || read_register(AXP2101_STATUS1, &status1) != ESP_OK) return false;
     return (status1 & (1u << 5)) != 0;
+}
+
+/* The die of the chip in degrees, from the 14 bits of its ADC. The
+ * formula is that of XPowersLib (XPOWERS_AXP2101_CONVERSION). A result
+ * no chip reaches is no reading: an ADC that does not measure reads 0,
+ * which this turns into 385 degrees. */
+static int die_celsius(int raw)
+{
+    if (raw < 0) return PANEL_NO_DEGREES;
+    int celsius = 22 + (7274 - raw) / 20;
+    return celsius < -40 || celsius > 150 ? PANEL_NO_DEGREES : celsius;
+}
+
+bool panel_battery_detail(panel_power_detail_t *out)
+{
+    *out = (panel_power_detail_t){
+        .vbat_mv = -1, .vbus_mv = -1, .vsys_mv = -1,
+        .die_c = PANEL_NO_DEGREES, .phase = -1,
+        .charge_ma = -1, .charge_mv = -1, .input_ma = -1};
+    if (!chip) return false;
+    int status1 = read_or_none(AXP2101_STATUS1);
+    int status2 = read_or_none(AXP2101_STATUS2);
+    int adc = read_or_none(AXP2101_ADC_ON);
+    if (status1 < 0 || status2 < 0 || adc < 0) return false;
+    bool cell = status1 & (1u << 3), input = status1 & (1u << 5);
+    /* A channel the ADC does not measure reads 0, and a voltage of 0 is
+     * no reading either. The input reads what is left on the pin after
+     * the cable went, so it counts only while the input is good. */
+    if (cell && (adc & 0x01))
+        out->vbat_mv = read_pair(AXP2101_VBAT_HIGH, AXP2101_VBAT_LOW, 0x1F);
+    if (input && (adc & 0x04))
+        out->vbus_mv = read_pair(AXP2101_VBUS_HIGH, AXP2101_VBUS_LOW, 0x3F);
+    if (adc & 0x08)
+        out->vsys_mv = read_pair(AXP2101_VSYS_HIGH, AXP2101_VSYS_LOW, 0x3F);
+    if (adc & 0x10)
+        out->die_c = die_celsius(read_pair(AXP2101_TDIE_HIGH, AXP2101_TDIE_LOW, 0x3F));
+    if (out->vbat_mv == 0) out->vbat_mv = -1;
+    if (out->vbus_mv == 0) out->vbus_mv = -1;
+    if (out->vsys_mv == 0) out->vsys_mv = -1;
+    if (cell && (status2 & 0x07) <= 5) out->phase = status2 & 0x07;
+    /* The same three as "held by" in the line of the charger. */
+    out->held_heat = status1 & (1u << 1);
+    out->held_current = status1 & (1u << 0);
+    out->held_voltage = status2 & (1u << 3);
+    out->charge_ma = charge_current_ma(read_or_none(AXP2101_CHARGE_CURRENT));
+    out->charge_mv = charge_voltage_mv(read_or_none(AXP2101_CHARGE_VOLTAGE));
+    out->input_ma = input_limit_ma(read_or_none(AXP2101_INPUT_LIMIT));
+    return true;
 }

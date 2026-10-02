@@ -33,7 +33,7 @@ int main(int argc,char **argv)
     lv_display_set_buffers(d,pixels,NULL,sizeof(pixels),LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(d,flush);
     /* A third word "de" draws the screen in German. */
-    panel_settings_t settings={.brightness=70,.sound_volume=30,.touch_tones=false,
+    panel_settings_t settings={.brightness=70,.sound_volume=30,.touch_tones=false,.lift_wake=true,
                                .language=argc>3&&strcmp(argv[3],"de")==0?PANEL_GERMAN:PANEL_ENGLISH};
     /* The history of the page of the card, which main.c keeps in PSRAM. */
     static panel_history_t history;
@@ -83,6 +83,11 @@ int main(int argc,char **argv)
     /* The battery of the panel itself, for the corner of the main screen.
      * A real board shows this only once its power chip answers. */
     s.esp_supply=PANEL_SUPPLY_BATTERY;s.esp_battery=87;
+    /* The power chip in detail, as the page of the panel shows it:
+     * charging at constant current and held by the input. "self-end"
+     * scrolls the page to it. */
+    s.esp_detail=(panel_power_detail_t){.vbat_mv=3984,.vbus_mv=5011,.vsys_mv=3714,
+        .die_c=38,.phase=2,.held_current=true,.charge_ma=1000,.charge_mv=4200,.input_ma=1500};
     if(argc>2&&strcmp(argv[2],"self-low")==0){s.esp_battery=12;s.esp_charging=false;}
     if(argc>2&&strcmp(argv[2],"offline")==0){s.online=false;s.wifi=false;}
     /* Offline, with an address to wake the PC at. The control card shows
@@ -181,6 +186,11 @@ int main(int argc,char **argv)
     }
     if(argc>2&&strncmp(argv[2],"pc",2)==0)panel_ui_pc_open();
     if(argc>2&&strcmp(argv[2],"pc-end")==0){
+        lv_obj_t *page=lv_obj_get_child(lv_screen_active(),-1);
+        lv_obj_update_layout(page);
+        lv_obj_scroll_to_y(page,LV_COORD_MAX,LV_ANIM_OFF);
+    }
+    if(argc>2&&strcmp(argv[2],"self-end")==0){
         lv_obj_t *page=lv_obj_get_child(lv_screen_active(),-1);
         lv_obj_update_layout(page);
         lv_obj_scroll_to_y(page,LV_COORD_MAX,LV_ANIM_OFF);

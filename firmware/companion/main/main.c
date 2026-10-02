@@ -43,6 +43,7 @@
 #include "panel_update.h"
 #include "panel_ota.h"
 #include "panel_history.h"
+#include "panel_motion.h"
 #include "esp_ota_ops.h"
 
 /* The startup animation, put in the image by main/CMakeLists.txt. It
@@ -83,6 +84,9 @@ static atomic_bool radio_resting;
 /* When the radio came back, for the line that says how long the join took
  * after it. Nought when no join after a rest is under way. */
 static atomic_uint radio_back_ms;
+/* Whether a lift wakes a display that went dark after the set time. The
+ * setting, as the screen sets it; see panel_motion.c. */
+static atomic_bool lift_wake;
 /* The firmware the PC offers and this panel takes, see panel_update.c, and
  * whether an update runs. The network task alone writes the offer; the
  * flag is read by ui_tick, which keeps the display on while it is set. */
@@ -110,7 +114,10 @@ static panel_settings_t settings_load(void)
                                /* Off by itself is what somebody asks for
                                 * rather than what they get, so a panel
                                 * with nothing stored stays lit. */
-                               .sleep_after=0};
+                               .sleep_after=0,
+                               /* Asked for, so on until somebody switches
+                                * it off. It acts only after the timeout. */
+                               .lift_wake=true};
     nvs_handle_t h;
     if(nvs_open("panel_ui",NVS_READONLY,&h)==ESP_OK){
         uint8_t value;
@@ -130,6 +137,7 @@ static panel_settings_t settings_load(void)
         uint32_t key;
         if(nvs_get_u32(h,"cpu_sensor",&key)==ESP_OK)settings.cpu_sensor=key;
         if(nvs_get_u32(h,"gpu_sensor",&key)==ESP_OK)settings.gpu_sensor=key;
+        if(nvs_get_u8(h,"lift_wake",&value)==ESP_OK)settings.lift_wake=value==1;
         nvs_close(h);
     }
     // Here, and not where the screen is built. The setup portal opens
@@ -145,12 +153,17 @@ static void setting_set(panel_setting_t key,int value,bool save)
                      key==PANEL_LANGUAGE?"language":
                      key==PANEL_SLEEP_AFTER?"sleep_after":
                      key==PANEL_CPU_SENSOR?"cpu_sensor":
-                     key==PANEL_GPU_SENSOR?"gpu_sensor":"touch_tones";
+                     key==PANEL_GPU_SENSOR?"gpu_sensor":
+                     key==PANEL_LIFT_WAKE?"lift_wake":"touch_tones";
     bool wide=key==PANEL_CPU_SENSOR||key==PANEL_GPU_SENSOR;
     esp_err_t result=ESP_OK;
     if(key==PANEL_BRIGHTNESS){
         if(!atomic_load(&display_asleep))result=bsp_display_brightness_set(value);
         if(result==ESP_OK)display_brightness=value;
+    }
+    if(key==PANEL_LIFT_WAKE){
+        atomic_store(&lift_wake,value!=0);
+        if(!value)panel_motion_watch(false);
     }
     if(key==PANEL_SLEEP_AFTER){
         display_sleep_after=value;
@@ -294,6 +307,10 @@ static void display_sleeping(bool sleep,bool by_hand)
     if(sleep)panel_clock_low(true);
     atomic_store(&display_asleep,sleep);
     atomic_store(&asleep_by_hand,sleep && by_hand);
+    /* The accelerometer watches a sleep after the timeout, with the
+     * setting on, and nothing else: a display the button switched off
+     * stays off, whatever moves it. */
+    panel_motion_watch(sleep && !by_hand && atomic_load(&lift_wake));
     if(sleep && sounds)xQueueReset(sounds);
     /* The clock starts at the moment of waking. Without this the panel
      * counts the whole sleep as time without a touch and goes straight
@@ -350,9 +367,14 @@ static void ui_tick(lv_timer_t *timer)
     }
     if(atomic_load(&display_asleep)){
         /* A touch brings back a display that went down on its own, and
-         * leaves one that the button switched off where it is. */
-        if(!atomic_load(&asleep_by_hand) && panel_display_touched())
-            display_sleeping(false,false);
+         * leaves one that the button switched off where it is. A lift does
+         * what a touch does, with its setting on. The sensor is read by a
+         * task of its own, and this only takes what it saw. */
+        if(!atomic_load(&asleep_by_hand)){
+            bool lifted=panel_motion_take_lift();
+            if(lifted)ESP_LOGI("panel_motion","Lifted, so the display wakes");
+            if(lifted || panel_display_touched())display_sleeping(false,false);
+        }
     }else if(display_sleep_after>0 && !panel_ui_timer_ringing() &&
              !atomic_load(&updating) &&
              lv_display_get_inactive_time(NULL)
@@ -1089,11 +1111,16 @@ static void network_task(void *arg)
             panel_supply_t supply;int percent;bool charging;
             panel_battery_read(&supply,&percent,&charging);
             bool cable=panel_battery_cable();
+            /* The voltages, the temperature of the chip and its charger,
+             * for the page of the panel. */
+            panel_power_detail_t detail;
+            panel_battery_detail(&detail);
             self_read();
             xSemaphoreTake(lock,portMAX_DELAY);
             panel_supply_t was=state.esp_supply;
             state.esp_supply=supply;state.esp_battery=percent;
             state.esp_charging=charging;state.esp_cable=cable;
+            state.esp_detail=detail;
             xSemaphoreGive(lock);
             /* A line when the supply changes and not at every reading: a
              * cable in or out is an event, a gauge at 87 is not. */
@@ -1286,6 +1313,8 @@ void app_main(void)
     assert(lock && actions);
     state.volume=-1; state.cpu_temp=-1; state.gpu_temp=-1; state.gpu_watts=-1;
     state.gpu_load=-1; state.gpu_mhz=-1;
+    state.esp_detail=(panel_power_detail_t){.vbat_mv=-1,.vbus_mv=-1,.vsys_mv=-1,
+        .die_c=PANEL_NO_DEGREES,.phase=-1,.charge_ma=-1,.charge_mv=-1,.input_ma=-1};
     state.setup=config.ssid[0]==0;
     /* An address kept from an earlier run. Without this the button appears
      * only after the PC has answered once, which is the case where it is
@@ -1300,7 +1329,10 @@ void app_main(void)
     /* After the key, whose IO expander brings the I2C bus up. Not finding
      * the chip leaves the corner of the screen empty and nothing else. */
     panel_battery_init();
+    /* The same bus, and nothing on the screen depends on it. */
+    panel_motion_init();
     panel_settings_t settings=settings_load();
+    atomic_store(&lift_wake,settings.lift_wake);
     display_brightness=settings.brightness;
     display_sleep_after=settings.sleep_after;
     sounds=xQueueCreate(1,sizeof(int));

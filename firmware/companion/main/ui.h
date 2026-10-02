@@ -125,6 +125,19 @@ typedef enum {
     PANEL_SUPPLY_BATTERY
 } panel_supply_t;
 
+/* The power chip of the panel in detail, for the page of the panel. The
+ * voltages are mV and the currents mA, and -1 where the chip gave none.
+ * die_c is the temperature of the chip, PANEL_NO_DEGREES for none. phase
+ * is bits 2:0 of its REG 01, -1 without a cell: 0 trickle, 1 pre-charge,
+ * 2 constant current, 3 constant voltage, 4 done, 5 not charging. The
+ * three held flags say what holds the charge current down. */
+#define PANEL_NO_DEGREES (-128)
+typedef struct {
+    int vbat_mv, vbus_mv, vsys_mv, die_c, phase;
+    bool held_heat, held_current, held_voltage;
+    int charge_ma, charge_mv, input_ma;
+} panel_power_detail_t;
+
 typedef struct {
     bool wifi, online, muted, setup, sound_error;
     /* Whether the panel knows an address to wake the PC at. The screen
@@ -172,6 +185,7 @@ typedef struct {
     panel_supply_t esp_supply;
     int esp_battery;
     bool esp_charging, esp_cable;
+    panel_power_detail_t esp_detail;
     /* The time of day for the fourth page, local, as struct tm counts:
      * weekday from 0 for Sunday, month from 1. clock_set is false until
      * the network has set the clock. */
@@ -182,7 +196,7 @@ typedef struct {
 typedef void (*panel_action_cb_t)(panel_action_t action);
 typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
                PANEL_LANGUAGE, PANEL_SLEEP_AFTER,
-               PANEL_CPU_SENSOR, PANEL_GPU_SENSOR } panel_setting_t;
+               PANEL_CPU_SENSOR, PANEL_GPU_SENSOR, PANEL_LIFT_WAKE } panel_setting_t;
 /* sleep_after counts minutes, and nought means the display stays on. The
  * stored value is the count and not a place in the list of choices, so a
  * later firmware that offers other choices still reads what somebody
@@ -191,10 +205,13 @@ typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
  * cpu_sensor and gpu_sensor are the sensor somebody chose for each tile,
  * as panel_sensor_key of its id, and nought for the choice of the
  * service. A key and not a place in the list: the list is in the order
- * of the service, and that order is not a promise. */
+ * of the service, and that order is not a promise.
+ *
+ * lift_wake: a lift of the panel brings back a display that went dark
+ * after the set time, as a touch does. See panel_motion.c. */
 typedef struct { int brightness, sound_volume; bool touch_tones;
                  panel_language_t language; int sleep_after;
-                 uint32_t cpu_sensor, gpu_sensor; }
+                 uint32_t cpu_sensor, gpu_sensor; bool lift_wake; }
     panel_settings_t;
 typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);

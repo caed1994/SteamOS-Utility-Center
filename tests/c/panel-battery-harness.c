@@ -12,6 +12,7 @@
 //   at <seconds>             the clock of esp_timer_get_time
 //   init                     panel_battery_init
 //   read                     panel_battery_read
+//   detail                   panel_battery_detail, printed on one line
 //
 // The registers start as an AXP2101 with no cell. Every write is counted
 // by register, and every transfer that is neither a read of one register
@@ -112,6 +113,13 @@ int main(void)
             int percent;
             bool charging;
             panel_battery_read(&supply, &percent, &charging);
+        } else if (strncmp(line, "detail", 6) == 0) {
+            panel_power_detail_t d;
+            bool ok = panel_battery_detail(&d);
+            printf("detail %s vbat=%d vbus=%d vsys=%d die=%d phase=%d held=%d%d%d "
+                   "icc=%d cv=%d iin=%d\n", ok ? "ok" : "none", d.vbat_mv, d.vbus_mv,
+                   d.vsys_mv, d.die_c, d.phase, d.held_heat, d.held_current,
+                   d.held_voltage, d.charge_ma, d.charge_mv, d.input_ma);
         }
     }
     printf("writes:");

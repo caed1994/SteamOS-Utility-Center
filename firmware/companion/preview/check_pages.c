@@ -501,9 +501,47 @@ int main(void)
         lv_obj_t *between=thin_line(card);
         assert(between);
         int32_t first_room=lv_obj_get_y(between)-lv_obj_get_y(first);
-        int32_t second_room=lv_obj_get_height(card)-lv_obj_get_y(second);
         assert(first_room>0);
-        assert(second_room>=first_room);
+        // Under the second slider is the line over the row of the lift
+        // now, at the same gap.
+        lv_obj_t *under=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+            lv_obj_t *c=lv_obj_get_child(card,i);
+            if(lv_obj_get_height(c)==1&&lv_obj_get_width(c)>100&&lv_obj_get_y(c)>lv_obj_get_y(second))under=c;
+        }
+        assert(under);
+        assert(lv_obj_get_y(under)-lv_obj_get_y(second)==first_room);
+        // The row of the lift: its name, what it does, and its switch,
+        // all inside the card.
+        lv_obj_t *lift_name=label(card,panel_text(TXT_LIFT_WAKE));
+        lv_obj_t *lift_what=label(card,panel_text(TXT_LIFT_WAKE_WHAT));
+        assert(lift_name&&lift_what&&lv_obj_get_y(lift_name)>lv_obj_get_y(under));
+        assert(lv_obj_get_y(lift_what)+lv_obj_get_height(lift_what)<lv_obj_get_height(card));
+        lv_obj_t *lift_switch=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(card);i++)
+            if(lv_obj_check_type(lv_obj_get_child(card,i),&lv_switch_class))lift_switch=lv_obj_get_child(card,i);
+        assert(lift_switch&&lv_obj_get_y(lift_switch)>lv_obj_get_y(under));
+        // What it does fits one line beside nothing: the switch stands
+        // above its end.
+        lv_point_t what_size;
+        lv_text_get_size(&what_size,panel_text(TXT_LIFT_WAKE_WHAT),&panel_font_12,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+        assert(what_size.x<=lv_obj_get_width(lift_what));
+        assert(lv_obj_get_x(lift_what)+lv_obj_get_width(lift_what)<=lv_obj_get_x(lift_switch));
+        // The cards under it keep their gap.
+        lv_obj_t *sound_card=lv_obj_get_parent(label(lv_screen_active(),panel_text(TXT_TONES)));
+        assert(lv_obj_get_y(sound_card)==lv_obj_get_y(card)+lv_obj_get_height(card)+14);
+        // The switch shows the setting the screen was built with: off here,
+        // and on for a panel that has it on.
+        assert(!lv_obj_has_state(lift_switch,LV_STATE_CHECKED));
+        panel_settings_t lifting={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH,.lift_wake=true};
+        panel_ui_create(action,setting,sound,&lifting);
+        panel_ui_settings_open();
+        lv_obj_t *display_card=lv_obj_get_parent(label(lv_screen_active(),panel_text(TXT_LIFT_WAKE)));
+        lift_switch=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(display_card);i++)
+            if(lv_obj_check_type(lv_obj_get_child(display_card,i),&lv_switch_class))
+                lift_switch=lv_obj_get_child(display_card,i);
+        assert(lift_switch&&lv_obj_has_state(lift_switch,LV_STATE_CHECKED));
         // The setup stands in the settings now, and still asks first: a
         // cancel sends nothing.
         unsigned before=actions;
@@ -1140,6 +1178,83 @@ int main(void)
         assert(complaints==0);
     }
 
+    // The power chip in detail, on the page of the panel: its voltages,
+    // the temperature of the chip, the phase of the charge and what holds
+    // it down, and the settings of the charger in a card of their own.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_state_t p=base();
+        p.esp_supply=PANEL_SUPPLY_BATTERY;p.esp_battery=87;p.esp_charging=true;p.esp_cable=true;
+        p.esp_detail=(panel_power_detail_t){.vbat_mv=3984,.vbus_mv=5011,.vsys_mv=3714,
+            .die_c=38,.phase=2,.held_current=true,.charge_ma=1000,.charge_mv=4200,.input_ma=1500};
+        panel_ui_update(&p);
+        panel_ui_self_open();
+        lv_obj_t *screen_now=lv_screen_active();
+        static const char *const shown[]={"3.98 V","Constant current","5.01 V","3.71 V",
+            "38 °C","USB current","1000 mA","4.20 V","1500 mA"};
+        for(unsigned i=0;i<sizeof shown/sizeof *shown;i++)assert(label(screen_now,shown[i]));
+        static const panel_text_id_t names[]={TXT_SELF_VBAT,TXT_SELF_PHASE,TXT_SELF_VBUS,
+            TXT_SELF_VSYS,TXT_SELF_DIE,TXT_SELF_HELD,TXT_SELF_CHARGER,TXT_SELF_CHARGE_MA,
+            TXT_SELF_CHARGE_MV,TXT_SELF_INPUT_MA};
+        for(unsigned i=0;i<sizeof names/sizeof *names;i++)assert(label(screen_now,panel_text(names[i])));
+        // The charger stands under the power, in a card of its own.
+        lv_obj_update_layout(screen_now);
+        lv_obj_t *power_card=lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_POWER)));
+        lv_obj_t *charger_card=lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_CHARGER)));
+        assert(power_card!=charger_card&&lv_obj_get_y(power_card)<lv_obj_get_y(charger_card));
+        assert(lv_obj_get_parent(label(screen_now,"3.98 V"))==power_card);
+        assert(lv_obj_get_parent(label(screen_now,"1500 mA"))==charger_card);
+        // Nothing holds the charge down, and then all three at once: the
+        // longest, which fits its row.
+        p.esp_detail.held_current=false;
+        panel_ui_update(&p);
+        assert(label(screen_now,"Nothing"));
+        p.esp_detail.held_heat=p.esp_detail.held_current=p.esp_detail.held_voltage=true;
+        panel_ui_update(&p);
+        lv_obj_update_layout(screen_now);
+        lv_refr_now(screen);
+        assert(label(screen_now,"Heat, USB current, USB voltage"));
+        // Each phase by its name, in the order of the chip.
+        for(int phase=0;phase<=5;phase++){
+            p.esp_detail.phase=phase;
+            panel_ui_update(&p);
+            assert(label(screen_now,panel_text((panel_text_id_t)(TXT_PHASE_TRICKLE+phase))));
+        }
+        // What the chip did not give is "--": no input, no reading of the
+        // die, no cell.
+        p.esp_detail.vbus_mv=-1;p.esp_detail.die_c=PANEL_NO_DEGREES;p.esp_detail.phase=-1;
+        p.esp_detail.vbat_mv=-1;
+        panel_ui_update(&p);
+        assert(!label(screen_now,"5.01 V")&&!label(screen_now,"38 °C")&&!label(screen_now,"3.98 V"));
+        assert(!label(screen_now,panel_text(TXT_PHASE_DONE)));
+        assert(label(screen_now,"3.71 V"));
+        // A chip that never answered: every row of it a dash, and no reason
+        // for a hold it cannot know.
+        p.esp_supply=PANEL_SUPPLY_UNKNOWN;
+        p.esp_detail=(panel_power_detail_t){.vbat_mv=-1,.vbus_mv=-1,.vsys_mv=-1,
+            .die_c=PANEL_NO_DEGREES,.phase=-1,.charge_ma=-1,.charge_mv=-1,.input_ma=-1};
+        panel_ui_update(&p);
+        assert(!label(screen_now,"Nothing")&&!label(screen_now,"1000 mA")&&!label(screen_now,"3.71 V"));
+        // German, with the longest reason in its row.
+        panel_settings_t german={.brightness=70,.sound_volume=30,.language=PANEL_GERMAN};
+        panel_ui_create(action,setting,sound,&german);
+        p.esp_supply=PANEL_SUPPLY_BATTERY;
+        p.esp_detail=(panel_power_detail_t){.vbat_mv=3984,.vbus_mv=5011,.vsys_mv=3714,
+            .die_c=38,.phase=3,.held_heat=true,.held_current=true,.held_voltage=true,
+            .charge_ma=1000,.charge_mv=4200,.input_ma=1500};
+        panel_ui_update(&p);
+        panel_ui_self_open();
+        screen_now=lv_screen_active();
+        lv_obj_update_layout(screen_now);
+        lv_refr_now(screen);
+        assert(label(screen_now,"Hitze, USB-Strom, USB-Spannung"));
+        assert(label(screen_now,"Konstantspannung")&&label(screen_now,"LADEGERÄT"));
+        assert(label(screen_now,"PMU-Temperatur")&&label(screen_now,"Ladeschluss"));
+        assert(complaints==0);
+        panel_ui_create(action,setting,sound,&english);
+    }
+
     // The fifth page: the load, the memory and the clock of the card, and
     // the history of the temperatures and the power under them.
     {
@@ -1294,7 +1409,8 @@ int main(void)
          "display sliders, the clock with a timer that rings, and two "
          "controllers in the head with a page of four behind it, and the "
          "page of the PC that scrolls, and a choice of sensor for each tile "
-         "of the temperatures, and the page of the panel with its update, "
-         "and the page of the card with its history.");
+         "of the temperatures, and the page of the panel with its update "
+         "and its power chip in detail, and the page of the card with its "
+         "history.");
     return 0;
 }

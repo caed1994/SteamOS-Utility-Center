@@ -10,11 +10,13 @@ worse.
 
 The first rules are the ones that matter most. A power chip decides which
 rails of the board have power, and a wrong write to it can switch off the
-rail the panel runs on. So the reader reads, and writes three fields of
-the charger and nothing else: bit 4 of 0x50, which sets the TS pin apart
-from the charger, 0x62, the charge current, and bits 2:0 of 0x69, the CHG
-LED. Its owner allowed the first two after the panel charged a cell of
-5000 mAh far too slowly, and the third for the LED, which stayed dark.
+rail the panel runs on. So the reader reads, and writes four fields and
+nothing else: bit 4 of 0x50, which sets the TS pin apart from the charger,
+0x62, the charge current, bits 2:0 of 0x69, the CHG LED, and bits 4:2 of
+0x30, the channels of the ADC for the input, the system rail and the die.
+Its owner allowed the first two after the panel charged a cell of 5000 mAh
+far too slowly, the third for the LED, which stayed dark, and the fourth
+for the page of the panel, which shows those three readings.
 """
 
 from __future__ import annotations
@@ -43,7 +45,7 @@ def read(name):
 
 
 class WriteTest(unittest.TestCase):
-    """Three fields of the charger are written, and nothing else is."""
+    """Four fields are written, and nothing else is."""
 
     def body(self, code, start):
         found = re.search(re.escape(start) + r".*?\n\}", code, re.S)
@@ -66,7 +68,7 @@ class WriteTest(unittest.TestCase):
         writer = self.body(code, "static esp_err_t write_register(")
         self.assertIn("i2c_master_transmit(", writer)
 
-    def test_only_set_field_writes_and_only_for_the_three_fields(self):
+    def test_only_set_field_writes_and_only_for_the_four_fields(self):
         """A rail of the board is a register too. One more call of
         set_field with another register would switch it as easily."""
         code = read("panel_battery.c")
@@ -77,6 +79,7 @@ class WriteTest(unittest.TestCase):
         fields = re.findall(r"\bset_field\(\s*(\w+),\s*(\w+),\s*(\w+),",
                             code)
         self.assertEqual(sorted(fields), [
+            ("AXP2101_ADC_ON", "ADC_MEASURE_MASK", "ADC_MEASURE"),
             ("AXP2101_CHARGE_CURRENT", "CHARGE_CURRENT_MASK",
              "CHARGE_CURRENT_CODE"),
             ("AXP2101_CHGLED", "CHGLED_MASK", "CHGLED_TYPE_A"),
@@ -90,7 +93,9 @@ class WriteTest(unittest.TestCase):
                             ("CHARGE_CURRENT_MA", "1000"),
                             ("PANEL_CELL_MAH", "5000"),
                             ("CHGLED_MASK", "0x07"),
-                            ("CHGLED_TYPE_A", "0x01")):
+                            ("CHGLED_TYPE_A", "0x01"),
+                            ("ADC_MEASURE_MASK", "0x1C"),
+                            ("ADC_MEASURE", "0x1C")):
             self.assertRegex(code, r"#define %s\s+%s\b" % (name, value))
 
     def test_the_writes_come_once_at_the_start_after_the_type(self):
@@ -171,6 +176,18 @@ class WhereTest(unittest.TestCase):
         self.assertNotIn("panel_battery_read", tick.group(0))
         network = code[code.index("static void network_task"):]
         self.assertIn("panel_battery_read(", network)
+
+    def test_the_detail_is_read_there_too(self):
+        """The page of the panel reads the voltages and the die, which are
+        a dozen reads on the same shared bus."""
+        code = read("main.c")
+        tick = re.search(r"static void ui_tick\(lv_timer_t \*timer\).*?\n\}",
+                         code, re.S)
+        self.assertNotIn("panel_battery_detail", tick.group(0))
+        network = code[code.index("static void network_task"):]
+        self.assertIn("panel_battery_detail(&detail);", network)
+        self.assertIn("state.esp_detail=detail;", network)
+        self.assertNotIn("panel_battery_detail", read("ui.c"))
 
     def test_the_chip_is_found_before_the_task_that_reads_it_starts(self):
         code = read("main.c")
@@ -327,20 +344,23 @@ class ChargerReportTest(unittest.TestCase):
         self.assertTrue(output[-2].startswith("writes:"), output[-2])
         return output[-2][len("writes:"):].split()
 
-    def test_the_start_writes_the_three_fields_and_keeps_the_rest(self):
+    def test_the_start_writes_the_four_fields_and_keeps_the_rest(self):
         """0x0a in 0x50 is the current source of the TS pin, and it stays.
         The top three bits of 0x62 are read only in the chip, and stay.
         Bits 5:4 of 0x69 drive the LED only in the mode this leaves, and
-        stay as well."""
+        stay as well. Bits 1:0 of 0x30 measure the TS pin and the cell from
+        the reset, and bit 5 is the channel for general use: all three
+        stay."""
         self.assertEqual(self.writes(*CHARGING, "set 50 0a", "set 62 e9",
-                                     "set 69 35", "init"),
-                         ["50=1a*1", "62=f0*1", "69=31*1"])
+                                     "set 69 35", "set 30 23", "init"),
+                         ["30=3f*1", "50=1a*1", "62=f0*1", "69=31*1"])
 
     def test_a_field_that_holds_its_value_is_not_written(self):
         """Which is every start after the first, until the cell is
         unplugged."""
         self.assertEqual(self.writes(*CHARGING, "set 50 1a", "set 62 10",
-                                     "set 69 01", "init"), ["none"])
+                                     "set 69 01", "set 30 1f", "init"),
+                         ["none"])
 
     def test_readings_write_nothing(self):
         """The writes come at the start, once, and the reading every five
@@ -348,9 +368,9 @@ class ChargerReportTest(unittest.TestCase):
         commands = list(CHARGING) + ["init"]
         for second in range(5, 300, 5):
             commands += ["at %d" % second, "read"]
-        commands += ["set 01 23", "at 400", "read"]
+        commands += ["set 01 23", "at 400", "read", "detail"]
         self.assertEqual(self.writes(*commands),
-                         ["50=10*1", "62=10*1", "69=01*1"])
+                         ["30=1c*1", "50=10*1", "62=10*1", "69=01*1"])
 
     def test_another_chip_gets_nothing_written(self):
         """Something else at 0x34 is not the chip these numbers belong
@@ -372,6 +392,68 @@ class ChargerReportTest(unittest.TestCase):
         self.assertIn("icc=1000 mA", line)
         self.assertIn("apart from the charger", line)
         self.assertIn("; led shows the charge (type A)", line)
+
+    # The board on its cable, charging at constant current: 4038 mV on the
+    # cell, 5011 mV on the input, 3714 mV on the system rail, and a die at
+    # 38 degrees. That is 6954 counts of the ADC, 320 below the 7274 of
+    # 22 degrees.
+    DETAIL = ("set 00 29", "set 01 22", "set 30 1f",
+              "set 34 0f", "set 35 c6", "set 38 13", "set 39 93",
+              "set 3a 0e", "set 3b 82", "set 3c 1b", "set 3d 2a",
+              "set 62 10", "set 64 03", "set 16 04")
+
+    def detail(self, *commands):
+        lines = [line for line in self.output(*commands)
+                 if line.startswith("detail ")]
+        self.assertEqual(len(lines), 1)
+        return dict(part.split("=") for part in lines[0].split()[2:])
+
+    def test_the_detail_reads_as_the_datasheet_counts(self):
+        said = self.detail(*self.DETAIL, "init", "detail")
+        self.assertEqual(said, {"vbat": "4038", "vbus": "5011",
+                                "vsys": "3714", "die": "38", "phase": "2",
+                                "held": "010", "icc": "1000", "cv": "4200",
+                                "iin": "1500"})
+
+    def test_a_channel_the_adc_does_not_measure_is_no_reading(self):
+        """0 in those registers is what a channel that is off reads, and 0
+        counts in the die are 385 degrees. A 0x30 that does not take the
+        write keeps the three off."""
+        said = self.detail(*self.DETAIL, "set 30 03", "lock 30", "set 38 00",
+                           "set 39 00", "set 3a 00", "set 3b 00", "set 3c 00",
+                           "set 3d 00", "init", "detail")
+        self.assertEqual((said["vbus"], said["vsys"], said["die"]),
+                         ("-1", "-1", "-128"))
+        self.assertEqual(said["vbat"], "4038")
+
+    def test_the_input_counts_only_while_it_is_good(self):
+        said = self.detail(*self.DETAIL, "init", "set 00 08", "detail")
+        self.assertEqual(said["vbus"], "-1")
+
+    def test_without_a_cell_there_is_no_cell_and_no_phase(self):
+        said = self.detail(*self.DETAIL, "init", "set 00 20", "detail")
+        self.assertEqual((said["vbat"], said["phase"]), ("-1", "-1"))
+        self.assertEqual(said["vsys"], "3714")
+
+    def test_a_die_past_what_a_chip_reaches_is_no_reading(self):
+        """7274 counts are 22 degrees. 4000 counts are 185, past the 150 a
+        die shuts down at long before."""
+        said = self.detail(*self.DETAIL, "set 3c 1c", "set 3d 6a", "init",
+                           "detail")
+        self.assertEqual(said["die"], "22")
+        said = self.detail(*self.DETAIL, "set 3c 0f", "set 3d a0", "init",
+                           "detail")
+        self.assertEqual(said["die"], "-128")
+
+    def test_the_holds_are_the_three_of_the_line(self):
+        said = self.detail(*self.DETAIL, "set 00 2b", "set 01 2a", "init",
+                           "detail")
+        self.assertEqual(said["held"], "111")
+
+    def test_a_chip_that_was_not_found_gives_nothing(self):
+        line = [one for one in self.output("type 47", "init", "detail")
+                if one.startswith("detail ")][0]
+        self.assertTrue(line.startswith("detail none vbat=-1 vbus=-1"), line)
 
     def test_the_line_names_what_the_led_does(self):
         """Read before the write, the line says why the LED was dark; the
@@ -398,6 +480,12 @@ class ChargerRegisterTest(unittest.TestCase):
                             ("AXP2101_VBAT_LOW", "0x35"),
                             ("AXP2101_TS_HIGH", "0x36"),
                             ("AXP2101_TS_LOW", "0x37"),
+                            ("AXP2101_VBUS_HIGH", "0x38"),
+                            ("AXP2101_VBUS_LOW", "0x39"),
+                            ("AXP2101_VSYS_HIGH", "0x3A"),
+                            ("AXP2101_VSYS_LOW", "0x3B"),
+                            ("AXP2101_TDIE_HIGH", "0x3C"),
+                            ("AXP2101_TDIE_LOW", "0x3D"),
                             ("AXP2101_TS_CONTROL", "0x50"),
                             ("AXP2101_JEITA", "0x58"),
                             ("AXP2101_PRECHARGE", "0x61"),

@@ -42,6 +42,9 @@
                            "Eine Berührung weckt es wieder, außer der " \
                            "Knopf hat es ausgeschaltet") \
     X(TXT_SLEEP_NEVER,     "Never",                 "Nie") \
+    X(TXT_LIFT_WAKE,       "Wake when lifted",      "Beim Anheben einschalten") \
+    X(TXT_LIFT_WAKE_WHAT,  "Only when it went off by itself, not after the button", \
+                           "Nur wenn es von selbst ausging, nicht nach dem Knopf") \
     X(TXT_MINUTES,         "min",                   "Min") \
     X(TXT_CONNECTION,      "Connection",            "Verbindung") \
     X(TXT_TONES,           "Key tones",             "Tastentöne") \
@@ -72,6 +75,26 @@
     X(TXT_SELF_CHARGE,     "Charge",                "Ladestand") \
     X(TXT_SELF_SUPPLY,     "Supply",                "Versorgung") \
     X(TXT_SELF_CABLE,      "Cable",                 "Kabel") \
+    X(TXT_SELF_VBAT,       "Battery voltage",       "Akkuspannung") \
+    X(TXT_SELF_PHASE,      "Charge phase",          "Ladephase") \
+    X(TXT_SELF_VBUS,       "USB voltage",           "USB-Spannung") \
+    X(TXT_SELF_VSYS,       "System voltage",        "Systemspannung") \
+    X(TXT_SELF_DIE,        "PMU temperature",       "PMU-Temperatur") \
+    X(TXT_SELF_HELD,       "Throttled by",          "Gedrosselt durch") \
+    X(TXT_SELF_CHARGER,    "CHARGER",               "LADEGERÄT") \
+    X(TXT_SELF_CHARGE_MA,  "Charge current",        "Ladestrom") \
+    X(TXT_SELF_CHARGE_MV,  "Charge voltage",        "Ladeschluss") \
+    X(TXT_SELF_INPUT_MA,   "Input limit",           "Eingangsgrenze") \
+    X(TXT_PHASE_TRICKLE,   "Trickle",               "Erhaltungsladung") \
+    X(TXT_PHASE_PRE,       "Pre-charge",            "Vorladen") \
+    X(TXT_PHASE_CC,        "Constant current",      "Konstantstrom") \
+    X(TXT_PHASE_CV,        "Constant voltage",      "Konstantspannung") \
+    X(TXT_PHASE_DONE,      "Done",                  "Fertig") \
+    X(TXT_PHASE_IDLE,      "Not charging",          "Lädt nicht") \
+    X(TXT_HELD_NOTHING,    "Nothing",               "Nichts") \
+    X(TXT_HELD_HEAT,       "Heat",                  "Hitze") \
+    X(TXT_HELD_CURRENT,    "USB current",           "USB-Strom") \
+    X(TXT_HELD_VOLTAGE,    "USB voltage",           "USB-Spannung") \
     X(TXT_UPDATE,          "UPDATE",                "UPDATE") \
     X(TXT_UPDATE_OFFERED,  "Available",             "Verfügbar") \
     X(TXT_UPDATE_NOW,      "Update now",            "Jetzt aktualisieren") \
