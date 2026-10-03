@@ -13,6 +13,7 @@
 #include "ui.h"
 #include "panel_fonts.h"
 #include "panel_frames.h"
+#include "panel_taps.h"
 static unsigned actions;
 static panel_action_t last_action;
 static void action(panel_action_t a){actions++;last_action=a;}
@@ -180,6 +181,40 @@ static void look_slide(lv_obj_t *layer,int percent)
     lv_slider_set_value(slider,percent,LV_ANIM_OFF);
     lv_obj_send_event(slider,LV_EVENT_VALUE_CHANGED,NULL);
     lv_obj_send_event(slider,LV_EVENT_RELEASED,NULL);
+}
+// One press as the touch reader and LVGL give it to the count of the
+// touches, a read every 15 ms: down at the start, the finger "moved" px
+// along, up, and the read after it. late adds that much to one of the
+// gaps.
+static uint32_t taps_now=1000;
+static void taps_press(int moved,int strength,bool target,bool swipe,bool click,uint32_t late)
+{
+    panel_taps_press_t done;
+    panel_taps_read(&panel_taps,taps_now,true,true,100,100,strength,&done);
+    panel_taps_pressed(&panel_taps,target);
+    taps_now+=15+late;
+    panel_taps_read(&panel_taps,taps_now,true,true,100+moved,100,strength+2,&done);
+    taps_now+=15;
+    panel_taps_read(&panel_taps,taps_now,true,false,0,0,-1,&done);
+    panel_taps_released(&panel_taps,swipe);
+    if(click)panel_taps_clicked(&panel_taps);
+    taps_now+=15;
+    panel_taps_read(&panel_taps,taps_now,true,false,0,0,-1,&done);
+}
+// The value in the row of a card of the page of the panel that has this
+// name: the label at the height of the name and right of it.
+static const char *row_value(lv_obj_t *card,panel_text_id_t name)
+{
+    lv_obj_update_layout(card);
+    lv_obj_t *named=label(card,panel_text(name));
+    assert(named);
+    for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+        lv_obj_t *c=lv_obj_get_child(card,i);
+        if(c!=named&&lv_obj_check_type(c,&lv_label_class)&&lv_obj_get_y(c)==lv_obj_get_y(named)
+           &&lv_obj_get_x(c)>lv_obj_get_x(named))
+            return lv_label_get_text(c);
+    }
+    return NULL;
 }
 // The card of the page of the LED bar for one mode, and its arrows.
 static lv_obj_t *led_card_of(lv_obj_t *page,panel_led_mode_t mode)
@@ -1805,6 +1840,110 @@ int main(void)
         assert(lv_obj_get_y(note)+lv_obj_get_height(note)<=lv_obj_get_height(card));
         lv_obj_get_coords(card,&card_area);
         assert(card_area.y2<480);
+        assert(complaints==0);
+        panel_ui_create(action,setting,sound,&english);
+    }
+
+    // The touches, on the page of the panel, under the frames: seven rows
+    // and the line that says what they are, each whole. As the frames, the
+    // page reads the count as it opens, holds it while it is open, and
+    // starts it again when it closes.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_state_t p=base();
+        panel_ui_update(&p);
+        panel_taps_chip=(panel_taps_chip_t){0};
+        // Nothing counted and no controller read: a dash in each row.
+        panel_ui_self_open();
+        lv_obj_t *screen_now=lv_screen_active();
+        lv_obj_t *card=lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_TOUCH)));
+        assert(card);
+        unsigned dashes=0;
+        for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+            lv_obj_t *c=lv_obj_get_child(card,i);
+            if(lv_obj_check_type(c,&lv_label_class)&&strcmp(lv_label_get_text(c),"--")==0)dashes++;
+        }
+        assert(dashes==7);
+        click_in(screen_now,panel_text(TXT_BACK));
+        // Only reads, and no press: the reads have their rows, and the
+        // presses none yet.
+        {
+            panel_taps_press_t done;
+            panel_taps_read(&panel_taps,taps_now,true,false,0,0,-1,&done);
+            taps_now+=15;
+            panel_taps_read(&panel_taps,taps_now,true,false,0,0,-1,&done);
+            taps_now+=15;
+        }
+        panel_ui_self_open();
+        screen_now=lv_screen_active();
+        card=lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_TOUCH)));
+        assert(strcmp(row_value(card,TXT_SELF_PRESSES),"--")==0);
+        assert(strcmp(row_value(card,TXT_SELF_LATE),"0, longest gap 15 ms")==0);
+        assert(strcmp(row_value(card,TXT_SELF_READ_ERRORS),"0")==0);
+        click_in(screen_now,panel_text(TXT_BACK));
+        // Two taps, a swipe, two lost taps with a late read in one of them,
+        // and a read the bus refused, from a controller that the start of
+        // the panel read.
+        taps_press(2,40,true,false,true,0);
+        taps_press(1,42,true,false,true,0);
+        taps_press(120,44,true,true,false,0);
+        taps_press(3,31,true,false,false,55);
+        taps_press(4,36,true,false,false,0);
+        {
+            panel_taps_press_t done;
+            taps_now+=15;
+            assert(!panel_taps_read(&panel_taps,taps_now,false,false,0,0,-1,&done));
+        }
+        panel_taps_chip=(panel_taps_chip_t){.known=true,.version='A',.touch_level=80,.leave_level=50,
+                                            .report_ms=10};
+        panel_ui_self_open();
+        screen_now=lv_screen_active();
+        lv_obj_update_layout(screen_now);
+        card=lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_TOUCH)));
+        static const panel_text_id_t names[]={TXT_SELF_PRESSES,TXT_SELF_LOST,TXT_SELF_SHORTEST,
+            TXT_SELF_LATE,TXT_SELF_WEAKEST,TXT_SELF_READ_ERRORS,TXT_SELF_THRESHOLDS};
+        static const char *const shown[]={"5: 2 taps, 1 swipes","2","30 ms","1, longest gap 70 ms",
+                                          "31","1","80 down, 50 up, 10 ms"};
+        for(unsigned i=0;i<sizeof names/sizeof *names;i++){
+            assert(strcmp(row_value(card,names[i]),shown[i])==0);
+            assert(name_fits(label(card,shown[i])));
+        }
+        for(unsigned i=0;i<sizeof names/sizeof *names;i++)
+            assert(name_fits(label(card,panel_text(names[i]))));
+        // Under the frames and above the network.
+        int32_t motion_at=lv_obj_get_y(lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_MOTION))));
+        int32_t network_at=lv_obj_get_y(lv_obj_get_parent(label(screen_now,panel_text(TXT_PC_NETWORK))));
+        assert(motion_at<lv_obj_get_y(card)&&lv_obj_get_y(card)<network_at);
+        // The line under the rows fits two lines and the card holds it.
+        lv_obj_t *note=label(card,panel_text(TXT_SELF_TOUCH_WHAT));
+        int32_t line_high=lv_font_get_line_height(&panel_font_12);
+        assert(note&&lv_obj_get_height(note)<=2*line_high);
+        assert(lv_obj_get_y(note)+lv_obj_get_height(note)<=lv_obj_get_height(card));
+        // The page holds the count: a press while it is open does not
+        // count, and the count starts again when it closes.
+        assert(panel_taps.held);
+        taps_press(1,40,true,false,true,0);
+        assert(panel_taps.presses==5&&panel_taps.errors==1);
+        click_in(screen_now,panel_text(TXT_BACK));
+        assert(!panel_taps.held&&panel_taps.presses==0&&panel_taps.weakest_ever==-1);
+        taps_press(1,40,true,false,true,0);
+        assert(panel_taps.presses==1&&panel_taps.taps==1);
+        // In German, each row whole.
+        panel_settings_t german=english;german.language=PANEL_GERMAN;
+        panel_ui_create(action,setting,sound,&german);
+        panel_ui_update(&p);
+        taps_press(2,40,true,false,true,0);
+        panel_ui_self_open();
+        screen_now=lv_screen_active();
+        lv_obj_update_layout(screen_now);
+        card=lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_TOUCH)));
+        for(unsigned i=0;i<sizeof names/sizeof *names;i++)
+            assert(name_fits(label(card,panel_text(names[i]))));
+        assert(name_fits(label(card,"80 an, 50 aus, 10 ms")));
+        note=label(card,panel_text(TXT_SELF_TOUCH_WHAT));
+        assert(note&&lv_obj_get_height(note)<=2*line_high);
+        assert(lv_obj_get_y(note)+lv_obj_get_height(note)<=lv_obj_get_height(card));
         assert(complaints==0);
         panel_ui_create(action,setting,sound,&english);
     }

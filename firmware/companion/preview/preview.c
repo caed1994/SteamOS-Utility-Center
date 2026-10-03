@@ -5,6 +5,7 @@
 #include "lvgl.h"
 #include "ui.h"
 #include "panel_frames.h"
+#include "panel_taps.h"
 static uint8_t pixels[480*480*4];
 static void flush(lv_display_t *display,const lv_area_t *area,uint8_t *data){(void)area;(void)data;lv_display_flush_ready(display);}
 /* The band is the one object that scrolls sideways and holds the pages. */
@@ -46,6 +47,29 @@ static void count_frames(void)
         shown+=frame[2];
         panel_frames_shown(&panel_frames,shown);
     }
+}
+
+/* The touches of a while for the page of the panel, as the count takes
+ * them: taps, a swipe in five, two lost taps and one late read, and the
+ * thresholds of a controller. The numbers of the controller are an
+ * example, not those of the board. */
+static void count_taps(void)
+{
+    panel_taps_reset(&panel_taps);
+    uint32_t now=1000;
+    panel_taps_press_t done;
+    for(int i=0;i<40;i++){
+        bool swipe=i%5==4,lost=i==7||i==23;
+        panel_taps_read(&panel_taps,now,true,true,200,200,40-(i%9),&done);
+        panel_taps_pressed(&panel_taps,true);
+        now+=15;panel_taps_read(&panel_taps,now,true,true,swipe?260:203,201,38,&done);
+        now+=15+(i==11?70:0);panel_taps_read(&panel_taps,now,true,true,swipe?340:204,201,36,&done);
+        now+=15;panel_taps_read(&panel_taps,now,true,false,0,0,-1,&done);
+        panel_taps_released(&panel_taps,swipe);
+        if(!swipe&&!lost)panel_taps_clicked(&panel_taps);
+        for(int idle=0;idle<4;idle++){now+=15;panel_taps_read(&panel_taps,now,true,false,0,0,-1,&done);}
+    }
+    panel_taps_chip=(panel_taps_chip_t){.known=true,.version='A',.touch_level=80,.leave_level=50,.report_ms=10};
 }
 
 /* The clock of LVGL here, which a mode moves on by hand. */
@@ -280,7 +304,15 @@ int main(int argc,char **argv)
         }
     }
     if(argc>2&&strcmp(argv[2],"pads")==0)panel_ui_pads_open();
-    if(argc>2&&strncmp(argv[2],"self",4)==0){count_frames();panel_ui_self_open();}
+    if(argc>2&&strncmp(argv[2],"self",4)==0){count_frames();count_taps();panel_ui_self_open();}
+    /* "self-touch" is the card of the touches on that page. */
+    if(argc>2&&strcmp(argv[2],"self-touch")==0){
+        lv_obj_t *title=find_label(lv_screen_active(),panel_text(TXT_SELF_TOUCH));
+        if(title){
+            lv_obj_update_layout(lv_screen_active());
+            lv_obj_scroll_to_view_recursive(lv_obj_get_parent(title),LV_ANIM_OFF);
+        }
+    }
     if(argc>2&&strstr(argv[2],"-menu")){
         const char *reading=strncmp(argv[2],"gpu",3)==0?"56 °C":"49 °C";
         lv_obj_t *value=find_label(lv_screen_active(),reading);

@@ -9,6 +9,7 @@
 #include "esp_check.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esp_lvgl_port.h"
+#include <inttypes.h>
 #include <stdint.h>
 #include <string.h>
 #include "esp_log.h"
@@ -16,6 +17,7 @@
 #include "driver/ledc.h"
 #include "panel_boot.h"
 #include "panel_frames.h"
+#include "panel_taps.h"
 
 static lv_display_t *panel_screen;
 static lv_indev_t *panel_input;
@@ -228,6 +230,72 @@ static void frame_flushed(lv_event_t *e)
 static uint32_t lvgl_tick_ms(void)
 {
     return (uint32_t)(esp_timer_get_time()/1000);
+}
+
+/* The touch, read by LVGL every LV_DEF_REFR_PERIOD between two frames.
+ *
+ * In place of the reader of esp_lvgl_port, for two reasons. That one wraps
+ * the read in ESP_ERROR_CHECK, so a single read that the shared I2C bus
+ * refused restarted the whole panel. Here such a read changes nothing: the
+ * finger stays where the read before it put it, and the count of errors on
+ * the page of the panel goes up. And each read goes to panel_taps, which
+ * measures what happens to a press. See panel_taps.h. */
+static bool touch_down;
+static lv_point_t touch_at;
+static void touch_read(lv_indev_t *indev,lv_indev_data_t *data)
+{
+    (void)indev;
+    uint32_t now=(uint32_t)(esp_timer_get_time()/1000);
+    esp_lcd_touch_point_data_t point={0};
+    uint8_t count=0;
+    esp_err_t err=esp_lcd_touch_read_data(panel_touch);
+    if(err==ESP_OK)err=esp_lcd_touch_get_data(panel_touch,&point,&count,1);
+    panel_taps_press_t done;
+    bool over;
+    if(err!=ESP_OK){
+        over=panel_taps_read(&panel_taps,now,false,touch_down,touch_at.x,touch_at.y,-1,&done);
+    }else{
+        touch_down=count>0;
+        if(touch_down){touch_at.x=point.x;touch_at.y=point.y;}
+        over=panel_taps_read(&panel_taps,now,true,touch_down,point.x,point.y,
+                             touch_down?point.strength:-1,&done);
+    }
+    data->point=touch_at;
+    data->state=touch_down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED;
+    if(over){
+        static const char *const ends[]={"nothing to tap","tap","swipe","LOST tap"};
+        ESP_LOGI("panel_touch","%s: %" PRIu32 " ms, moved %d px, smallest contact %d",
+                 ends[done.end],done.ms,done.moved,done.weakest);
+    }
+}
+/* What LVGL made of the press on its way. PRESSED says what it came down
+ * on, and something that takes a tap is something with a handler of its
+ * own: the cards under the buttons have none. RELEASED comes with the
+ * object being scrolled still set for a swipe, and CLICKED after it for a
+ * tap. */
+static void touch_event(lv_event_t *e)
+{
+    lv_event_code_t code=lv_event_get_code(e);
+    lv_obj_t *on=lv_event_get_param(e);
+    if(code==LV_EVENT_PRESSED)panel_taps_pressed(&panel_taps,on&&lv_obj_get_event_count(on)>0);
+    else if(code==LV_EVENT_RELEASED)panel_taps_released(&panel_taps,lv_indev_get_scroll_obj(panel_input)!=NULL);
+    else if(code==LV_EVENT_CLICKED)panel_taps_clicked(&panel_taps);
+}
+/* The configuration of the controller, read once, for the page of the
+ * panel: the thresholds a finger has to cross and the period of the
+ * reports. Read only. Nothing here writes to the controller. */
+static void touch_chip_read(void)
+{
+    uint8_t config[PANEL_TAPS_CHIP_LENGTH];
+    esp_err_t err=esp_lcd_panel_io_rx_param(panel_touch->io,PANEL_TAPS_CHIP_START,config,sizeof config);
+    if(err!=ESP_OK||!panel_taps_chip_parse(config,sizeof config,&panel_taps_chip)){
+        ESP_LOGW("panel_touch","The configuration of the touch controller could not be read: %s",
+                 err!=ESP_OK?esp_err_to_name(err):"its checksum does not hold");
+        return;
+    }
+    ESP_LOGI("panel_touch","Touch controller: configuration %c, thresholds %d down and %d up, "
+             "a report every %d ms",panel_taps_chip.version,panel_taps_chip.touch_level,
+             panel_taps_chip.leave_level,panel_taps_chip.report_ms);
 }
 
 lv_display_t *panel_display_start(void)
@@ -455,7 +523,11 @@ lv_display_t *panel_display_start(void)
     const lvgl_port_touch_cfg_t input={.disp=screen,.handle=touch};
     panel_input=lvgl_port_add_touch(&input);
     ESP_RETURN_ON_FALSE(panel_input,NULL,tag,"Touch allocation failed");
+    touch_chip_read();
+    panel_taps_reset(&panel_taps);
     lvgl_port_lock(0);
+    lv_indev_set_read_cb(panel_input,touch_read);
+    lv_indev_add_event_cb(panel_input,touch_event,LV_EVENT_ALL,NULL);
     lv_display_add_event_cb(screen,frame_begun,LV_EVENT_REFR_START,NULL);
     lv_display_add_event_cb(screen,frame_flush,LV_EVENT_FLUSH_START,NULL);
     lv_display_add_event_cb(screen,frame_flushed,LV_EVENT_FLUSH_FINISH,NULL);
@@ -610,6 +682,9 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
          * some milliseconds, and a half-drawn frame during that fade is
          * visible. */
         panel_ui_sleep(panel_screen,panel_input,true);
+        /* LVGL reads no touch while the panel sleeps, and the gap is no
+         * late read. */
+        panel_taps_break(&panel_taps);
         backlight_off();
         /* After the cover is on the screen, so the slow frames are black
          * ones. See PANEL_PCLK_SLEEP_HZ. */
@@ -621,6 +696,7 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
     }else{
         /* The full pixel clock before the first frame that shows anything. */
         if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,pclk_awake);
+        panel_taps_break(&panel_taps);
         panel_ui_sleep(panel_screen,panel_input,false);
         esp_err_t err=backlight_on(brightness);
         if(err!=ESP_OK){

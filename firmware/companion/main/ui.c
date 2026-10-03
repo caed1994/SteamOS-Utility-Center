@@ -8,6 +8,7 @@
 #include "ui.h"
 #include "icons.h"
 #include "panel_frames.h"
+#include "panel_taps.h"
 #include "panel_text.h"
 #include "panel_ui_sleep.h"
 #include "panel_timer.h"
@@ -136,7 +137,9 @@ enum { SELF_VERSION, SELF_UPTIME, SELF_MEMORY,
        SELF_CHARGE, SELF_SUPPLY, SELF_VBAT, SELF_PHASE, SELF_VBUS,
        SELF_VSYS, SELF_DIE, SELF_HELD,
        SELF_CHARGE_MA, SELF_CHARGE_MV, SELF_INPUT_MA,
-       SELF_FPS, SELF_INTERVAL, SELF_DRAW, SELF_LEAD, SELF_PERIODS, SELF_ROWS };
+       SELF_FPS, SELF_INTERVAL, SELF_DRAW, SELF_LEAD, SELF_PERIODS,
+       SELF_PRESSES, SELF_LOST, SELF_SHORTEST, SELF_LATE, SELF_WEAKEST, SELF_ERRORS,
+       SELF_THRESHOLDS, SELF_ROWS };
 /* The phases of the charge in a row, as the power chip counts them: see
  * panel_power_detail_t. */
 _Static_assert(TXT_PHASE_IDLE==TXT_PHASE_TRICKLE+5,"the six phases of the charge in a row");
@@ -1243,8 +1246,9 @@ static void self_drop(void)
     self_screen=NULL;update_card=NULL;update_offered=NULL;update_note=NULL;update_button=NULL;
     for(int i=0;i<SELF_ROWS;i++)self_values[i]=NULL;
     /* The page went, so the count of the frames starts again: the next
-     * visit shows the movement between the two. */
+     * visit shows the movement between the two. The touches the same way. */
     panel_frames_reset(&panel_frames);
+    panel_taps_reset(&panel_taps);
 }
 static void self_forget(void)
 {
@@ -1386,6 +1390,31 @@ static void self_frames_show(void)
     snprintf(said,sizeof said,"%d / %d / %d / %d %%",share[0],share[1],share[2],share[3]);
     self_say(SELF_PERIODS,share[0]+share[1]+share[2]+share[3]?said:"");
 }
+/* The touches since the page was last closed, the same way, and the
+ * thresholds of the controller, which the start of the panel read. */
+static void self_taps_show(void)
+{
+    const panel_taps_t *t=&panel_taps;
+    char said[64];
+    bool any=t->presses>0;
+    snprintf(said,sizeof said,panel_text(TXT_SELF_PRESSES_SAID),(unsigned)t->presses,
+             (unsigned)t->taps,(unsigned)t->swipes);
+    self_say(SELF_PRESSES,any?said:"");
+    snprintf(said,sizeof said,"%u",(unsigned)t->lost);
+    self_say(SELF_LOST,any?said:"");
+    snprintf(said,sizeof said,"%u ms",(unsigned)t->shortest_ms);
+    self_say(SELF_SHORTEST,any?said:"");
+    snprintf(said,sizeof said,panel_text(TXT_SELF_LATE_SAID),(unsigned)t->late,(unsigned)t->longest_gap_ms);
+    self_say(SELF_LATE,t->read_before?said:"");
+    snprintf(said,sizeof said,"%d",t->weakest_ever);
+    self_say(SELF_WEAKEST,t->weakest_ever>=0?said:"");
+    snprintf(said,sizeof said,"%u",(unsigned)t->errors);
+    self_say(SELF_ERRORS,t->read_before?said:"");
+    const panel_taps_chip_t *chip=&panel_taps_chip;
+    snprintf(said,sizeof said,panel_text(TXT_SELF_THRESHOLDS_SAID),chip->touch_level,chip->leave_level,
+             chip->report_ms);
+    self_say(SELF_THRESHOLDS,chip->known?said:"");
+}
 static void update_clicked(lv_event_t *e){(void)e;feedback();panel_ui_confirm(PANEL_UPDATE);}
 static void self_close(lv_event_t *e){(void)e;feedback();self_forget();}
 /* A card of the page, its title and a row for each of its rows. */
@@ -1451,6 +1480,16 @@ void panel_ui_self_open(void)
     lv_obj_t *note=text_at(motion_card,panel_text(TXT_SELF_MOTION_WHAT),18,note_top,404,&panel_font_12,MUTED);
     lv_label_set_long_mode(note,LV_LABEL_LONG_WRAP);
     lv_obj_set_height(motion_card,note_top+2*lv_font_get_line_height(&panel_font_12)+PC_CARD_END+4);
+    /* The touches, under the frames: both say how the screen answers. */
+    static const int touch[]={SELF_PRESSES,SELF_LOST,SELF_SHORTEST,SELF_LATE,SELF_WEAKEST,
+                              SELF_ERRORS,SELF_THRESHOLDS};
+    static const panel_text_id_t touch_names[]={TXT_SELF_PRESSES,TXT_SELF_LOST,TXT_SELF_SHORTEST,
+        TXT_SELF_LATE,TXT_SELF_WEAKEST,TXT_SELF_READ_ERRORS,TXT_SELF_THRESHOLDS};
+    lv_obj_t *touch_card=self_card(column,TXT_SELF_TOUCH,touch,7,touch_names);
+    note_top=PC_TITLE_ROOM+7*PC_ROW_STEP;
+    note=text_at(touch_card,panel_text(TXT_SELF_TOUCH_WHAT),18,note_top,404,&panel_font_12,MUTED);
+    lv_label_set_long_mode(note,LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(touch_card,note_top+2*lv_font_get_line_height(&panel_font_12)+PC_CARD_END+4);
     static const int network[]={SELF_WIFI,SELF_SIGNAL,SELF_IP,SELF_MAC,SELF_SERVER};
     static const panel_text_id_t network_names[]={TXT_WIRELESS,TXT_SELF_SIGNAL,TXT_PC_IP,TXT_PC_MAC,TXT_SELF_SERVER};
     self_card(column,TXT_PC_NETWORK,network,5,network_names);
@@ -1468,6 +1507,8 @@ void panel_ui_self_open(void)
      * its scroll among them, are not the movement it reports. */
     panel_frames_hold(&panel_frames,true);
     self_frames_show();
+    panel_taps_hold(&panel_taps,true);
+    self_taps_show();
     if(last_state_valid)self_show(&last_state);
 }
 static void self_clicked(lv_event_t *e){(void)e;feedback();panel_ui_self_open();}

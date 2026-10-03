@@ -101,6 +101,19 @@
     X(TXT_SELF_DRAW,       "Draw time",             "Zeichenzeit") \
     X(TXT_SELF_LEAD,       "Lead time",             "Vorlauf") \
     X(TXT_SELF_PERIODS,    "Panel frames",          "Panelbilder") \
+    X(TXT_SELF_TOUCH,      "TOUCH",                 "TOUCH") \
+    X(TXT_SELF_PRESSES,    "Touches",               "Berührungen") \
+    X(TXT_SELF_PRESSES_SAID,"%u: %u taps, %u swipes", "%u: %u Tipps, %u Wischen") \
+    X(TXT_SELF_LOST,       "Lost taps",             "Verlorene Tipps") \
+    X(TXT_SELF_SHORTEST,   "Shortest touch",        "Kürzester Kontakt") \
+    X(TXT_SELF_LATE,       "Late reads",            "Späte Abfragen") \
+    X(TXT_SELF_LATE_SAID,  "%u, longest gap %u ms", "%u, längste Lücke %u ms") \
+    X(TXT_SELF_WEAKEST,    "Smallest contact",      "Kleinste Fläche") \
+    X(TXT_SELF_READ_ERRORS,"Read errors",           "Lesefehler") \
+    X(TXT_SELF_THRESHOLDS, "Thresholds",            "Schwellen") \
+    X(TXT_SELF_THRESHOLDS_SAID,"%d down, %d up, %d ms", "%d an, %d aus, %d ms") \
+    X(TXT_SELF_TOUCH_WHAT, "Since this page was last closed. Lost: a tap on a button that became neither a tap nor a swipe.", \
+                           "Seit dem letzten Schließen dieser Seite. Verloren: ein Tipp auf einen Knopf, der weder Tipp noch Wischen wurde.") \
     X(TXT_SELF_MOTION_WHAT,"Mean / 95 % / most; panel frames 1 / 2 / 3 / 4+. Since this page was last closed.", \
                            "Mittel / 95 % / Höchstwert; Panelbilder 1 / 2 / 3 / 4+. Seit dem letzten Schließen dieser Seite.") \
     X(TXT_SELF_CHARGE_MA,  "Charge current",        "Ladestrom") \
