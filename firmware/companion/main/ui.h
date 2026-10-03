@@ -250,11 +250,11 @@ typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
                PANEL_CPU_SENSOR, PANEL_GPU_SENSOR, PANEL_LIFT_WAKE,
                PANEL_PAGE_ORDER, PANEL_PAGE_HIDDEN } panel_setting_t;
 /* The lowest brightness of the display that the settings page offers, in
- * per cent. One, so that somebody can find on the board where the
- * backlight stops holding steady: see BACKLIGHT_SLEEP_PERCENT in
- * panel_display.c. A stored value under it is no value this firmware
+ * per cent: the lowest that the backlight of this board holds steady, as a
+ * test on the board found it. BACKLIGHT_SLEEP_PERCENT in panel_display.c
+ * is the same number. A stored value under it is no value this firmware
  * wrote. */
-#define PANEL_BRIGHTNESS_MIN 1
+#define PANEL_BRIGHTNESS_MIN 5
 /* sleep_after counts minutes, and nought means the display stays on. The
  * stored value is the count and not a place in the list of choices, so a
  * later firmware that offers other choices still reads what somebody

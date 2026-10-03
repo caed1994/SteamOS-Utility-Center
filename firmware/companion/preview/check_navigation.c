@@ -68,13 +68,13 @@ static void walk(panel_language_t language)
     lv_obj_send_event(brightness,LV_EVENT_VALUE_CHANGED,NULL);
     assert(last_key==PANEL_BRIGHTNESS && last_value==55 && !last_save);
     lv_obj_send_event(brightness,LV_EVENT_RELEASED,NULL);assert(last_save);
-    // Down to one per cent, which is where somebody looks for the lowest
-    // brightness the backlight holds steady.
-    assert(lv_slider_get_min_value(brightness)==PANEL_BRIGHTNESS_MIN&&PANEL_BRIGHTNESS_MIN==1);
+    // Down to five per cent, the lowest brightness the backlight holds
+    // steady, and no further.
+    assert(lv_slider_get_min_value(brightness)==PANEL_BRIGHTNESS_MIN&&PANEL_BRIGHTNESS_MIN==5);
     lv_slider_set_value(brightness,0,LV_ANIM_OFF);
     lv_obj_send_event(brightness,LV_EVENT_RELEASED,NULL);
-    assert(last_key==PANEL_BRIGHTNESS && last_value==1 && last_save);
-    assert(label(lv_screen_active(),"1 %"));
+    assert(last_key==PANEL_BRIGHTNESS && last_value==5 && last_save);
+    assert(label(lv_screen_active(),"5 %"));
     lv_slider_set_value(brightness,55,LV_ANIM_OFF);
     lv_obj_send_event(brightness,LV_EVENT_RELEASED,NULL);
     assert(last_value==55);

@@ -86,10 +86,10 @@ static int64_t frame_us(uint32_t pclk_hz)
  * the panel at full before anything has been drawn. The long note above
  * backlight_off says why nought is not an option.
  *
- * Five was the floor of the slider on the settings page, and it holds
- * steady. The slider now goes down to PANEL_BRIGHTNESS_MIN, so that
- * somebody can find on the board where the converter stops regulating.
- * Until that is measured, this stays at five. */
+ * Measured: a firmware with the slider of the settings page down to one per
+ * cent went to the board, and five was the lowest brightness that held
+ * steady. The slider stops at the same number, PANEL_BRIGHTNESS_MIN, so no
+ * panel is set darker than it sleeps. */
 #define BACKLIGHT_SLEEP_PERCENT 5
 
 /* Two frame buffers, or this display never starts.
@@ -513,9 +513,6 @@ lv_display_t *panel_display_start(void)
 
 /* What a sleeping panel looks like on this board, and why it is not dark.
  *
- * And never lighter than the panel awake: a panel that somebody set under
- * BACKLIGHT_SLEEP_PERCENT sleeps at its own brightness.
- *
  * Three measurements decide it, and each one came off the board:
  *
  *   pin held low      full brightness. A duty of 1024 wraps to 0 in a ten
@@ -538,13 +535,12 @@ lv_display_t *panel_display_start(void)
  * switches off, and the window says so rather than leaving somebody to
  * wonder why the wall glows.
  *
- * The floor is defined at the top of this file, because the start of the
- * display uses it too: the panel comes up at that brightness and stays
- * there until the first frame is drawn.
- *
- * Answers the brightness it asked for. */
+ * Five is the floor the settings page already offers on its slider. It is
+ * defined at the top of this file, because the start of the display uses it
+ * too: the panel comes up at that brightness and stays there until the
+ * first frame is drawn. */
 
-static int backlight_off(int brightness)
+static void backlight_off(void)
 {
     /* One call, and nothing that touches the pin.
      *
@@ -560,12 +556,10 @@ static int backlight_off(int brightness)
      * ledc_stop, a pad of our own and a full duty holds the pin, and the
      * answer was all three and none of them dark. Keeping it cost the one
      * thing on this page that still worked. */
-    int percent=brightness>=1&&brightness<BACKLIGHT_SLEEP_PERCENT?brightness:BACKLIGHT_SLEEP_PERCENT;
-    esp_err_t err=bsp_display_brightness_set(percent);
+    esp_err_t err=bsp_display_brightness_set(BACKLIGHT_SLEEP_PERCENT);
     if(err!=ESP_OK)
         ESP_LOGW("panel_display","backlight to %d%% refused: %s",
-                 percent,esp_err_to_name(err));
-    return percent;
+                 BACKLIGHT_SLEEP_PERCENT,esp_err_to_name(err));
 }
 
 static esp_err_t backlight_on(int brightness)
@@ -616,13 +610,13 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
          * some milliseconds, and a half-drawn frame during that fade is
          * visible. */
         panel_ui_sleep(panel_screen,panel_input,true);
-        int percent=backlight_off(brightness);
+        backlight_off();
         /* After the cover is on the screen, so the slow frames are black
          * ones. See PANEL_PCLK_SLEEP_HZ. */
         if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_SLEEP_HZ);
         ESP_LOGI("panel_display",
                  "Display asleep: backlight down to %d%%, which is as dark "
-                 "as this board goes, pixel clock %d MHz",percent,
+                 "as this board goes, pixel clock %d MHz",BACKLIGHT_SLEEP_PERCENT,
                  PANEL_PCLK_SLEEP_HZ/1000000);
     }else{
         /* The full pixel clock before the first frame that shows anything. */
@@ -630,7 +624,7 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
         panel_ui_sleep(panel_screen,panel_input,false);
         esp_err_t err=backlight_on(brightness);
         if(err!=ESP_OK){
-            backlight_off(brightness);
+            backlight_off();
             panel_ui_sleep(panel_screen,panel_input,true);
             if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_SLEEP_HZ);
             return err;
