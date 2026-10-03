@@ -604,7 +604,7 @@ void panel_ui_settings_open(void)
     brightness_label=text_at(display,"",338,16,88,&panel_font_18,BLUE);
     lv_label_set_text_fmt(brightness_label,"%d %%",local.brightness);
     text_at(display,panel_text(TXT_BRIGHTNESS_WHAT),62,43,350,&panel_font_12,MUTED);
-    slider_at(display,88,5,local.brightness,PANEL_BRIGHTNESS);
+    slider_at(display,88,PANEL_BRIGHTNESS_MIN,local.brightness,PANEL_BRIGHTNESS);
     line(display,18,112,402,1);
     text_at(display,panel_text(TXT_SLEEP_AFTER),20,128,268,&panel_font_18,TEXT);
     sleep_label=text_at(display,"",318,128,108,&panel_font_18,BLUE);

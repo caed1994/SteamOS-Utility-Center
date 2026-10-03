@@ -68,6 +68,16 @@ static void walk(panel_language_t language)
     lv_obj_send_event(brightness,LV_EVENT_VALUE_CHANGED,NULL);
     assert(last_key==PANEL_BRIGHTNESS && last_value==55 && !last_save);
     lv_obj_send_event(brightness,LV_EVENT_RELEASED,NULL);assert(last_save);
+    // Down to one per cent, which is where somebody looks for the lowest
+    // brightness the backlight holds steady.
+    assert(lv_slider_get_min_value(brightness)==PANEL_BRIGHTNESS_MIN&&PANEL_BRIGHTNESS_MIN==1);
+    lv_slider_set_value(brightness,0,LV_ANIM_OFF);
+    lv_obj_send_event(brightness,LV_EVENT_RELEASED,NULL);
+    assert(last_key==PANEL_BRIGHTNESS && last_value==1 && last_save);
+    assert(label(lv_screen_active(),"1 %"));
+    lv_slider_set_value(brightness,55,LV_ANIM_OFF);
+    lv_obj_send_event(brightness,LV_EVENT_RELEASED,NULL);
+    assert(last_value==55);
     // The second slider is the one that says when the display goes dark.
     //
     // It stands on a place in a list of stops and reports minutes, which
@@ -126,14 +136,14 @@ static void walk(panel_language_t language)
     // The lift as it was left: off again.
     skip=0;lift=kind(lv_screen_active(),&lv_switch_class,&skip);
     assert(lift && !lv_obj_has_state(lift,LV_STATE_CHECKED));
-    assert(settings==10 && actions==0);
+    assert(settings==12 && actions==0);
     // The button in the corner carries the name of the other language. A
     // press on it builds both screens again, and the person stays here.
     panel_language_t next=other(language);
     click(panel_language_name(next));
     assert(panel_text_language()==next);
     assert(last_key==PANEL_LANGUAGE && last_value==(int)next && last_save);
-    assert(settings==11 && actions==0);
+    assert(settings==13 && actions==0);
     assert(label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
     assert(label(lv_screen_active(),"55 %") && label(lv_screen_active(),"45 %"));
     skip=1;sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(lv_obj_has_state(sw,LV_STATE_CHECKED));

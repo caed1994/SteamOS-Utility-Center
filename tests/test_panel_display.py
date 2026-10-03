@@ -100,7 +100,7 @@ class BacklightTest(unittest.TestCase):
         """Measured on the board: the pin held low is full brightness, the
         pin held high swings, and the board support names no rail and no
         backlight enable. A level is not a request this driver answers."""
-        body = self.part("static void backlight_off")
+        body = self.part("static int backlight_off")
         self.assertIn("BACKLIGHT_SLEEP_PERCENT", body)
         self.assertIn("bsp_display_brightness_set", body)
         # The names it found, and not the file it found them in. An
@@ -115,14 +115,44 @@ class BacklightTest(unittest.TestCase):
                                     "board said no")
 
     def test_the_sleeping_brightness_is_above_zero_and_low(self):
-        """Zero is the state that swings. The slider on the settings page
-        already stops at five, so five is the floor this shares."""
+        """Zero is the state that swings. Five held steady as the floor of
+        the slider on the settings page."""
         percent = self.constant("BACKLIGHT_SLEEP_PERCENT")
         self.assertGreater(percent, 0)
         self.assertLessEqual(percent, 20)
 
+    def test_a_sleeping_panel_is_never_lighter_than_the_panel_awake(self):
+        """The slider goes under the floor of the sleep, so somebody can
+        find where the backlight stops holding steady. A panel set there
+        sleeps at its own brightness, and not at a lighter one. Nought is
+        the state that swings, and it gives the floor."""
+        body = without_comments(self.part("static int backlight_off"))
+        self.assertIn("brightness>=1&&brightness<BACKLIGHT_SLEEP_PERCENT"
+                      "?brightness:BACKLIGHT_SLEEP_PERCENT", body)
+        self.assertIn("bsp_display_brightness_set(percent)", body)
+        standby = without_comments(self.part("esp_err_t panel_display_standby"))
+        self.assertEqual(standby.count("backlight_off(brightness)"), 2)
+        self.assertNotIn("backlight_off()", standby)
+
+    def test_the_slider_and_the_stored_value_share_one_floor(self):
+        """The settings page offers it, and the start of the panel takes a
+        stored value from it. Two floors are a value the slider stores and
+        the next start throws away."""
+        header = self.source(os.path.join(FIRMWARE, "ui.h"))
+        found = re.search(r"#define PANEL_BRIGHTNESS_MIN (\d+)", header)
+        self.assertTrue(found)
+        floor = int(found.group(1))
+        self.assertEqual(floor, 1)
+        self.assertLessEqual(floor, self.constant("BACKLIGHT_SLEEP_PERCENT"))
+        ui = without_comments(self.source(os.path.join(FIRMWARE, "ui.c")))
+        self.assertIn("slider_at(display,88,PANEL_BRIGHTNESS_MIN,"
+                      "local.brightness,PANEL_BRIGHTNESS)", ui)
+        main = without_comments(self.source(os.path.join(FIRMWARE, "main.c")))
+        self.assertIn('nvs_get_u8(h,"brightness",&value)==ESP_OK && '
+                      'value>=PANEL_BRIGHTNESS_MIN && value<=100', main)
+
     def test_the_log_names_the_reading_and_what_was_asked_for(self):
-        body = self.part("static void backlight_off")
+        body = self.part("static int backlight_off")
         self.assertIn("BACKLIGHT_SLEEP_PERCENT", body)
         self.assertIn("esp_err_to_name(err)", body)
 

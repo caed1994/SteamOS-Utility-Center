@@ -129,7 +129,8 @@ static panel_settings_t settings_load(void)
     nvs_handle_t h;
     if(nvs_open("panel_ui",NVS_READONLY,&h)==ESP_OK){
         uint8_t value;
-        if(nvs_get_u8(h,"brightness",&value)==ESP_OK && value>=5 && value<=100)settings.brightness=value;
+        if(nvs_get_u8(h,"brightness",&value)==ESP_OK && value>=PANEL_BRIGHTNESS_MIN && value<=100)
+            settings.brightness=value;
         if(nvs_get_u8(h,"sound_volume",&value)==ESP_OK && value<=100)settings.sound_volume=value;
         if(nvs_get_u8(h,"touch_tones",&value)==ESP_OK)settings.touch_tones=value==1;
         // Anything this firmware does not know about reads as English,
