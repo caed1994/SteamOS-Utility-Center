@@ -630,12 +630,32 @@ class SleepClockTest(unittest.TestCase):
         return int(found.group(1))
 
     def test_the_sleep_clock_is_lower_and_the_awake_one_is_where_it_was(self):
-        self.assertEqual(self.number("PANEL_PCLK_HZ"), 12000000)
+        # 12 MHz for the startup animation, whose 40 ms frames land on two
+        # frames of the panel there, and 16 MHz after it, where a scroll
+        # frame of 29 ms lands on two frames of 16.9 ms.
+        self.assertEqual(self.number("PANEL_PCLK_BOOT_HZ"), 12000000)
+        self.assertEqual(self.number("PANEL_PCLK_HZ"), 16000000)
         self.assertLessEqual(self.number("PANEL_PCLK_SLEEP_HZ") * 2,
-                             self.number("PANEL_PCLK_HZ"))
-        self.assertIn("esp_lcd_rgb_panel_set_pclk(panel,PANEL_PCLK_HZ)",
+                             self.number("PANEL_PCLK_BOOT_HZ"))
+        self.assertIn("esp_lcd_rgb_panel_set_pclk(panel,PANEL_PCLK_BOOT_HZ)",
                       self.source())
+        self.assertIn("static uint32_t pclk_awake=PANEL_PCLK_BOOT_HZ;", self.source())
         self.assertIn("panel_rgb=panel;", self.source())
+
+    def test_the_scroll_clock_comes_after_the_animation(self):
+        over = re.search(r"void panel_display_boot_over\(void\)\s*\{(.*?)\n\}",
+                         self.source(), re.S)
+        self.assertIsNotNone(over)
+        self.assertIn("pclk_awake=PANEL_PCLK_HZ;", over.group(1))
+        # A sleeping panel keeps the clock of the sleep.
+        self.assertIn("if(panel_rgb && !is_asleep)esp_lcd_rgb_panel_set_pclk(panel_rgb,pclk_awake);",
+                      over.group(1))
+        with open(os.path.join(FIRMWARE, "main.c"), encoding="utf-8") as handle:
+            main = without_comments(handle.read())
+        tick = re.search(r"static void ui_tick\(lv_timer_t \*timer\).*?\n\}",
+                         main, re.S).group(0)
+        # Not from the call of app_main, which comes before the animation.
+        self.assertIn("if(timer && !panel_boot_playing())panel_display_boot_over();", tick)
 
     def test_down_after_the_cover_and_up_before_the_first_frame(self):
         """The slow frames are black ones, and the first frame after a
@@ -646,7 +666,7 @@ class SleepClockTest(unittest.TestCase):
         cover = going.index("panel_ui_sleep(panel_screen,panel_input,true);")
         down = going.index("esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_SLEEP_HZ)")
         self.assertLess(cover, down)
-        up = coming.index("esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_HZ)")
+        up = coming.index("esp_lcd_rgb_panel_set_pclk(panel_rgb,pclk_awake)")
         self.assertLess(up, coming.index("panel_ui_sleep(panel_screen,panel_input,false);"))
 
     def test_a_wake_that_fails_goes_back_to_the_sleep_clock(self):

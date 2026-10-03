@@ -42,11 +42,12 @@ CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
 # The refresh and the touch every 15 ms, under the frame of the panel.
 #
-# The panel shows a frame every 22.5 ms (12 MHz, about 44 Hz), and the
-# flush waits for the end of that frame. With 33 ms here a refresh began
-# 33 ms after the one before it and then waited for the next frame, so a
-# scroll showed its frames 22.5 and 45 ms apart in turn: an uneven step
-# that a person sees. Under the frame of the panel, the next refresh
+# The panel shows a frame every 16.9 ms (16 MHz, about 60 Hz), and every
+# 22.5 ms (12 MHz) in the startup animation. The flush waits for the end
+# of that frame. With 33 ms here, at 12 MHz, a refresh began 33 ms after
+# the one before it and then waited for the next frame, so a scroll showed
+# its frames 22.5 and 45 ms apart in turn: an uneven step that a person
+# sees. Under the frame of the panel, the next refresh
 # begins as soon as the last one is on the glass, and each frame takes one
 # frame of the panel, or two of them when the work does not fit in one.
 #
@@ -56,17 +57,15 @@ CONFIG_LV_USE_CLIB_SPRINTF=y
 # number of reads, so it stays the same. See lv_indev.c.
 CONFIG_LV_DEF_REFR_PERIOD=15
 CONFIG_LV_OS_FREERTOS=y
-# Two threads that draw. LVGL 9.5 cuts an area larger than half the frame
-# buffer into one tile for each thread (refr_area in lv_refr.c), so a
-# scroll of the band is drawn in two halves at once, one on each core
-# when both are free. The second thread takes 8 KB of internal memory for
-# its stack (CONFIG_LV_DRAW_THREAD_STACK_SIZE), and the LVGL task gave 8 KB
-# back: see PANEL_LVGL_STACK in main/panel_display.c.
-CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
-# The threads that draw, "swdraw", at the top of what LVGL offers, which
-# is FreeRTOS priority 4. They stood at 3, under the network task at 4, so
-# a poll of the PC held a frame back. main.c holds the network task under
-# them.
+# One thread that draws. Two were measured on the board: LVGL 9.5 cuts a
+# large area into one tile for each (refr_area in lv_refr.c), and a frame
+# of a scroll took 29 ms to draw with two where it took 28 with one. The
+# drawing waits on PSRAM and not on a core, and both cores share that
+# bus. The second thread cost 8 KB of internal memory for its stack.
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
+# The thread that draws, "swdraw", at the top of what LVGL offers, which
+# is FreeRTOS priority 4. It stood at 3, under the network task at 4, so a
+# poll of the PC held a frame back. main.c holds the network task under it.
 CONFIG_LV_DRAW_THREAD_PRIO=4
 # GCC 15 rejects conflicting section attributes when LVGL fast memory uses IRAM.
 CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=n

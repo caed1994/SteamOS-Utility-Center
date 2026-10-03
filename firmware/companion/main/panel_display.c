@@ -24,19 +24,40 @@ static lv_indev_t *panel_input;
 static esp_lcd_touch_handle_t panel_touch;
 static bool is_asleep;
 
-/* The pixel clock of the display, awake and in a sleep.
+/* The pixel clock of the display: in the startup animation, awake, and in
+ * a sleep.
  *
- * Awake, see the call in panel_display_start. In a sleep the screen shows
+ * 12 MHz is about 44 Hz on this panel, a frame every 22.5 ms, and 16 MHz,
+ * the default of the board, is about 60 Hz, a frame every 16.9 ms. A flush
+ * waits for the end of a frame, so what a frame of LVGL costs is a whole
+ * number of them.
+ *
+ * The startup animation holds each of its frames for 40 ms. That lands on
+ * two frames at 12 MHz, 45 ms, and on three at 16 MHz, 50.7 ms, so it
+ * plays at 12 MHz. See the long note in panel_display_start.
+ *
+ * A scroll is the other way round. The page of the panel measured 29 ms
+ * of drawing for a frame of it. That is two frames at either clock, 45 ms
+ * at 12 MHz and 33.8 ms at 16 MHz, so after the animation the panel runs
+ * at 16 MHz. The scan-out takes a third more of PSRAM then, and the card of
+ * the frames says what that costs the drawing.
+ *
+ * In a sleep the screen shows
  * the black cover and nothing else, and the board still scans it out at
  * the full rate: the bounce buffers are filled by an interrupt on the CPU,
  * which copies every frame out of PSRAM, and while it copies the clock of
  * the CPU runs at 240 MHz. Read off the board, the CPU spent only about
- * 55 % of a sleep at the low speed. A third of the pixel clock is a third
- * of that copying. The driver takes a new pixel clock at the next VSYNC
- * (lcd_rgb_panel_try_update_pclk), so neither change cuts a frame. */
-#define PANEL_PCLK_HZ        12000000
+ * 55 % of a sleep at the low speed, at 12 MHz awake. 4 MHz is a third of
+ * that clock and a quarter of 16 MHz, and so is the copying. The driver
+ * takes a new pixel clock at the next VSYNC (lcd_rgb_panel_try_update_pclk),
+ * so no change cuts a frame. */
+#define PANEL_PCLK_BOOT_HZ   12000000
+#define PANEL_PCLK_HZ        16000000
 #define PANEL_PCLK_SLEEP_HZ   4000000
 static esp_lcd_panel_handle_t panel_rgb;
+/* The clock of an awake panel: the one of the animation until it is over.
+ * Read and written by the LVGL task alone. */
+static uint32_t pclk_awake=PANEL_PCLK_BOOT_HZ;
 
 /* The lowest brightness this board holds steady, in percent.
  *
@@ -202,7 +223,7 @@ lv_display_t *panel_display_start(void)
      * animation, so the task used 9124 bytes at the most. Sixteen
      * kilobytes leave 7 KB over that, for the ways the panel did not take
      * while it was read. The pixels are not drawn on this stack: LVGL
-     * draws in its threads "swdraw", on stacks of their own. */
+     * draws in its thread "swdraw", on a stack of its own. */
     port.task_stack=PANEL_LVGL_STACK;
     ESP_ERROR_CHECK(lvgl_port_init(&port));
     /* After lvgl_port_init, which is what calls lv_init. */
@@ -229,9 +250,9 @@ lv_display_t *panel_display_start(void)
      *
      * app_main raises it once the first frame is on the screen. */
     bsp_display_brightness_set(BACKLIGHT_SLEEP_PERCENT);
-    /* Board default is 16 MHz (~60 Hz). 12 MHz requests ~45 Hz and reduces
-     * continuous pixel traffic by 25%; actual divider may round downward. */
-    ESP_ERROR_CHECK(esp_lcd_rgb_panel_set_pclk(panel,PANEL_PCLK_HZ));
+    /* The clock of the startup animation first. See PANEL_PCLK_HZ and
+     * panel_display_boot_over. */
+    ESP_ERROR_CHECK(esp_lcd_rgb_panel_set_pclk(panel,PANEL_PCLK_BOOT_HZ));
     panel_rgb=panel;
 
     /* LVGL draws into the panel's own frame buffers, and there are two.
@@ -389,8 +410,10 @@ lv_display_t *panel_display_start(void)
     lv_display_add_event_cb(screen,frame_flushed,LV_EVENT_FLUSH_FINISH,NULL);
     lvgl_port_unlock();
     panel_screen=screen;
-    ESP_LOGI(tag,"RGB: requested PCLK=12MHz, bounce=%d rows, %d frame buffers "
+    ESP_LOGI(tag,"RGB: requested PCLK=%dMHz until the animation ends, then %dMHz, "
+             "bounce=%d rows, %d frame buffers "
              "at %p and %p, direct mode, core=1",
+             PANEL_PCLK_BOOT_HZ/1000000,PANEL_PCLK_HZ/1000000,
              CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_HEIGHT,
              CONFIG_BSP_LCD_RGB_BUFFER_NUMS,first,second);
     return screen;
@@ -493,6 +516,17 @@ static esp_err_t backlight_on(int brightness)
     return bsp_display_brightness_set(brightness);
 }
 
+void panel_display_boot_over(void)
+{
+    if(pclk_awake==PANEL_PCLK_HZ)return;
+    pclk_awake=PANEL_PCLK_HZ;
+    /* A sleeping panel stays at the clock of the sleep, and its wake takes
+     * this one. */
+    if(panel_rgb && !is_asleep)esp_lcd_rgb_panel_set_pclk(panel_rgb,pclk_awake);
+    ESP_LOGI("panel_display","The startup animation is over, so the pixel clock is %d MHz",
+             PANEL_PCLK_HZ/1000000);
+}
+
 /* Whether a finger is on the glass, asked of the controller itself.
  *
  * A sleeping panel stops reading the touch: panel_ui_sleep turns the input
@@ -534,7 +568,7 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
                  PANEL_PCLK_SLEEP_HZ/1000000);
     }else{
         /* The full pixel clock before the first frame that shows anything. */
-        if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_HZ);
+        if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,pclk_awake);
         panel_ui_sleep(panel_screen,panel_input,false);
         esp_err_t err=backlight_on(brightness);
         if(err!=ESP_OK){

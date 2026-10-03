@@ -341,6 +341,9 @@ static void ui_tick(lv_timer_t *timer)
     /* A call with no timer is the one from app_main, on the start task.
      * See watch_stack. */
     if(timer)watch_stack();
+    /* From the LVGL timer only: the call from app_main comes before the
+     * startup animation begins. See panel_display_boot_over. */
+    if(timer && !panel_boot_playing())panel_display_boot_over();
     /* The timer of the fourth page, first and in a sleep as well: it runs
      * on while the display is dark, and its end wakes the display, from
      * the sleep of the button too. The wake ends the rest of the radio on
@@ -1077,12 +1080,12 @@ static void self_read(void)
     xSemaphoreTake(lock,portMAX_DELAY);state.self=self;xSemaphoreGive(lock);
 }
 
-/* The priority of the network task: under the threads that draw, which
+/* The priority of the network task: under the thread that draws, which
  * LVGL starts at tskIDLE_PRIORITY plus CONFIG_LV_DRAW_THREAD_PRIO (see
  * lv_thread_init in lv_freertos.c). The build stops if the two meet. */
 #define PANEL_NETWORK_PRIORITY 3
 _Static_assert(PANEL_NETWORK_PRIORITY<tskIDLE_PRIORITY+CONFIG_LV_DRAW_THREAD_PRIO,
-               "the network task stands above the threads that draw");
+               "the network task stands above the thread that draws");
 
 static void network_task(void *arg)
 {
@@ -1512,9 +1515,9 @@ void app_main(void)
      * not answer. The network task writes a line of its own when the
      * answer of the PC changes, with the reason. See network_task. */
     esp_log_level_set("HTTP_CLIENT",ESP_LOG_NONE);
-    /* On core 0 with the radio, and under the drawing. LVGL draws in
-     * threads of its own, "swdraw", at CONFIG_LV_DRAW_THREAD_PRIO, and those
-     * threads take either core. A poll of the PC parses its answer for
+    /* On core 0 with the radio, and under the drawing. LVGL draws in a
+     * thread of its own, "swdraw", at CONFIG_LV_DRAW_THREAD_PRIO, and that
+     * thread takes either core. A poll of the PC parses its answer for
      * some milliseconds, and at the priority of the drawing or above it,
      * that parse held a frame back while somebody scrolled. */
     BaseType_t created=panel_psram_task(network_task,"panel_network",12288,

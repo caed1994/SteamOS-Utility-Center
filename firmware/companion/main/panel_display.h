@@ -20,3 +20,8 @@ esp_err_t panel_display_standby(bool sleep, int brightness);
  * false while the panel is awake, because LVGL reads the same controller
  * then and two readers share one bus. See panel_display_touched. */
 bool panel_display_touched(void);
+
+/* The startup animation is over, and the panel takes the pixel clock of a
+ * scroll. The LVGL task calls it; a second call does nothing. See
+ * PANEL_PCLK_HZ in panel_display.c. */
+void panel_display_boot_over(void);

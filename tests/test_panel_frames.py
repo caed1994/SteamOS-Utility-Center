@@ -31,9 +31,11 @@ COMPANION = os.path.join(REPO, "firmware", "companion")
 FIRMWARE = os.path.join(COMPANION, "main")
 HARNESS = os.path.join(REPO, "tests", "c", "panel-frames-harness.c")
 
-# The panel shows a frame every 22.5 ms: 12 MHz and the timings of this
-# panel, as the board measured it. See panel_display.c.
+# The panel shows a frame every 22.5 ms at 12 MHz, as the board measured
+# it, and every 16.9 ms at 16 MHz, the clock after the startup animation.
+# See panel_display.c.
 PANEL_FRAME_US = 22500
+PANEL_FAST_FRAME_US = 16900
 
 
 def compiler():
@@ -256,7 +258,7 @@ class WhereTest(unittest.TestCase):
     def test_the_refresh_waits_less_than_a_frame_of_the_panel(self):
         found = re.search(r"(?m)^CONFIG_LV_DEF_REFR_PERIOD=(\d+)$", defaults())
         self.assertIsNotNone(found)
-        self.assertLess(int(found.group(1)) * 1000, PANEL_FRAME_US)
+        self.assertLess(int(found.group(1)) * 1000, PANEL_FAST_FRAME_US)
         self.assertGreater(int(found.group(1)), 0)
 
     def test_nothing_of_the_network_stands_above_the_drawing(self):
@@ -297,17 +299,14 @@ class RoomTest(unittest.TestCase):
 
 
 class ThreadsTest(unittest.TestCase):
-    """Two threads draw. LVGL cuts an area larger than half the frame
-    buffer into a tile for each, so a scroll of the band is drawn in two
-    halves at once."""
+    """One thread draws. Two were measured on the board, and a frame of a
+    scroll took 29 ms to draw with two where it took 28 with one: the
+    drawing waits on PSRAM, which both cores share."""
 
-    def test_two_threads_draw(self):
-        self.assertRegex(defaults(), r"(?m)^CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2$")
+    def test_one_thread_draws(self):
+        self.assertRegex(defaults(), r"(?m)^CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1$")
 
-    def test_the_stack_of_the_lvgl_task_paid_for_the_second(self):
-        # The second thread takes CONFIG_LV_DRAW_THREAD_STACK_SIZE, 8 KB by
-        # default, of internal memory. The LVGL task gave 8 KB back.
-        self.assertNotRegex(defaults(), r"(?m)^CONFIG_LV_DRAW_THREAD_STACK_SIZE=")
+    def test_the_lvgl_task_keeps_the_smaller_stack(self):
         self.assertIn("#define PANEL_LVGL_STACK (16 * 1024)", code("panel_display.c"))
 
 
