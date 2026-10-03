@@ -517,20 +517,24 @@ static void action_send(panel_action_t action)
     }
 }
 
-/* The change of the page of the LED bar that waits for the network task:
- * the key of each mode, and empty for a mode that keeps its effect. Under
- * the lock. A second change before the task takes the first adds to it, so
- * a change of each mode in quick turn goes as one. */
-static char led_wanted[PANEL_LED_MODES][PANEL_LED_KEY];
+/* The change of the page of the LED bar that waits for the network task,
+ * as panel_led.h says: an empty key or colour, and a brightness below
+ * nought, keep what the PC has. Under the lock. A second change before the
+ * task takes the first adds to it, so a change of each mode, of the colour
+ * and of the brightness in quick turn goes as one. */
+static panel_led_change_t led_wanted={.brightness=-1};
 static bool led_due;
 
 /* From the LVGL task. See panel_ui_led_use. */
-static void led_change(const char *const effect[PANEL_LED_MODES])
+static void led_change(const panel_led_change_t *change)
 {
     xSemaphoreTake(lock,portMAX_DELAY);
     for (int mode=0; mode<PANEL_LED_MODES; mode++)
-        if (effect[mode])
-            snprintf(led_wanted[mode],sizeof(led_wanted[mode]),"%s",effect[mode]);
+        if (change->effect[mode][0])
+            snprintf(led_wanted.effect[mode],sizeof(led_wanted.effect[mode]),"%s",change->effect[mode]);
+    if (change->colour[0])
+        snprintf(led_wanted.colour,sizeof(led_wanted.colour),"%s",change->colour);
+    if (change->brightness>=0) led_wanted.brightness=change->brightness;
     led_due=true;
     xSemaphoreGive(lock);
 }
@@ -913,6 +917,16 @@ static int request(const char *path, const char *body, int wait_ms)
         snprintf(state.led_effect[mode],sizeof state.led_effect[mode],"%s",
                  cJSON_IsString(effect)?effect->valuestring:"");
     }
+    /* The colour and the brightness of the desktop scenes. A service older
+     * than this firmware sends neither, and the page then keeps to the
+     * effects. */
+    cJSON *colour=cJSON_GetObjectItemCaseSensitive(led,PANEL_LED_COLOUR_KEY);
+    cJSON *brightness=cJSON_GetObjectItemCaseSensitive(led,PANEL_LED_BRIGHTNESS_KEY);
+    state.led_look=cJSON_IsString(colour)&&panel_led_rgb(colour->valuestring,NULL)
+                   &&cJSON_IsNumber(brightness)&&brightness->valuedouble>=0
+                   &&brightness->valuedouble<=255;
+    snprintf(state.led_colour,sizeof state.led_colour,"%s",state.led_look?colour->valuestring:"");
+    state.led_brightness=state.led_look?(int)brightness->valuedouble:-1;
     xSemaphoreGive(lock);
     learn_wake_address(cJSON_GetObjectItemCaseSensitive(root,"wake"));
     cJSON_Delete(root);
@@ -921,10 +935,10 @@ static int request(const char *path, const char *body, int wait_ms)
 
 /* A change of the LED bar, sent to the PC. Answers the HTTP code, and
  * nought for nothing to send. */
-static int led_request(const char keys[PANEL_LED_MODES][PANEL_LED_KEY])
+static int led_request(const panel_led_change_t *change)
 {
-    char body[96];
-    if (!panel_led_body(body,sizeof(body),keys)) return 0;
+    char body[160];
+    if (!panel_led_body(body,sizeof(body),change)) return 0;
     return request(PANEL_LED_PATH,body,PANEL_CHANGE_WAIT_MS);
 }
 
@@ -1332,17 +1346,17 @@ static void network_task(void *arg)
          * the page shows the effect the PC really has. */
         xSemaphoreTake(lock,portMAX_DELAY);
         bool led_now=led_due;
-        char led_keys[PANEL_LED_MODES][PANEL_LED_KEY];
-        memcpy(led_keys,led_wanted,sizeof(led_keys));
-        memset(led_wanted,0,sizeof(led_wanted));
+        panel_led_change_t led_next=led_wanted;
+        led_wanted=(panel_led_change_t){.brightness=-1};
         led_due=false;
         bool led_online=state.online;
         xSemaphoreGive(lock);
         if (led_now) {
-            int code=led_online && connected() ? led_request(led_keys) : 0;
-            ESP_LOGI("panel_led","desktop=%s game=%s: %d",
-                     led_keys[PANEL_LED_DESKTOP][0]?led_keys[PANEL_LED_DESKTOP]:"-",
-                     led_keys[PANEL_LED_GAME][0]?led_keys[PANEL_LED_GAME]:"-",code);
+            int code=led_online && connected() ? led_request(&led_next) : 0;
+            ESP_LOGI("panel_led","desktop=%s game=%s colour=%s brightness=%d: %d",
+                     led_next.effect[PANEL_LED_DESKTOP][0]?led_next.effect[PANEL_LED_DESKTOP]:"-",
+                     led_next.effect[PANEL_LED_GAME][0]?led_next.effect[PANEL_LED_GAME]:"-",
+                     led_next.colour[0]?led_next.colour:"-",led_next.brightness,code);
             xSemaphoreTake(lock,portMAX_DELAY);
             state.led_code=code;
             state.led_replies++;

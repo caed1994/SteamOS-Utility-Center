@@ -159,6 +159,8 @@ static lv_obj_t *arrange_eyes[PANEL_PAGES],*arrange_up[PANEL_PAGES],*arrange_dow
 static const panel_text_id_t page_names[PANEL_PAGES]={TXT_PAGE_CONTROLS,TXT_PAGE_SESSION,
     TXT_PLAYING,TXT_PAGE_CLOCK,TXT_PAGE_CARD,TXT_PAGE_LED,TXT_PAGE_CPU};
 static void arrange_forget(void);
+/* The layer of the colour and the brightness of the LED bar. See look_open. */
+static lv_obj_t *look_layer;
 /* The menu that chooses the sensor of a tile, and which tile it is for. */
 static lv_obj_t *sensor_layer;
 static bool sensor_gpu;
@@ -340,16 +342,23 @@ static void setting_slider(lv_event_t *e)
     if(save_setting)save_setting(key,value,save);
     if(save && key==PANEL_SOUND_VOLUME)feedback();
 }
-static void slider_range(lv_obj_t *parent,int y,int minimum,int maximum,int value,panel_setting_t key)
+/* A slider of the panel, 380 wide. cb gets each move and the release. */
+static lv_obj_t *slider_with(lv_obj_t *parent,int x,int y,int minimum,int maximum,int value,
+                             lv_event_cb_t cb,intptr_t data)
 {
-    lv_obj_t *slider=lv_slider_create(parent);lv_obj_set_pos(slider,28,y);lv_obj_set_size(slider,380,8);
+    lv_obj_t *slider=lv_slider_create(parent);lv_obj_set_pos(slider,x,y);lv_obj_set_size(slider,380,8);
     lv_slider_set_range(slider,minimum,maximum);lv_slider_set_value(slider,value,LV_ANIM_OFF);
     lv_obj_set_style_bg_color(slider,lv_color_hex(EDGE),LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider,lv_color_hex(BLUE),LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider,lv_color_hex(TEXT),LV_PART_KNOB);
     lv_obj_set_style_pad_all(slider,7,LV_PART_KNOB);lv_obj_set_ext_click_area(slider,18);
-    lv_obj_add_event_cb(slider,setting_slider,LV_EVENT_VALUE_CHANGED,(void *)(intptr_t)key);
-    lv_obj_add_event_cb(slider,setting_slider,LV_EVENT_RELEASED,(void *)(intptr_t)key);
+    lv_obj_add_event_cb(slider,cb,LV_EVENT_VALUE_CHANGED,(void *)data);
+    lv_obj_add_event_cb(slider,cb,LV_EVENT_RELEASED,(void *)data);
+    return slider;
+}
+static void slider_range(lv_obj_t *parent,int y,int minimum,int maximum,int value,panel_setting_t key)
+{
+    slider_with(parent,28,y,minimum,maximum,value,setting_slider,key);
 }
 /* The two that run from a lowest value to a hundred, which is what a per
  * cent is. */
@@ -1142,7 +1151,8 @@ static void sensor_row(lv_obj_t *box,int row,int y,const char *name,int celsius,
  * screen, as a question is. */
 static void sensor_menu(bool gpu)
 {
-    if(sensor_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen||update_layer||setup_screen)return;
+    if(sensor_layer||look_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen||update_layer
+       ||setup_screen)return;
     const panel_state_t *s=&last_state;
     int count=!last_state_valid?0:gpu?s->gpu_sensor_count:s->cpu_sensor_count;
     if(count<0)count=0;
@@ -1397,7 +1407,7 @@ static lv_obj_t *self_card(lv_obj_t *column,panel_text_id_t title,const int *row
 }
 void panel_ui_self_open(void)
 {
-    if(self_screen||pc_screen||pads_screen||settings_screen||setup_screen||sensor_layer)return;
+    if(self_screen||pc_screen||pads_screen||settings_screen||setup_screen||sensor_layer||look_layer)return;
     self_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
     button(self_screen,panel_text(TXT_BACK),12,8,112,44,self_close,0);
     text_at(self_screen,panel_text(TXT_SELF_TITLE),136,20,320,&panel_font_20,TEXT);
@@ -1498,6 +1508,7 @@ const char *panel_ui_where(void)
     if(setup_screen)return "the setup";
     if(overlay)return "a question";
     if(sensor_layer)return "a choice of sensor";
+    if(look_layer)return "the colour of the LED bar";
     if(arrange_screen)return "the order of the pages";
     if(settings_screen)return "the settings";
     if(pads_screen)return "the controllers";
@@ -1535,6 +1546,16 @@ static void enable(lv_obj_t *o,bool on)
  * change, and when no answer shows the change in LED_SHOWN_MS. */
 #define LED_WAIT_MS 1500
 #define LED_SHOWN_MS 20000
+/* The button of the colour and the brightness: the room on each side, and
+ * the dot of the colour with the room after it. */
+#define LOOK_PAD 12
+#define LOOK_DOT 14
+#define LOOK_GAP 8
+/* Their layer: the title, the colours in three rows, and the brightness with
+ * its slider and Done. */
+#define LOOK_TOP 62
+#define LOOK_COLOURS_ROOM (24+3*54+8)
+#define LOOK_LEVEL_ROOM (62+44+16)
 /* How long the reason for a refusal stays under the effect. */
 #define LED_REFUSAL_MS 8000
 typedef struct {
@@ -1552,6 +1573,22 @@ typedef struct {
 static led_card_t led_cards[PANEL_LED_MODES];
 static panel_led_cb_t led_send;
 static lv_timer_t *led_timer;
+/* A colour or a brightness of the desktop scenes that somebody chose and
+ * the PC does not show yet, as for an effect: wanted is the place of the
+ * colour, or the brightness from 0 to 255, and -1 for none. They go with
+ * the effects, and a refusal of them goes on the card of the desktop. */
+typedef struct { int wanted; bool sent; uint32_t sent_at; } led_pick_t;
+static led_pick_t look_colour={.wanted=-1},look_level={.wanted=-1};
+/* The button under the effect of the desktop, with the dot of the colour
+ * and its words, and the colour the dot has: -1 for none yet. */
+static lv_obj_t *look_pill,*look_dot,*look_words;
+static int32_t look_dot_rgb=-1;
+/* The layer that chooses the two, over the whole screen as the choice of a
+ * sensor is. It has the colours only for a scene in the desktop colour.
+ * look_lit is what each colour shows: -1 for nothing yet, 0, 1 chosen. */
+static lv_obj_t *look_slider,*look_value,*look_swatches[PANEL_LED_COLOURS];
+static int8_t look_lit[PANEL_LED_COLOURS];
+static bool look_with_colours;
 /* The count of the answers to changes that the page has seen. */
 static uint32_t led_replies_seen;
 void panel_ui_led_use(panel_led_cb_t callback){led_send=callback;}
@@ -1566,6 +1603,8 @@ static panel_text_id_t change_refusal(int code,panel_text_id_t no_module)
     default:return TXT_CHANGE_REFUSED;
     }
 }
+static void look_pill_show(const panel_state_t *s,int index,bool show);
+static void look_show(const panel_state_t *s);
 static void led_show(const panel_state_t *s)
 {
     if(!led_cards[PANEL_LED_DESKTOP].name)return;
@@ -1579,7 +1618,20 @@ static void led_show(const panel_state_t *s)
             c->wanted=-1;c->sent=false;
             c->refused=true;c->refusal=change_refusal(s->led_code,TXT_LED_NO_MODULE);c->refused_at=lv_tick_get();
         }
+        for(int i=0;i<2&&s->led_code!=200;i++){
+            led_pick_t *pick=i?&look_level:&look_colour;
+            if(pick->wanted<0||!pick->sent)continue;
+            pick->wanted=-1;pick->sent=false;
+            led_card_t *c=&led_cards[PANEL_LED_DESKTOP];
+            c->refused=true;c->refusal=change_refusal(s->led_code,TXT_LED_NO_MODULE);c->refused_at=lv_tick_get();
+        }
     }
+    /* A colour or a brightness shown by the PC, or not shown in time. */
+    const char *colour=panel_led_colour(look_colour.wanted);
+    if(look_colour.sent&&(!colour||strcmp(s->led_colour,colour)==0
+                          ||lv_tick_elaps(look_colour.sent_at)>LED_SHOWN_MS)){look_colour.wanted=-1;look_colour.sent=false;}
+    if(look_level.sent&&(s->led_brightness==look_level.wanted
+                         ||lv_tick_elaps(look_level.sent_at)>LED_SHOWN_MS)){look_level.wanted=-1;look_level.sent=false;}
     bool usable=s->online&&s->led_here;
     for(int m=0;m<PANEL_LED_MODES;m++){
         led_card_t *c=&led_cards[m];
@@ -1602,7 +1654,9 @@ static void led_show(const panel_state_t *s)
             if(now)lv_obj_remove_flag(c->now,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(c->now,LV_OBJ_FLAG_HIDDEN);
         }
         const char *note="";
-        if(c->wanted>=0)note=panel_text(TXT_CHANGE_APPLYING);
+        bool look=false;
+        if(c->wanted>=0||(m==PANEL_LED_DESKTOP&&(look_colour.wanted>=0||look_level.wanted>=0)))
+            note=panel_text(TXT_CHANGE_APPLYING);
         else if(c->refused)note=panel_text(c->refusal);
         else if(s->online&&!s->led_here){
             /* Once, on the first card: no LED module, or a service of the PC
@@ -1612,27 +1666,52 @@ static void led_show(const panel_state_t *s)
             if(m==PANEL_LED_DESKTOP)note=panel_text(s->led_known?TXT_LED_NONE:TXT_PC_TOO_OLD);
         }
         else if(m==PANEL_LED_GAME)note=panel_text(TXT_LED_GAME_WHAT);
-        else if(panel_led_coloured((panel_led_mode_t)m,index))note=panel_text(TXT_LED_COLOUR_WHAT);
+        /* The button of the colour and the brightness takes the place of
+         * the line, for a scene that uses them. A service that sends
+         * neither keeps the line that says where the colour comes from. */
+        else if(usable&&s->led_look&&panel_led_lit((panel_led_mode_t)m,index))look=true;
+        else if(usable&&panel_led_coloured((panel_led_mode_t)m,index))note=panel_text(TXT_LED_COLOUR_WHAT);
         set_text(c->note,note);
+        if(m==PANEL_LED_DESKTOP)look_pill_show(s,index,look);
     }
+    look_show(s);
 }
 /* LED_WAIT_MS after the last tap: each choice that is new goes to main.c
  * in one change. A choice of the effect the PC has already is no change. */
 static void led_due(lv_timer_t *timer)
 {
     lv_timer_pause(timer);
-    const char *effect[PANEL_LED_MODES]={NULL};
+    panel_led_change_t change={.brightness=-1};
     bool any=false;
     for(int m=0;m<PANEL_LED_MODES;m++){
         led_card_t *c=&led_cards[m];
         if(c->wanted<0||c->sent)continue;
         const char *chosen=panel_led_key((panel_led_mode_t)m,c->wanted);
         if(!chosen||(last_state_valid&&strcmp(last_state.led_effect[m],chosen)==0)){c->wanted=-1;continue;}
-        effect[m]=chosen;
+        snprintf(change.effect[m],sizeof change.effect[m],"%s",chosen);
         c->sent=true;c->sent_at=lv_tick_get();any=true;
     }
-    if(any&&led_send)led_send(effect);
+    /* The colour and the brightness, the same way. */
+    if(look_colour.wanted>=0&&!look_colour.sent){
+        const char *chosen=panel_led_colour(look_colour.wanted);
+        if(!chosen||(last_state_valid&&strcmp(last_state.led_colour,chosen)==0))look_colour.wanted=-1;
+        else{
+            snprintf(change.colour,sizeof change.colour,"%s",chosen);
+            look_colour.sent=true;look_colour.sent_at=lv_tick_get();any=true;
+        }
+    }
+    if(look_level.wanted>=0&&!look_level.sent){
+        if(last_state_valid&&last_state.led_brightness==look_level.wanted)look_level.wanted=-1;
+        else{change.brightness=look_level.wanted;look_level.sent=true;look_level.sent_at=lv_tick_get();any=true;}
+    }
+    if(any&&led_send)led_send(&change);
     if(last_state_valid)led_show(&last_state);
+}
+/* The wait after a choice of the page starts again. */
+static void led_later(void)
+{
+    if(!led_timer)led_timer=lv_timer_create(led_due,LED_WAIT_MS,NULL);
+    lv_timer_reset(led_timer);lv_timer_resume(led_timer);
 }
 static void led_step(lv_event_t *e)
 {
@@ -1644,9 +1723,166 @@ static void led_step(lv_event_t *e)
     int from=c->wanted>=0?c->wanted:panel_led_find(m,last_state.led_effect[m]);
     c->wanted=panel_led_step(m,from,data%2?1:-1);
     c->sent=false;c->refused=false;
-    if(!led_timer)led_timer=lv_timer_create(led_due,LED_WAIT_MS,NULL);
-    lv_timer_reset(led_timer);lv_timer_resume(led_timer);
+    led_later();
     led_show(&last_state);
+}
+/* The effect that the card of the desktop shows: the choice, or the PC's. */
+static int look_scene(const panel_state_t *s)
+{
+    const led_card_t *c=&led_cards[PANEL_LED_DESKTOP];
+    return c->wanted>=0?c->wanted:panel_led_find(PANEL_LED_DESKTOP,s->led_effect[PANEL_LED_DESKTOP]);
+}
+/* The colour and the brightness that the page shows: the choice, or the
+ * PC's. The colour is its place, or -1 for one that is not in the list. */
+static int look_colour_shown(const panel_state_t *s)
+{
+    return look_colour.wanted>=0?look_colour.wanted:panel_led_colour_find(s->led_colour);
+}
+static int look_level_shown(const panel_state_t *s)
+{
+    return look_level.wanted>=0?look_level.wanted:s->led_brightness;
+}
+static void look_pill_show(const panel_state_t *s,int index,bool show)
+{
+    if(!look_pill)return;
+    if(show==lv_obj_has_flag(look_pill,LV_OBJ_FLAG_HIDDEN)){
+        if(show)lv_obj_remove_flag(look_pill,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(look_pill,LV_OBJ_FLAG_HIDDEN);
+    }
+    if(!show)return;
+    /* The colour and the brightness for a scene in the desktop colour, and
+     * the brightness alone for one that makes its own colours. */
+    bool coloured=panel_led_coloured(PANEL_LED_DESKTOP,index);
+    int colour=look_colour_shown(s);
+    int percent=panel_led_percent(look_level_shown(s));
+    char said[48];
+    if(coloured)snprintf(said,sizeof said,"%s • %d %%",panel_text(panel_led_colour_name(colour)),percent);
+    else snprintf(said,sizeof said,"%s %d %%",panel_text(TXT_LED_BRIGHTNESS),percent);
+    uint32_t rgb=0;
+    bool dot=coloured&&panel_led_rgb(colour>=0?panel_led_colour(colour):s->led_colour,&rgb);
+    int32_t dot_now=dot?(int32_t)rgb:-1;
+    if(dot_now==look_dot_rgb&&strcmp(lv_label_get_text(look_words),said)==0)return;
+    if(dot_now!=look_dot_rgb){
+        if(dot){
+            lv_obj_set_style_bg_color(look_dot,lv_color_hex(rgb),0);
+            lv_obj_remove_flag(look_dot,LV_OBJ_FLAG_HIDDEN);
+        }
+        else lv_obj_add_flag(look_dot,LV_OBJ_FLAG_HIDDEN);
+        look_dot_rgb=dot_now;
+    }
+    set_text(look_words,said);
+    /* The button is as wide as what it holds and its border, in the middle
+     * of the card. */
+    int32_t wide=(dot?LOOK_DOT+LOOK_GAP:0)+text_width(said,&panel_font_14)+2*LOOK_PAD+2;
+    lv_obj_set_width(look_pill,wide);
+    lv_obj_set_x(look_pill,14+(430-wide)/2);
+    lv_obj_set_x(look_words,LOOK_PAD+(dot?LOOK_DOT+LOOK_GAP:0));
+}
+static void look_close(void)
+{
+    if(!look_layer)return;
+    lv_obj_delete(look_layer);look_layer=NULL;look_slider=NULL;look_value=NULL;
+    for(int i=0;i<PANEL_LED_COLOURS;i++)look_swatches[i]=NULL;
+}
+static void look_outside(lv_event_t *e){(void)e;look_close();}
+static void look_done(lv_event_t *e){(void)e;feedback();look_close();}
+static void look_show(const panel_state_t *s)
+{
+    if(!look_layer)return;
+    /* A PC that goes, or a scene that takes another set of the two: the
+     * layer has nothing left to set. */
+    int index=look_scene(s);
+    if(!s->online||!s->led_here||!s->led_look||!panel_led_lit(PANEL_LED_DESKTOP,index)
+       ||panel_led_coloured(PANEL_LED_DESKTOP,index)!=look_with_colours){look_close();return;}
+    int colour=look_colour_shown(s);
+    for(int i=0;look_with_colours&&i<PANEL_LED_COLOURS;i++){
+        int8_t lit=i==colour;
+        if(lit==look_lit[i])continue;
+        look_lit[i]=lit;
+        /* An outline and not a wider border, which would move what the
+         * button holds. */
+        lv_obj_set_style_outline_width(look_swatches[i],lit?2:0,0);
+    }
+    /* Not under a finger that moves it. */
+    if(lv_obj_has_state(look_slider,LV_STATE_PRESSED))return;
+    int percent=panel_led_percent(look_level_shown(s));
+    if(lv_slider_get_value(look_slider)!=percent)lv_slider_set_value(look_slider,percent,LV_ANIM_OFF);
+    char said[16];
+    snprintf(said,sizeof said,"%d %%",percent);
+    set_text(look_value,said);
+}
+/* A tap on a colour and the release of the slider. Each status that shows
+ * a PC that cannot take them closes the layer, so the layer that takes a
+ * tap belongs to a PC that can. */
+static void look_pick(lv_event_t *e)
+{
+    feedback();
+    look_colour.wanted=(int)(intptr_t)lv_event_get_user_data(e);look_colour.sent=false;
+    led_cards[PANEL_LED_DESKTOP].refused=false;
+    led_later();
+    led_show(&last_state);
+}
+static void look_slid(lv_event_t *e)
+{
+    int percent=lv_slider_get_value(look_slider);
+    char said[16];
+    snprintf(said,sizeof said,"%d %%",percent);
+    set_text(look_value,said);
+    if(lv_event_get_code(e)!=LV_EVENT_RELEASED)return;
+    look_level.wanted=panel_led_brightness(percent);look_level.sent=false;
+    led_cards[PANEL_LED_DESKTOP].refused=false;
+    led_later();
+    led_show(&last_state);
+}
+/* The colours from the top, three in a row, and the brightness under them.
+ * A tap on a colour or the release of the slider chooses, and the choice
+ * goes after LED_WAIT_MS with whatever else the page chose. Done, or a tap
+ * beside the box, closes it. */
+static void look_open(void)
+{
+    if(look_layer||sensor_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen
+       ||update_layer||setup_screen)return;
+    int index=look_scene(&last_state);
+    look_with_colours=panel_led_coloured(PANEL_LED_DESKTOP,index);
+    int colours=look_with_colours?LOOK_COLOURS_ROOM:0;
+    int high=LOOK_TOP+colours+LOOK_LEVEL_ROOM;
+    look_layer=panel(lv_screen_active(),0,0,480,480,BG,false);
+    lv_obj_set_style_bg_opa(look_layer,LV_OPA_90,0);
+    lv_obj_add_event_cb(look_layer,look_outside,LV_EVENT_CLICKED,NULL);
+    /* The box takes a tap of its own, so a tap beside the slider does not
+     * close it. */
+    lv_obj_t *box=panel(look_layer,20,(480-high)/2,440,high,CARD,true);
+    text_at(box,panel_text(TXT_LED_DESKTOP),20,16,400,&panel_font_20,TEXT);
+    line(box,20,50,398,1);
+    for(int i=0;look_with_colours&&i<PANEL_LED_COLOURS;i++){
+        if(i==0)text_at(box,panel_text(TXT_LED_COLOUR),20,LOOK_TOP,400,&panel_font_14,MUTED);
+        lv_obj_t *b=button(box,"",20+(i%3)*136,LOOK_TOP+24+(i/3)*54,128,46,look_pick,i);
+        lv_obj_set_style_outline_color(b,lv_color_hex(BLUE),0);
+        lv_obj_set_style_outline_pad(b,1,0);
+        uint32_t rgb=0;
+        panel_led_rgb(panel_led_colour(i),&rgb);
+        lv_obj_t *dot=panel(b,12,15,16,16,rgb,false);
+        lv_obj_set_style_radius(dot,LV_RADIUS_CIRCLE,0);
+        lv_obj_set_style_border_width(dot,1,0);lv_obj_set_style_border_color(dot,lv_color_hex(MUTED),0);
+        lv_obj_remove_flag(dot,LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t *name=text_at(b,panel_text(panel_led_colour_name(i)),36,
+                               (46-lv_font_get_line_height(&panel_font_16))/2-1,86,&panel_font_16,TEXT);
+        lv_obj_set_height(name,lv_font_get_line_height(&panel_font_16));
+        look_swatches[i]=b;look_lit[i]=-1;
+    }
+    int y=LOOK_TOP+colours;
+    text_at(box,panel_text(TXT_LED_BRIGHTNESS),20,y,280,&panel_font_14,MUTED);
+    look_value=text_at(box,"",300,y,118,&panel_font_14,TEXT);
+    lv_obj_set_style_text_align(look_value,LV_TEXT_ALIGN_RIGHT,0);
+    look_slider=slider_with(box,29,y+34,0,100,panel_led_percent(look_level_shown(&last_state)),look_slid,0);
+    button(box,panel_text(TXT_LED_DONE),149,y+62,140,44,look_done,0);
+    look_show(&last_state);
+}
+/* The button shows only for a PC that can take the two. */
+static void look_clicked(lv_event_t *e)
+{
+    (void)e;
+    feedback();
+    look_open();
 }
 /* The page of the CPU: a button for each profile, and under them what runs.
  *
@@ -1761,6 +1997,21 @@ static void led_card(lv_obj_t *page,panel_led_mode_t m,int y)
     center_text(c->name);
     c->note=text_at(card,"",14,120,430,&panel_font_12,MUTED);
     center_text(c->note);
+    if(m!=PANEL_LED_DESKTOP)return;
+    /* Hidden until a scene that uses it. look_pill_show sets its width and
+     * what it holds. */
+    look_pill=button(card,"",14,113,LOOK_PAD*2,30,look_clicked,0);
+    lv_obj_set_style_radius(look_pill,15,0);
+    lv_obj_set_ext_click_area(look_pill,8);
+    lv_obj_add_flag(look_pill,LV_OBJ_FLAG_HIDDEN);
+    look_dot=panel(look_pill,LOOK_PAD,(30-2-LOOK_DOT)/2,LOOK_DOT,LOOK_DOT,TEXT,false);
+    lv_obj_set_style_radius(look_dot,LV_RADIUS_CIRCLE,0);
+    lv_obj_set_style_border_width(look_dot,1,0);lv_obj_set_style_border_color(look_dot,lv_color_hex(MUTED),0);
+    lv_obj_remove_flag(look_dot,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(look_dot,LV_OBJ_FLAG_HIDDEN);
+    look_words=text_at(look_pill,"",LOOK_PAD,(30-2-lv_font_get_line_height(&panel_font_14))/2,
+                       LV_SIZE_CONTENT,&panel_font_14,TEXT);
+    look_dot_rgb=-1;
 }
 /* What the timer shows: what is left in minutes and seconds, a second
  * rounded up, so a timer of five minutes starts at 05:00 and reaches 00:00
@@ -1897,6 +2148,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     // the language changes. Without it the new words are drawn over the old
     // ones. The pointers below are the ones that outlive a clean.
     lv_obj_clean(s);overlay=NULL;setup_screen=NULL;setup_text=NULL;sensor_layer=NULL;
+    look_layer=NULL;look_slider=NULL;look_value=NULL;
+    for(int i=0;i<PANEL_LED_COLOURS;i++)look_swatches[i]=NULL;
     /* The settings page is a child of this screen too, so the clean
      * above took it. Kept, its pointer is the reason that
      * panel_ui_settings_open returns at once and the page never opens
@@ -1915,6 +2168,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     /* The cards of the LED bar, and a choice that waits to go: a change
      * that the old screen made goes with it. */
     for(int m=0;m<PANEL_LED_MODES;m++)led_cards[m]=(led_card_t){.wanted=-1};
+    look_colour=look_level=(led_pick_t){.wanted=-1};
+    look_pill=NULL;look_dot=NULL;look_words=NULL;
     if(led_timer)lv_timer_pause(led_timer);
     for(int p=0;p<PANEL_CPU_PROFILES;p++){cpu_buttons[p]=NULL;cpu_lit[p]=-1;}
     cpu_running=NULL;cpu_driver_line=NULL;cpu_note=NULL;cpu_wanted=-1;cpu_refused=false;
@@ -2380,7 +2635,7 @@ void panel_ui_update(const panel_state_t *s)
     memcpy(&last_state,s,sizeof(*s));last_state_valid=true;
     if(sound_status)lv_label_set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
     if(s->setup){
-        settings_forget();pads_forget();pc_forget();sensor_close();self_forget();
+        settings_forget();pads_forget();pc_forget();sensor_close();look_close();self_forget();
         if(!setup_screen){
             if(overlay){lv_obj_delete(overlay);overlay=NULL;}
             setup_screen=panel(lv_screen_active(),0,0,480,480,BG,false);

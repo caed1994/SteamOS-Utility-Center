@@ -14,10 +14,15 @@
 // and render.RAINBOW_CHOICES. tests/test_panel_led.py holds the two lists
 // here equal to the two there, so an effect that the service learns is a
 // failing test until this file has it too.
+//
+// The page also sets the colour and the brightness of the desktop scenes.
+// The colours are the nine that the control panel offers, in its order:
+// companion.LED_COLOURS, which the same test holds equal to this list.
 #pragma once
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "panel_text.h"
 
@@ -25,6 +30,26 @@ typedef enum { PANEL_LED_DESKTOP, PANEL_LED_GAME, PANEL_LED_MODES } panel_led_mo
 
 /* The room for a key and its end. The longest is "temperature". */
 #define PANEL_LED_KEY 16
+
+/* How many colours the page offers, and the room for one and its end:
+ * "#rrggbb". */
+#define PANEL_LED_COLOURS 9
+#define PANEL_LED_COLOUR 8
+
+/* The keys of the colour and of the brightness in the status of the
+ * companion service and in a change: companion.LED_LOOK. */
+#define PANEL_LED_COLOUR_KEY "desktop_color"
+#define PANEL_LED_BRIGHTNESS_KEY "desktop_brightness"
+
+/* A change of the page: the key of the new effect of each mode, the new
+ * colour of the desktop scenes, and their new brightness from 0 to 255.
+ * An empty key or colour, and a brightness below nought, keep what the PC
+ * has. */
+typedef struct {
+    char effect[PANEL_LED_MODES][PANEL_LED_KEY];
+    char colour[PANEL_LED_COLOUR];
+    int brightness;
+} panel_led_change_t;
 
 /* How many effects the mode has. */
 int panel_led_count(panel_led_mode_t mode);
@@ -37,18 +62,38 @@ int panel_led_find(panel_led_mode_t mode, const char *key);
 /* The name of the effect at "index" on the screen. */
 panel_text_id_t panel_led_name(panel_led_mode_t mode, int index);
 /* Whether the effect at "index" draws in the desktop colour of the LED
- * service: desktop.SCENES_WITH_COLOUR. The panel does not set that colour,
- * and the page says where it comes from. */
+ * service: desktop.SCENES_WITH_COLOUR. */
 bool panel_led_coloured(panel_led_mode_t mode, int index);
+/* Whether the effect at "index" draws in the desktop brightness of the LED
+ * service: desktop.SCENES_LIT. Steam sets the brightness in Game Mode, so
+ * no effect of that list does. */
+bool panel_led_lit(panel_led_mode_t mode, int index);
 /* The effect "step" places from "index", round the ends of the list. An
  * index of -1 steps to the first effect, or to the last for a step back. */
 int panel_led_step(panel_led_mode_t mode, int index, int step);
 /* The name of a mode in the status of the companion service and in a
  * change: "desktop" and "game". companion.LED_CHOICES holds the same two. */
 const char *panel_led_mode_name(panel_led_mode_t mode);
+/* The colour at "index" as the service writes it, "#ff0000", or NULL for
+ * an index outside the list. */
+const char *panel_led_colour(int index);
+/* The place of a colour in the list, or -1 for a colour that is not in it:
+ * one that somebody wrote into the file of the service. */
+int panel_led_colour_find(const char *colour);
+/* The name of the colour at "index" on the screen. */
+panel_text_id_t panel_led_colour_name(int index);
+/* A colour "#rrggbb" as the number 0xRRGGBB. false, and nothing in "rgb",
+ * for a text that is no such colour. */
+bool panel_led_rgb(const char *colour, uint32_t *rgb);
+/* A brightness of the service, 0 to 255, as a per cent, and a per cent as
+ * a brightness. Each per cent comes back to itself through the two. */
+int panel_led_percent(int brightness);
+int panel_led_brightness(int percent);
 /* The body of a change for the companion service: a JSON object with the
- * key of each mode that has one, as {"desktop":"fire"}. An empty key is
- * left out. Answers the length, and nought for no key at all or for too
- * little room. The keys come from the lists above, which hold letters and
- * nothing to escape. */
-size_t panel_led_body(char *out, size_t room, const char keys[PANEL_LED_MODES][PANEL_LED_KEY]);
+ * key of each mode that has one, the colour and the brightness, as
+ * {"desktop":"breath","desktop_color":"#ff0000"}. What keeps the value of
+ * the PC is left out. Answers the length, and nought for nothing to send,
+ * for too little room, and for a colour that is no "#rrggbb" or a
+ * brightness above 255. The keys come from the lists above, which hold
+ * letters and nothing to escape. */
+size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change);

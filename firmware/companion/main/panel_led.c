@@ -2,39 +2,59 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "panel_led.h"
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
+/* An effect: its key, its name, and whether it draws in the desktop colour
+ * and in the desktop brightness. */
 typedef struct {
     const char *key;
     panel_text_id_t name;
     bool coloured;
+    bool lit;
 } effect_t;
 
 /* desktop.SCENES of the LED service, in its order. */
 static const effect_t desktop[] = {
-    {"steam", TXT_LED_STEAM, false},
-    {"off", TXT_LED_OFF, false},
-    {"color", TXT_LED_COLOR, true},
-    {"breath", TXT_LED_BREATH, true},
-    {"patrol", TXT_LED_PATROL, true},
-    {"rainbow", TXT_LED_RAINBOW, false},
-    {"fire", TXT_LED_FIRE, false},
-    {"aurora", TXT_LED_AURORA, false},
-    {"ooze", TXT_LED_OOZE, false},
-    {"temperature", TXT_LED_TEMPERATURE, false},
-    {"load", TXT_LED_LOAD, false},
+    {"steam", TXT_LED_STEAM, false, false},
+    {"off", TXT_LED_OFF, false, false},
+    {"color", TXT_LED_COLOR, true, true},
+    {"breath", TXT_LED_BREATH, true, true},
+    {"patrol", TXT_LED_PATROL, true, true},
+    {"rainbow", TXT_LED_RAINBOW, false, true},
+    {"fire", TXT_LED_FIRE, false, true},
+    {"aurora", TXT_LED_AURORA, false, true},
+    {"ooze", TXT_LED_OOZE, false, true},
+    {"temperature", TXT_LED_TEMPERATURE, false, true},
+    {"load", TXT_LED_LOAD, false, false},
 };
 
 /* render.RAINBOW_CHOICES of the LED service, in its order. */
 static const effect_t game[] = {
-    {"rainbow", TXT_LED_RAINBOW, false},
-    {"temperature", TXT_LED_TEMPERATURE, false},
-    {"load", TXT_LED_LOAD, false},
-    {"fire", TXT_LED_FIRE, false},
-    {"aurora", TXT_LED_AURORA, false},
-    {"ooze", TXT_LED_OOZE, false},
+    {"rainbow", TXT_LED_RAINBOW, false, false},
+    {"temperature", TXT_LED_TEMPERATURE, false, false},
+    {"load", TXT_LED_LOAD, false, false},
+    {"fire", TXT_LED_FIRE, false, false},
+    {"aurora", TXT_LED_AURORA, false, false},
+    {"ooze", TXT_LED_OOZE, false, false},
+};
+
+/* companion.LED_COLOURS, in its order. */
+static const struct {
+    const char *key;
+    panel_text_id_t name;
+} colours[PANEL_LED_COLOURS] = {
+    {"#ff0000", TXT_COLOUR_RED},
+    {"#ff8000", TXT_COLOUR_ORANGE},
+    {"#ffff00", TXT_COLOUR_YELLOW},
+    {"#00ff00", TXT_COLOUR_GREEN},
+    {"#00ffff", TXT_COLOUR_CYAN},
+    {"#0000ff", TXT_COLOUR_BLUE},
+    {"#8000ff", TXT_COLOUR_PURPLE},
+    {"#ff00ff", TXT_COLOUR_MAGENTA},
+    {"#ffffff", TXT_COLOUR_WHITE},
 };
 
 static const effect_t *effects(panel_led_mode_t mode, int *count)
@@ -91,6 +111,13 @@ bool panel_led_coloured(panel_led_mode_t mode, int index)
     return index >= 0 && index < count && list[index].coloured;
 }
 
+bool panel_led_lit(panel_led_mode_t mode, int index)
+{
+    int count;
+    const effect_t *list = effects(mode, &count);
+    return index >= 0 && index < count && list[index].lit;
+}
+
 int panel_led_step(panel_led_mode_t mode, int index, int step)
 {
     int count = panel_led_count(mode);
@@ -105,17 +132,94 @@ const char *panel_led_mode_name(panel_led_mode_t mode)
     return mode >= 0 && mode < PANEL_LED_MODES ? names[mode] : NULL;
 }
 
-size_t panel_led_body(char *out, size_t room, const char keys[PANEL_LED_MODES][PANEL_LED_KEY])
+const char *panel_led_colour(int index)
 {
-    if (!out || room < 3) return 0;
+    return index >= 0 && index < PANEL_LED_COLOURS ? colours[index].key : NULL;
+}
+
+int panel_led_colour_find(const char *colour)
+{
+    for (int i = 0; colour && i < PANEL_LED_COLOURS; i++)
+        if (strcmp(colours[i].key, colour) == 0) return i;
+    return -1;
+}
+
+panel_text_id_t panel_led_colour_name(int index)
+{
+    return index >= 0 && index < PANEL_LED_COLOURS ? colours[index].name : TXT_COLOUR_OWN;
+}
+
+bool panel_led_rgb(const char *colour, uint32_t *rgb)
+{
+    if (!colour || colour[0] != '#' || strlen(colour) != 7) return false;
+    uint32_t value = 0;
+    for (int i = 1; i < 7; i++) {
+        char c = colour[i];
+        int digit = c >= '0' && c <= '9' ? c - '0'
+                  : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                  : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+        if (digit < 0) return false;
+        value = value << 4 | (uint32_t)digit;
+    }
+    if (rgb) *rgb = value;
+    return true;
+}
+
+int panel_led_percent(int brightness)
+{
+    if (brightness < 0) brightness = 0;
+    if (brightness > 255) brightness = 255;
+    return (brightness * 100 + 127) / 255;
+}
+
+int panel_led_brightness(int percent)
+{
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    return (percent * 255 + 50) / 100;
+}
+
+/* One more field of a body at "*at", after a comma where a field stands
+ * before it. false when the room ends. A field ends before the last byte
+ * of the room, so the comma always has a place, and the field after it
+ * does not fit when the comma takes that byte. */
+static bool add(char *out, size_t room, size_t *at, const char *format, ...)
+{
+    if (*at > 1) out[(*at)++] = ',';
+    va_list args;
+    va_start(args, format);
+    int wrote = vsnprintf(out + *at, room - *at, format, args);
+    va_end(args);
+    if (wrote < 0 || (size_t)wrote >= room - *at) return false;
+    *at += (size_t)wrote;
+    return true;
+}
+
+size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
+{
+    if (!out || room == 0) return 0;
+    out[0] = 0;
+    if (!change || room < 3) return 0;
+    /* What goes into the object between quotes or as a number must be what
+     * the service reads, so a body is never half an object. */
+    if (change->colour[0] && !panel_led_rgb(change->colour, NULL)) return 0;
+    if (change->brightness > 255) return 0;
     size_t at = 0;
     out[at++] = '{';
     for (int mode = 0; mode < PANEL_LED_MODES; mode++) {
-        if (!keys[mode][0]) continue;
-        int wrote = snprintf(out + at, room - at, "%s\"%s\":\"%s\"", at > 1 ? "," : "",
-                             panel_led_mode_name((panel_led_mode_t)mode), keys[mode]);
-        if (wrote < 0 || (size_t)wrote >= room - at) { out[0] = 0; return 0; }
-        at += (size_t)wrote;
+        if (!change->effect[mode][0]) continue;
+        if (!add(out, room, &at, "\"%s\":\"%s\"", panel_led_mode_name((panel_led_mode_t)mode),
+                 change->effect[mode])) { out[0] = 0; return 0; }
+    }
+    if (change->colour[0]
+        && !add(out, room, &at, "\"%s\":\"%s\"", PANEL_LED_COLOUR_KEY, change->colour)) {
+        out[0] = 0;
+        return 0;
+    }
+    if (change->brightness >= 0
+        && !add(out, room, &at, "\"%s\":%d", PANEL_LED_BRIGHTNESS_KEY, change->brightness)) {
+        out[0] = 0;
+        return 0;
     }
     if (at == 1 || at + 2 > room) { out[0] = 0; return 0; }
     out[at++] = '}';

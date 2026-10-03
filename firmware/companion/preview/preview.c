@@ -214,20 +214,36 @@ int main(int argc,char **argv)
         }
     }
     /* The sixth page. "led" is the board's machine on the desktop,
-     * "led-colour" an effect in the desktop colour, "led-none" a PC with no
-     * LED module, "led-applying" a tap that waits to go, and "led-refused"
-     * a change the PC refused for want of the sudo rule. */
+     * "led-colour" an effect in the desktop colour, "led-old" the same from
+     * a service that sends no colour, "led-look" the layer of the colour and
+     * the brightness, "led-look-fire" that layer for a scene with colours of
+     * its own, "led-none" a PC with no LED module, "led-applying" a tap that
+     * waits to go, and "led-refused" a change the PC refused for want of the
+     * sudo rule. */
     if(argc>2&&strncmp(argv[2],"led",3)==0){
+        bool fire=strcmp(argv[2],"led-look-fire")==0;
+        bool coloured=strcmp(argv[2],"led-colour")==0||strcmp(argv[2],"led-old")==0
+                      ||strcmp(argv[2],"led-look")==0;
         s.led_known=true;
         s.led_here=strcmp(argv[2],"led-none")!=0;
+        s.led_look=strcmp(argv[2],"led-old")!=0;
+        snprintf(s.led_colour,sizeof s.led_colour,"#ff8000");
+        s.led_brightness=128;
         snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"%s",
-                 strcmp(argv[2],"led-colour")==0?"breath":"aurora");
+                 coloured?"breath":fire?"fire":"aurora");
         snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"fire");
         panel_ui_update(&s);
         lv_obj_t *band=band_in(lv_screen_active());
         if(band){
             lv_obj_update_layout(band);
             lv_obj_scroll_to_view(lv_obj_get_child(band,PANEL_PAGE_LED),LV_ANIM_OFF);
+        }
+        if(strncmp(argv[2],"led-look",8)==0){
+            char said[48];
+            if(fire)snprintf(said,sizeof said,"%s %d %%",panel_text(TXT_LED_BRIGHTNESS),50);
+            else snprintf(said,sizeof said,"%s • %d %%",panel_text(TXT_COLOUR_ORANGE),50);
+            lv_obj_t *pill=find_label(lv_screen_active(),said);
+            if(pill)lv_obj_send_event(lv_obj_get_parent(pill),LV_EVENT_CLICKED,NULL);
         }
         bool applying=strcmp(argv[2],"led-applying")==0,refused=strcmp(argv[2],"led-refused")==0;
         if(applying||refused){

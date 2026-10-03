@@ -288,6 +288,19 @@
     X(TXT_LED_OOZE,        "Ooze",                  "Schleim") \
     X(TXT_LED_TEMPERATURE, "Temperature",           "Temperatur") \
     X(TXT_LED_LOAD,        "CPU and GPU load",      "CPU- und GPU-Last") \
+    X(TXT_LED_COLOUR,      "Colour",                "Farbe") \
+    X(TXT_LED_BRIGHTNESS,  "Brightness",            "Helligkeit") \
+    X(TXT_LED_DONE,        "Done",                  "Fertig") \
+    X(TXT_COLOUR_RED,      "Red",                   "Rot") \
+    X(TXT_COLOUR_ORANGE,   "Orange",                "Orange") \
+    X(TXT_COLOUR_YELLOW,   "Yellow",                "Gelb") \
+    X(TXT_COLOUR_GREEN,    "Green",                 "Grün") \
+    X(TXT_COLOUR_CYAN,     "Cyan",                  "Cyan") \
+    X(TXT_COLOUR_BLUE,     "Blue",                  "Blau") \
+    X(TXT_COLOUR_PURPLE,   "Purple",                "Lila") \
+    X(TXT_COLOUR_MAGENTA,  "Magenta",               "Magenta") \
+    X(TXT_COLOUR_WHITE,    "White",                 "Weiß") \
+    X(TXT_COLOUR_OWN,      "Own colour",            "Eigene Farbe") \
     X(TXT_CPU_TITLE,       "CPU energy profile",    "CPU-Energieprofil") \
     X(TXT_CPU_POWERSAVE,   "Power saving",          "Sparsam") \
     X(TXT_CPU_BALANCED,    "Balanced",              "Ausgewogen") \

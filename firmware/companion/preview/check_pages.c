@@ -22,12 +22,17 @@ static int saved_value,saved_count;
 static void setting(panel_setting_t k,int v,bool save){if(save){saved_key=k;saved_value=v;saved_count++;}}
 static void sound(int volume){(void)volume;}
 // The changes of the page of the LED bar, as main.c gets them.
+static lv_obj_t *slider_at_place(lv_obj_t *root,int *skip);
 static unsigned led_changes;
 static char led_last[PANEL_LED_MODES][PANEL_LED_KEY];
-static void led_change(const char *const effect[PANEL_LED_MODES])
+static char led_last_colour[PANEL_LED_COLOUR];
+static int led_last_brightness=-1;
+static void led_change(const panel_led_change_t *change)
 {
     led_changes++;
-    for(int m=0;m<PANEL_LED_MODES;m++)snprintf(led_last[m],PANEL_LED_KEY,"%s",effect[m]?effect[m]:"");
+    for(int m=0;m<PANEL_LED_MODES;m++)snprintf(led_last[m],PANEL_LED_KEY,"%s",change->effect[m]);
+    snprintf(led_last_colour,sizeof led_last_colour,"%s",change->colour);
+    led_last_brightness=change->brightness;
 }
 // The profiles of the page of the CPU, as main.c gets them.
 static unsigned cpu_changes;
@@ -123,6 +128,58 @@ static lv_obj_t *cpu_button(lv_obj_t *page,int profile)
 static bool cpu_lit_one(lv_obj_t *button,lv_color_t dark)
 {
     return !lv_color_eq(lv_obj_get_style_bg_color(button,0),dark);
+}
+// The layer of the colour and the brightness, or NULL when it is closed:
+// the one object on the screen with the name of a colour on it.
+static lv_obj_t *look_layer_of(void)
+{
+    lv_obj_t *found=label(lv_screen_active(),panel_text(TXT_LED_DONE));
+    if(!found)return NULL;
+    lv_obj_t *layer=found;
+    while(lv_obj_get_parent(layer)!=lv_screen_active())layer=lv_obj_get_parent(layer);
+    return layer;
+}
+// The button of a colour in that layer, and whether it is the chosen one:
+// the chosen colour has a blue outline.
+static lv_obj_t *swatch(lv_obj_t *layer,int colour)
+{
+    lv_obj_t *name=label(layer,panel_text(panel_led_colour_name(colour)));
+    return name?lv_obj_get_parent(name):NULL;
+}
+static bool swatch_chosen(lv_obj_t *layer,int colour)
+{
+    return lv_obj_get_style_outline_width(swatch(layer,colour),0)>0;
+}
+// The words of the button of the colour and the brightness, for a colour
+// and a per cent, or for the brightness alone. Two answers in turn have
+// rooms of their own, so one rule can compare two of them; a rule that
+// keeps one for longer copies it.
+static const char *look_words_for(panel_text_id_t colour,int percent,bool coloured)
+{
+    static char said[2][48];
+    static unsigned turn;
+    char *out=said[turn++%2];
+    if(coloured)snprintf(out,sizeof said[0],"%s • %d %%",panel_text(colour),percent);
+    else snprintf(out,sizeof said[0],"%s %d %%",panel_text(TXT_LED_BRIGHTNESS),percent);
+    return out;
+}
+// The dot of the colour in the button of the colour and the brightness:
+// the one child that is no label.
+static lv_obj_t *pill_dot(lv_obj_t *pill)
+{
+    for(unsigned i=0;i<lv_obj_get_child_count(pill);i++)
+        if(!lv_obj_check_type(lv_obj_get_child(pill,i),&lv_label_class))return lv_obj_get_child(pill,i);
+    return NULL;
+}
+// A move of the slider of the layer to a per cent, and the finger off it.
+static void look_slide(lv_obj_t *layer,int percent)
+{
+    int skip=0;
+    lv_obj_t *slider=slider_at_place(layer,&skip);
+    assert(slider);
+    lv_slider_set_value(slider,percent,LV_ANIM_OFF);
+    lv_obj_send_event(slider,LV_EVENT_VALUE_CHANGED,NULL);
+    lv_obj_send_event(slider,LV_EVENT_RELEASED,NULL);
 }
 // The card of the page of the LED bar for one mode, and its arrows.
 static lv_obj_t *led_card_of(lv_obj_t *page,panel_led_mode_t mode)
@@ -2393,6 +2450,317 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
+    // The colour and the brightness of the desktop scenes: a button under
+    // the effect of the desktop, and a layer with the nine colours and a
+    // slider. A choice goes after the wait with the effects, and the page
+    // shows it until a status does, as it does for an effect.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_ui_led_use(led_change);
+        led_changes=0;
+        panel_state_t t=base();
+        t.led_known=t.led_here=t.led_look=true;
+        strcpy(t.led_effect[PANEL_LED_DESKTOP],"breath");
+        strcpy(t.led_effect[PANEL_LED_GAME],"fire");
+        strcpy(t.led_colour,"#ff0000");t.led_brightness=128;
+        panel_ui_update(&t);
+        lv_obj_t *page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_LED);
+        lv_obj_update_layout(page);
+        lv_obj_t *desktop=led_card_of(page,PANEL_LED_DESKTOP),*game=led_card_of(page,PANEL_LED_GAME);
+        // The button says the colour and the brightness in place of the line
+        // that said where the colour comes from. The card of Game Mode has
+        // none: Steam sets both there.
+        char red[48];
+        snprintf(red,sizeof red,"%s",look_words_for(TXT_COLOUR_RED,50,true));
+        assert(label(desktop,red)&&!label(desktop,panel_text(TXT_LED_COLOUR_WHAT)));
+        assert(!label(game,red)&&label(game,panel_text(TXT_LED_GAME_WHAT)));
+        // In the middle of the card, whole, and under the arrows.
+        {
+            lv_obj_t *pill=lv_obj_get_parent(label(desktop,red));
+            lv_area_t at,card,left;
+            lv_obj_get_coords(pill,&at);lv_obj_get_coords(desktop,&card);
+            lv_obj_get_coords(button_with(desktop,LV_SYMBOL_LEFT),&left);
+            int32_t middle=(card.x1+card.x2)/2,pill_middle=(at.x1+at.x2)/2;
+            assert(pill_middle-middle<=1&&middle-pill_middle<=1);
+            assert(at.y1>left.y2&&at.y2<card.y2&&at.x1>card.x1&&at.x2<card.x2);
+            lv_point_t size;
+            lv_text_get_size(&size,red,&panel_font_14,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+            assert(lv_obj_get_width(label(desktop,red))>=size.x);
+        }
+        // A tap opens the layer: the nine colours, red chosen, the slider at
+        // the brightness of the PC.
+        assert(!look_layer_of());
+        click_in(desktop,red);
+        lv_obj_t *layer=look_layer_of();
+        assert(layer&&label(layer,panel_text(TXT_LED_COLOUR))&&label(layer,"50 %"));
+        for(int i=0;i<PANEL_LED_COLOURS;i++){
+            assert(swatch(layer,i));
+            assert(swatch_chosen(layer,i)==(i==0));
+        }
+        {
+            int skip=0;
+            assert(lv_slider_get_value(slider_at_place(layer,&skip))==50);
+        }
+        // A colour is chosen at once, and goes after the wait, alone.
+        lv_obj_send_event(swatch(layer,5),LV_EVENT_CLICKED,NULL);
+        assert(swatch_chosen(layer,5)&&!swatch_chosen(layer,0));
+        assert(led_changes==0&&label(desktop,panel_text(TXT_CHANGE_APPLYING)));
+        led_wait(1600);
+        assert(led_changes==1&&strcmp(led_last_colour,"#0000ff")==0&&led_last_brightness<0);
+        assert(!led_last[PANEL_LED_DESKTOP][0]&&!led_last[PANEL_LED_GAME][0]);
+        // The answer, and a status from before it: still the choice.
+        t.led_replies++;t.led_code=200;
+        panel_ui_update(&t);
+        assert(swatch_chosen(layer,5)&&label(desktop,panel_text(TXT_CHANGE_APPLYING)));
+        // The status that shows it ends it.
+        strcpy(t.led_colour,"#0000ff");t.answers++;
+        panel_ui_update(&t);
+        assert(label(desktop,look_words_for(TXT_COLOUR_BLUE,50,true)));
+        assert(!label(desktop,panel_text(TXT_CHANGE_APPLYING)));
+        // The slider says its per cent while it moves, and sends nothing
+        // until the finger is off. Then its brightness goes after the wait.
+        {
+            int skip=0;
+            lv_obj_t *slider=slider_at_place(layer,&skip);
+            lv_slider_set_value(slider,70,LV_ANIM_OFF);
+            lv_obj_send_event(slider,LV_EVENT_VALUE_CHANGED,NULL);
+            assert(label(layer,"70 %"));
+            led_wait(1600);
+            assert(led_changes==1);
+        }
+        look_slide(layer,80);
+        assert(label(layer,"80 %"));
+        led_wait(1600);
+        assert(led_changes==2&&led_last_brightness==panel_led_brightness(80)&&!led_last_colour[0]);
+        t.led_brightness=panel_led_brightness(80);t.led_replies++;t.answers++;
+        panel_ui_update(&t);
+        assert(label(desktop,look_words_for(TXT_COLOUR_BLUE,80,true)));
+        // A second choice while the first is on its way goes too.
+        lv_obj_send_event(swatch(layer,3),LV_EVENT_CLICKED,NULL);
+        led_wait(1600);
+        assert(led_changes==3&&strcmp(led_last_colour,"#00ff00")==0);
+        lv_obj_send_event(swatch(layer,4),LV_EVENT_CLICKED,NULL);
+        led_wait(1600);
+        assert(led_changes==4&&strcmp(led_last_colour,"#00ffff")==0);
+        t.led_replies+=2;strcpy(t.led_colour,"#00ffff");t.answers++;
+        panel_ui_update(&t);
+        assert(swatch_chosen(layer,4)&&!label(desktop,panel_text(TXT_CHANGE_APPLYING)));
+        // Blue again, from the control panel.
+        strcpy(t.led_colour,"#0000ff");t.answers++;
+        panel_ui_update(&t);
+        // Two choices in quick turn go as one change, and a refusal takes
+        // both back and says why on the card of the desktop.
+        lv_obj_send_event(swatch(layer,3),LV_EVENT_CLICKED,NULL);
+        look_slide(layer,30);
+        led_wait(1600);
+        assert(led_changes==5&&strcmp(led_last_colour,"#00ff00")==0&&led_last_brightness==panel_led_brightness(30));
+        t.led_replies++;t.led_code=403;
+        panel_ui_update(&t);
+        assert(swatch_chosen(layer,5)&&!swatch_chosen(layer,3)&&label(layer,"80 %"));
+        {
+            int skip=0;
+            assert(lv_slider_get_value(slider_at_place(layer,&skip))==80);
+        }
+        assert(label(desktop,panel_text(TXT_CHANGE_NO_RULE)));
+        // A new choice takes the reason away, and the reason does not come
+        // back once the PC shows the choice.
+        lv_obj_send_event(swatch(layer,8),LV_EVENT_CLICKED,NULL);
+        assert(!label(desktop,panel_text(TXT_CHANGE_NO_RULE)));
+        led_wait(1600);
+        assert(led_changes==6&&strcmp(led_last_colour,"#ffffff")==0);
+        t.led_replies++;t.led_code=200;strcpy(t.led_colour,"#ffffff");t.answers++;
+        panel_ui_update(&t);
+        assert(!label(desktop,panel_text(TXT_CHANGE_NO_RULE)));
+        assert(label(desktop,look_words_for(TXT_COLOUR_WHITE,80,true)));
+        strcpy(t.led_colour,"#0000ff");t.answers++;
+        panel_ui_update(&t);
+        // The colour and the brightness of the PC are no change.
+        lv_obj_send_event(swatch(layer,5),LV_EVENT_CLICKED,NULL);
+        look_slide(layer,80);
+        led_wait(1600);
+        assert(led_changes==6);
+        // A choice that no status shows in time goes back.
+        lv_obj_send_event(swatch(layer,1),LV_EVENT_CLICKED,NULL);
+        led_wait(1600);
+        assert(led_changes==7&&strcmp(led_last_colour,"#ff8000")==0);
+        lv_tick_inc(21000);
+        t.answers++;
+        panel_ui_update(&t);
+        assert(swatch_chosen(layer,5)&&!label(desktop,panel_text(TXT_CHANGE_APPLYING)));
+        // A brightness too.
+        look_slide(layer,60);
+        led_wait(1600);
+        assert(led_changes==8&&led_last_brightness==panel_led_brightness(60));
+        lv_tick_inc(21000);
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(layer,"80 %")&&!label(desktop,panel_text(TXT_CHANGE_APPLYING)));
+        {
+            int skip=0;
+            assert(lv_slider_get_value(slider_at_place(layer,&skip))==80);
+        }
+        // Done closes the layer, and so does a tap beside the box.
+        click_in(layer,panel_text(TXT_LED_DONE));
+        assert(!look_layer_of());
+        const char *blue=look_words_for(TXT_COLOUR_BLUE,80,true);
+        lv_obj_t *pill=lv_obj_get_parent(label(desktop,blue));
+        lv_obj_send_event(pill,LV_EVENT_CLICKED,NULL);
+        layer=look_layer_of();
+        assert(layer);
+        lv_obj_send_event(layer,LV_EVENT_CLICKED,NULL);
+        assert(!look_layer_of());
+        // One layer at a time: the choice of a sensor and this one keep
+        // each other closed.
+        {
+            t.cpu_temp=53;t.answers++;
+            panel_ui_update(&t);
+            lv_obj_t *tile=lv_obj_get_parent(label(lv_screen_active(),"53 °C"));
+            lv_obj_send_event(tile,LV_EVENT_CLICKED,NULL);
+            lv_obj_t *title=label(lv_screen_active(),panel_text(TXT_CPU_TEMPERATURE));
+            assert(title);
+            lv_obj_send_event(pill,LV_EVENT_CLICKED,NULL);
+            assert(!look_layer_of());
+            lv_obj_t *menu=title;
+            while(lv_obj_get_parent(menu)!=lv_screen_active())menu=lv_obj_get_parent(menu);
+            lv_obj_send_event(menu,LV_EVENT_CLICKED,NULL);
+            assert(!label(lv_screen_active(),panel_text(TXT_CPU_TEMPERATURE)));
+            lv_obj_send_event(pill,LV_EVENT_CLICKED,NULL);
+            assert(look_layer_of());
+            lv_obj_send_event(tile,LV_EVENT_CLICKED,NULL);
+            assert(!label(lv_screen_active(),panel_text(TXT_CPU_TEMPERATURE)));
+        }
+        // A new screen, as after a change of the language, starts with no
+        // choice of its own, and with no layer.
+        layer=look_layer_of();
+        lv_obj_send_event(swatch(layer,2),LV_EVENT_CLICKED,NULL);
+        assert(label(desktop,panel_text(TXT_CHANGE_APPLYING)));
+        panel_ui_create(action,setting,sound,&english);
+        panel_ui_update(&t);
+        page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_LED);
+        lv_obj_update_layout(page);
+        desktop=led_card_of(page,PANEL_LED_DESKTOP);
+        assert(!look_layer_of()&&!label(desktop,panel_text(TXT_CHANGE_APPLYING)));
+        assert(label(desktop,look_words_for(TXT_COLOUR_BLUE,80,true)));
+        led_wait(1600);
+        assert(led_changes==8);
+        // A scene that makes its own colours has the brightness alone.
+        strcpy(t.led_effect[PANEL_LED_DESKTOP],"fire");t.answers++;
+        panel_ui_update(&t);
+        char level[48];
+        snprintf(level,sizeof level,"%s",look_words_for(TXT_COLOUR_OWN,80,false));
+        assert(label(desktop,level));
+        click_in(desktop,level);
+        layer=look_layer_of();
+        assert(layer&&!label(layer,panel_text(TXT_LED_COLOUR))&&!swatch(layer,0)&&label(layer,"80 %"));
+        // A status with a scene that takes the colour closes that layer:
+        // it has no colours to choose.
+        strcpy(t.led_effect[PANEL_LED_DESKTOP],"patrol");t.answers++;
+        panel_ui_update(&t);
+        assert(!look_layer_of()&&label(desktop,look_words_for(TXT_COLOUR_BLUE,80,true)));
+        // A scene that uses neither has no button.
+        static const char *const plain[]={"steam","off","load"};
+        for(unsigned i=0;i<sizeof plain/sizeof *plain;i++){
+            strcpy(t.led_effect[PANEL_LED_DESKTOP],plain[i]);t.answers++;
+            panel_ui_update(&t);
+            assert(!label(desktop,look_words_for(TXT_COLOUR_BLUE,80,true))&&!label(desktop,level));
+        }
+        // A colour from the file that is not in the list: its own dot, its
+        // own name, and no colour chosen in the layer.
+        strcpy(t.led_effect[PANEL_LED_DESKTOP],"color");strcpy(t.led_colour,"#25d366");t.answers++;
+        panel_ui_update(&t);
+        char own[48];
+        snprintf(own,sizeof own,"%s",look_words_for(TXT_COLOUR_OWN,80,true));
+        assert(label(desktop,own));
+        {
+            lv_obj_t *dot=pill_dot(lv_obj_get_parent(label(desktop,own)));
+            assert(dot&&!lv_obj_has_flag(dot,LV_OBJ_FLAG_HIDDEN));
+            assert(lv_color_eq(lv_obj_get_style_bg_color(dot,0),lv_color_hex(0x25D366)));
+        }
+        click_in(desktop,own);
+        layer=look_layer_of();
+        for(int i=0;i<PANEL_LED_COLOURS;i++)assert(!swatch_chosen(layer,i));
+        // A PC that goes closes the layer and the button.
+        t.online=false;
+        panel_ui_update(&t);
+        assert(!look_layer_of()&&!label(desktop,own));
+        unsigned before=led_changes;
+        // A service of the PC older than this firmware: no button, and the
+        // line that says where the colour comes from.
+        t.online=true;t.led_look=false;t.answers++;
+        panel_ui_update(&t);
+        assert(!label(desktop,own)&&label(desktop,panel_text(TXT_LED_COLOUR_WHAT)));
+        assert(led_changes==before);
+        // That line is for a PC that answers.
+        t.online=false;
+        panel_ui_update(&t);
+        assert(!label(desktop,panel_text(TXT_LED_COLOUR_WHAT)));
+        t.online=true;
+        lv_refr_now(screen);
+        assert(complaints==0);
+        // The start of setup closes the layer: the screen of setup goes over
+        // everything, and a layer under it would come back after it.
+        t.led_look=true;t.answers++;
+        panel_ui_update(&t);
+        click_in(desktop,own);
+        assert(look_layer_of());
+        t.setup=true;
+        panel_ui_update(&t);
+        assert(!look_layer_of());
+        t.setup=false;
+        // A first button with the brightness alone has no dot.
+        panel_ui_create(action,setting,sound,&english);
+        strcpy(t.led_effect[PANEL_LED_DESKTOP],"fire");t.answers++;
+        panel_ui_update(&t);
+        page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_LED);
+        desktop=led_card_of(page,PANEL_LED_DESKTOP);
+        {
+            lv_obj_t *words=label(desktop,look_words_for(TXT_COLOUR_OWN,80,false));
+            assert(words);
+            lv_obj_t *dot=pill_dot(lv_obj_get_parent(words));
+            assert(dot&&lv_obj_has_flag(dot,LV_OBJ_FLAG_HIDDEN));
+        }
+        strcpy(t.led_effect[PANEL_LED_DESKTOP],"color");
+        // Each name whole in its button, and the button whole in the card,
+        // for every colour at the widest per cent, in both languages.
+        for(int language=0;language<2;language++){
+            panel_settings_t in_it=english;in_it.language=language?PANEL_GERMAN:PANEL_ENGLISH;
+            panel_ui_create(action,setting,sound,&in_it);
+            page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_LED);
+            desktop=led_card_of(page,PANEL_LED_DESKTOP);
+            t.led_look=true;t.led_brightness=255;
+            for(int i=-1;i<PANEL_LED_COLOURS;i++){
+                strcpy(t.led_colour,i<0?"#25d366":panel_led_colour(i));t.answers++;
+                panel_ui_update(&t);
+                lv_obj_update_layout(page);
+                lv_obj_t *words=label(desktop,look_words_for(panel_led_colour_name(i),100,true));
+                assert(words);
+                lv_area_t at,card;
+                lv_obj_get_coords(lv_obj_get_parent(words),&at);lv_obj_get_coords(desktop,&card);
+                assert(at.x1>card.x1+8&&at.x2<card.x2-8);
+                lv_point_t size;
+                lv_text_get_size(&size,lv_label_get_text(words),&panel_font_14,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+                assert(lv_obj_get_width(words)>=size.x);
+            }
+            click_in(desktop,look_words_for(TXT_COLOUR_WHITE,100,true));
+            layer=look_layer_of();
+            lv_obj_update_layout(layer);
+            for(int i=0;i<PANEL_LED_COLOURS;i++){
+                lv_obj_t *name=label(layer,panel_text(panel_led_colour_name(i)));
+                lv_point_t size;
+                lv_text_get_size(&size,lv_label_get_text(name),&panel_font_16,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+                assert(size.x<=lv_obj_get_width(name));
+                lv_area_t at,inside;
+                lv_obj_get_coords(name,&at);lv_obj_get_coords(swatch(layer,i),&inside);
+                assert(at.x2<inside.x2&&at.y2<inside.y2);
+            }
+            lv_point_t size;
+            lv_text_get_size(&size,panel_text(TXT_LED_DESKTOP),&panel_font_20,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+            assert(size.x<=400);
+        }
+        panel_ui_create(action,setting,sound,&english);
+    }
+
     puts("OK: seven pages that snap, in an order somebody can change, any of them "
          "but the last one hidden with an eye, the "
          "session and its target button, the "
@@ -2406,7 +2774,7 @@ int main(void)
          "of the temperatures, and the page of the panel with its update, "
          "its power chip in detail and its frames in movement, and the page "
          "of the card with its history and its Cooling Boost, the page of "
-         "the LED bar with the effect of each mode of the PC, and the page "
+         "the LED bar with the effect of each mode of the PC and the colour and the brightness of the desktop, and the page "
          "of the energy profile of its CPU.");
     return 0;
 }

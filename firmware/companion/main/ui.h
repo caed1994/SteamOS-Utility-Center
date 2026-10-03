@@ -213,11 +213,18 @@ typedef struct {
      * service names it, and the page shows "--" for a key that this
      * firmware does not know. See panel_led.h.
      *
+     * led_look is true when the status also has the colour and the
+     * brightness of the desktop scenes, which a service older than this
+     * firmware does not send: led_colour as "#rrggbb", and led_brightness
+     * from 0 to 255.
+     *
      * led_replies counts the answers to the changes of the page, and
      * led_code is the HTTP code of the last one, nought for no answer at
      * all. The page takes back a choice that the PC did not take. */
-    bool led_known, led_here;
+    bool led_known, led_here, led_look;
     char led_effect[PANEL_LED_MODES][PANEL_LED_KEY];
+    char led_colour[PANEL_LED_COLOUR];
+    int led_brightness;
     uint32_t led_replies;
     int led_code;
     /* The CPU of the PC, for its page, the same way. cpu_profile is the
@@ -266,10 +273,10 @@ typedef struct { int brightness, sound_volume; bool touch_tones;
 typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);
 void panel_ui_create(panel_action_cb_t callback, panel_setting_cb_t setting_cb, panel_sound_cb_t sound_cb, const panel_settings_t *settings);
-/* A change of the page of the LED bar: the key of the new effect of each
- * mode, or NULL for a mode that keeps its effect. main.c sends it to the
- * PC, and the answer comes back in led_replies and led_code. */
-typedef void (*panel_led_cb_t)(const char *const effect[PANEL_LED_MODES]);
+/* A change of the page of the LED bar: the new effects, colour and
+ * brightness, as panel_led.h says. main.c sends it to the PC, and the
+ * answer comes back in led_replies and led_code. */
+typedef void (*panel_led_cb_t)(const panel_led_change_t *change);
 /* Where those changes go. Set once; the page sends nothing without it. */
 void panel_ui_led_use(panel_led_cb_t callback);
 /* A profile from the page of the CPU, as panel_cpu.h counts them. main.c
