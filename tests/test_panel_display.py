@@ -632,7 +632,7 @@ class SleepClockTest(unittest.TestCase):
     def test_the_sleep_clock_is_lower_and_the_awake_one_is_where_it_was(self):
         # 12 MHz for the startup animation, whose 40 ms frames land on two
         # frames of the panel there, and 16 MHz after it, where a scroll
-        # frame of 29 ms lands on two frames of 16.9 ms.
+        # frame of 29 ms lands on two frames of 16.6 ms.
         self.assertEqual(self.number("PANEL_PCLK_BOOT_HZ"), 12000000)
         self.assertEqual(self.number("PANEL_PCLK_HZ"), 16000000)
         self.assertLessEqual(self.number("PANEL_PCLK_SLEEP_HZ") * 2,

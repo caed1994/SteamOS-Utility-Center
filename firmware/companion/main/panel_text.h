@@ -94,11 +94,13 @@
     X(TXT_SELF_CHARGER,    "CHARGER",               "LADEGERÄT") \
     X(TXT_SELF_MOTION,     "DISPLAY IN MOTION",     "ANZEIGE IN BEWEGUNG") \
     X(TXT_SELF_FPS,        "Frame rate",            "Bildrate") \
+    X(TXT_SELF_FPS_SAID,   "%d fps (%u frames)",    "%d fps (%u Bilder)") \
     X(TXT_SELF_INTERVAL,   "Frame interval",        "Bildabstand") \
     X(TXT_SELF_DRAW,       "Draw time",             "Zeichenzeit") \
-    X(TXT_SELF_FRAMES,     "Frames counted",        "Gezählte Bilder") \
-    X(TXT_SELF_MOTION_WHAT,"Mean / 95 % / most. Counted since this page was last closed.", \
-                           "Mittel / 95 % / Höchstwert. Gezählt seit dem letzten Schließen dieser Seite.") \
+    X(TXT_SELF_LEAD,       "Lead time",             "Vorlauf") \
+    X(TXT_SELF_PERIODS,    "Panel frames",          "Panelbilder") \
+    X(TXT_SELF_MOTION_WHAT,"Mean / 95 % / most; panel frames 1 / 2 / 3 / 4+. Since this page was last closed.", \
+                           "Mittel / 95 % / Höchstwert; Panelbilder 1 / 2 / 3 / 4+. Seit dem letzten Schließen dieser Seite.") \
     X(TXT_SELF_CHARGE_MA,  "Charge current",        "Ladestrom") \
     X(TXT_SELF_CHARGE_MV,  "Charge voltage",        "Ladeschluss") \
     X(TXT_SELF_INPUT_MA,   "Input limit",           "Eingangsgrenze") \

@@ -12,6 +12,7 @@
 #include "esp_heap_caps.h"
 #include "esp_app_desc.h"
 #include "panel_display.h"
+#include "panel_frames.h"
 #include "panel_power.h"
 #include "panel_battery.h"
 #include <string.h>
@@ -100,6 +101,9 @@ static QueueHandle_t actions;
 static QueueHandle_t sounds;
 static SemaphoreHandle_t lock;
 static panel_state_t state;
+/* The frames in movement for the health line, under lock as state is.
+ * Beside the state and not in it: see the end of panel_state_t. */
+static panel_frame_stats_t health_frames;
 static panel_config_t config;
 
 /* took_us is the time of the request, from the first byte out to the
@@ -400,12 +404,12 @@ static void ui_tick(lv_timer_t *timer)
     bool due=history&&panel_history_due(history,now_ms);
     if(atomic_load(&display_asleep)&&!due)return;
     /* The frames in movement, counted in this task by the events of the
-     * display. Into the state as well, for the health line of the network
-     * task. See panel_frames.h. */
+     * display, for the health line of the network task. See
+     * panel_frames.h. */
     panel_frame_stats_t frames;
     panel_frames_stats(&panel_frames,&frames);
     panel_state_t copy;
-    xSemaphoreTake(lock,portMAX_DELAY); state.frames=frames; copy=state; xSemaphoreGive(lock);
+    xSemaphoreTake(lock,portMAX_DELAY); health_frames=frames; copy=state; xSemaphoreGive(lock);
     if(due)panel_ui_history_tick(&copy,now_ms);
     if(atomic_load(&display_asleep))return;
     /* The time of day, read here and not kept in state: it is the clock of
@@ -1163,9 +1167,9 @@ static void network_task(void *arg)
             panel_clock_average(&clock_mhz,&clock_low);
             xSemaphoreTake(lock,portMAX_DELAY);
             bool wifi=state.wifi,online=state.online;
-            panel_frame_stats_t frames=state.frames;
+            panel_frame_stats_t frames=health_frames;
             xSemaphoreGive(lock);
-            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u internal_min=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d radio_rest=%d cpu_avg=%uMHz low=%u%% key_slowest=%ums frames=%u fps=%d gap=%d/%d/%dms draw=%d/%d/%dms",
+            ESP_LOGI("panel_health","up=%" PRIu32 "s ui_age=%" PRIu32 "ms heap=%u internal=%u internal_min=%u largest=%u min=%u net_stack=%u ui_stack=%u/%u wifi=%d pc=%d standby=%d radio_rest=%d cpu_avg=%uMHz low=%u%% key_slowest=%ums frames=%u fps=%d gap=%d/%d/%dms draw=%d/%d/%dms lead=%d/%d/%dms periods=%d/%d/%d/%d%%",
                 now_ms/1000,now_ms-atomic_load(&ui_heartbeat_ms),
                 (unsigned)esp_get_free_heap_size(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
@@ -1190,10 +1194,15 @@ static void network_task(void *arg)
                  * press did nothing. See panel_power.c. */
                 (unsigned)panel_power_slowest_read_ms(),
                 /* The frames in movement since the page of the panel was
-                 * last closed: mean, 95th percentile and most. */
+                 * last closed: mean, 95th percentile and most, and the
+                 * share that took one, two, three, and four or more
+                 * frames of the panel. */
                 (unsigned)frames.frames,frames.fps,
                 frames.interval_mean_ms,frames.interval_p95_ms,frames.interval_most_ms,
-                frames.draw_mean_ms,frames.draw_p95_ms,frames.draw_most_ms);
+                frames.draw_mean_ms,frames.draw_p95_ms,frames.draw_most_ms,
+                frames.lead_mean_ms,frames.lead_p95_ms,frames.lead_most_ms,
+                frames.periods_pct[0],frames.periods_pct[1],frames.periods_pct[2],
+                frames.periods_pct[3]);
         }
         panel_action_t action;
         if (xQueueReceive(actions,&action,pdMS_TO_TICKS(100))==pdTRUE) {

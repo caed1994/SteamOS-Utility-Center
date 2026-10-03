@@ -27,20 +27,20 @@ static bool is_asleep;
 /* The pixel clock of the display: in the startup animation, awake, and in
  * a sleep.
  *
- * 12 MHz is about 44 Hz on this panel, a frame every 22.5 ms, and 16 MHz,
- * the default of the board, is about 60 Hz, a frame every 16.9 ms. A flush
- * waits for the end of a frame, so what a frame of LVGL costs is a whole
- * number of them.
+ * 12 MHz is about 45 Hz on this panel, a frame every 22.1 ms, and 16 MHz,
+ * the default of the board, is about 60 Hz, a frame every 16.6 ms. See
+ * PANEL_FRAME_CLOCKS. A flush waits for the end of a frame, so what a
+ * frame of LVGL costs is a whole number of them.
  *
  * The startup animation holds each of its frames for 40 ms. That lands on
- * two frames at 12 MHz, 45 ms, and on three at 16 MHz, 50.7 ms, so it
+ * two frames at 12 MHz, 44.2 ms, and on three at 16 MHz, 49.7 ms, so it
  * plays at 12 MHz. See the long note in panel_display_start.
  *
  * A scroll is the other way round. The page of the panel measured 29 ms
- * of drawing for a frame of it. That is two frames at either clock, 45 ms
- * at 12 MHz and 33.8 ms at 16 MHz, so after the animation the panel runs
- * at 16 MHz. The scan-out takes a third more of PSRAM then, and the card of
- * the frames says what that costs the drawing.
+ * of drawing for a frame of it. That is two frames at either clock, 44.2
+ * ms at 12 MHz and 33.2 ms at 16 MHz, so after the animation the panel
+ * runs at 16 MHz. The scan-out takes a third more of PSRAM then, and the
+ * card of the frames says what that costs the drawing.
  *
  * In a sleep the screen shows
  * the black cover and nothing else, and the board still scans it out at
@@ -58,6 +58,26 @@ static esp_lcd_panel_handle_t panel_rgb;
 /* The clock of an awake panel: the one of the animation until it is over.
  * Read and written by the LVGL task alone. */
 static uint32_t pclk_awake=PANEL_PCLK_BOOT_HZ;
+
+/* The pixel clocks of a frame of the panel: 520 to a line and 510 lines,
+ * each with its pulse and porches. They are those of
+ * ST7701_480_480_PANEL_60HZ_RGB_TIMING, which the board support gives the
+ * panel: 480+10+10+20 by 480+10+10+10.
+ *
+ * The page of the panel agrees with them to the millisecond. At 16 MHz it
+ * read frame intervals of 66 and 99 ms, which are four and six frames of
+ * 16.58 ms, and at 12 MHz 66 and 88 ms, three and four of 22.1 ms. The
+ * notes before them said 16.9 and 22.5, read off the rough heaps of the
+ * startup animation.
+ *
+ * The count of the frames takes the frame of an awake panel, for the
+ * periods of each frame of a movement. A sleeping one shows nothing that
+ * moves. See panel_frames.h. */
+#define PANEL_FRAME_CLOCKS (520 * 510)
+static int64_t frame_us(uint32_t pclk_hz)
+{
+    return (int64_t)PANEL_FRAME_CLOCKS*1000000/pclk_hz;
+}
 
 /* The lowest brightness this board holds steady, in percent.
  *
@@ -253,6 +273,7 @@ lv_display_t *panel_display_start(void)
     /* The clock of the startup animation first. See PANEL_PCLK_HZ and
      * panel_display_boot_over. */
     ESP_ERROR_CHECK(esp_lcd_rgb_panel_set_pclk(panel,PANEL_PCLK_BOOT_HZ));
+    panel_frames_period(&panel_frames,frame_us(PANEL_PCLK_BOOT_HZ));
     panel_rgb=panel;
 
     /* LVGL draws into the panel's own frame buffers, and there are two.
@@ -314,17 +335,18 @@ lv_display_t *panel_display_start(void)
      *
      * The same numbers give the frame period of this panel, which nothing
      * on the board had ever said. Every gap fell into a heap at 45, 67 or
-     * 90 ms, and those are 22 to 23 apart. So a period is about 22.5 ms
-     * and the panel runs at about 44 Hz, which is what 12 MHz and the
-     * timings of this panel work out at.
+     * 90 ms, and those are 22 to 23 apart. So a period is about 22 ms and
+     * the panel runs at about 45 Hz. The timings of this panel work out
+     * at 22.1 ms at 12 MHz, and the card of the frames later read that to
+     * the millisecond. See PANEL_FRAME_CLOCKS.
      *
      * That also says where the floor is. A frame holds for 40 ms in the
      * file and a flush lands on a boundary, so the fastest a frame goes is
-     * two periods, or 45 ms. 51 is close to it. Reaching it asks the
+     * two periods, or 44.2 ms. 51 is close to it. Reaching it asks the
      * heaviest frames to do their work in under 5 ms, which a GIF decoder
      * at this size does not do. A faster pixel clock makes it worse
-     * rather than better: at 16 MHz a period is 16.9 ms, and 40 ms then
-     * lands on three of them, which is 50.7.
+     * rather than better: at 16 MHz a period is 16.6 ms, and 40 ms then
+     * lands on three of them, which is 49.7.
      *
      * avoid_tearing needs one of direct_mode and full_refresh. Without
      * either, esp_lvgl_port reaches the end of its chain and asks LVGL
@@ -520,6 +542,7 @@ void panel_display_boot_over(void)
 {
     if(pclk_awake==PANEL_PCLK_HZ)return;
     pclk_awake=PANEL_PCLK_HZ;
+    panel_frames_period(&panel_frames,frame_us(pclk_awake));
     /* A sleeping panel stays at the clock of the sleep, and its wake takes
      * this one. */
     if(panel_rgb && !is_asleep)esp_lcd_rgb_panel_set_pclk(panel_rgb,pclk_awake);

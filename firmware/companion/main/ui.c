@@ -7,6 +7,7 @@
 #include "lvgl.h"
 #include "ui.h"
 #include "icons.h"
+#include "panel_frames.h"
 #include "panel_text.h"
 #include "panel_ui_sleep.h"
 #include "panel_timer.h"
@@ -120,7 +121,7 @@ enum { SELF_VERSION, SELF_UPTIME, SELF_MEMORY,
        SELF_CHARGE, SELF_SUPPLY, SELF_VBAT, SELF_PHASE, SELF_VBUS,
        SELF_VSYS, SELF_DIE, SELF_HELD,
        SELF_CHARGE_MA, SELF_CHARGE_MV, SELF_INPUT_MA,
-       SELF_FPS, SELF_INTERVAL, SELF_DRAW, SELF_FRAMES, SELF_ROWS };
+       SELF_FPS, SELF_INTERVAL, SELF_DRAW, SELF_LEAD, SELF_PERIODS, SELF_ROWS };
 /* The phases of the charge in a row, as the power chip counts them: see
  * panel_power_detail_t. */
 _Static_assert(TXT_PHASE_IDLE==TXT_PHASE_TRICKLE+5,"the six phases of the charge in a row");
@@ -1150,19 +1151,6 @@ static void self_show(const panel_state_t *s)
         snprintf(said,sizeof said,"%u KB, PSRAM %u.%u MB",(unsigned)(self->heap_free/1024),
                  psram_mb,psram_tenth);
     self_say(SELF_MEMORY,self->heap_free?said:"");
-    /* The frames in movement: the mean, the 95th percentile and the most,
-     * in that order, which the line under the card says. */
-    const panel_frame_stats_t *frames=&s->frames;
-    snprintf(said,sizeof said,"%d fps",frames->fps);
-    self_say(SELF_FPS,frames->frames?said:"");
-    snprintf(said,sizeof said,"%d / %d / %d ms",frames->interval_mean_ms,
-             frames->interval_p95_ms,frames->interval_most_ms);
-    self_say(SELF_INTERVAL,frames->frames?said:"");
-    snprintf(said,sizeof said,"%d / %d / %d ms",frames->draw_mean_ms,
-             frames->draw_p95_ms,frames->draw_most_ms);
-    self_say(SELF_DRAW,frames->frames?said:"");
-    snprintf(said,sizeof said,"%u",(unsigned)frames->frames);
-    self_say(SELF_FRAMES,frames->frames?said:"");
     self_say(SELF_WIFI,self->ssid);
     if(self->rssi<0){snprintf(said,sizeof said,"%d dBm",self->rssi);self_say(SELF_SIGNAL,said);}
     else self_say(SELF_SIGNAL,"");
@@ -1202,6 +1190,34 @@ static void self_show(const panel_state_t *s)
     bool can=s->online&&update->offered[0]&&power;
     if(can)lv_obj_remove_state(update_button,LV_STATE_DISABLED);
     else lv_obj_add_state(update_button,LV_STATE_DISABLED);
+}
+/* The frames in movement, read off the count itself and not off the state:
+ * see the end of panel_state_t. Once, as the page opens. The page holds
+ * the count while it is open, so the numbers stay as they are.
+ *
+ * Each time row is the mean, the 95th percentile and the most, and the
+ * last row the share of the frames that took one, two, three, and four or
+ * more frames of the panel. The line under the card says both. */
+static void self_frames_show(void)
+{
+    panel_frame_stats_t frames;
+    panel_frames_stats(&panel_frames,&frames);
+    bool any=frames.frames>0;
+    char said[64];
+    snprintf(said,sizeof said,panel_text(TXT_SELF_FPS_SAID),frames.fps,(unsigned)frames.frames);
+    self_say(SELF_FPS,any?said:"");
+    snprintf(said,sizeof said,"%d / %d / %d ms",frames.interval_mean_ms,
+             frames.interval_p95_ms,frames.interval_most_ms);
+    self_say(SELF_INTERVAL,any?said:"");
+    snprintf(said,sizeof said,"%d / %d / %d ms",frames.draw_mean_ms,
+             frames.draw_p95_ms,frames.draw_most_ms);
+    self_say(SELF_DRAW,any?said:"");
+    snprintf(said,sizeof said,"%d / %d / %d ms",frames.lead_mean_ms,
+             frames.lead_p95_ms,frames.lead_most_ms);
+    self_say(SELF_LEAD,any?said:"");
+    const int *share=frames.periods_pct;
+    snprintf(said,sizeof said,"%d / %d / %d / %d %%",share[0],share[1],share[2],share[3]);
+    self_say(SELF_PERIODS,share[0]+share[1]+share[2]+share[3]?said:"");
 }
 static void update_clicked(lv_event_t *e){(void)e;feedback();panel_ui_confirm(PANEL_UPDATE);}
 static void self_close(lv_event_t *e){(void)e;feedback();self_forget();}
@@ -1259,11 +1275,12 @@ void panel_ui_self_open(void)
     lv_obj_set_style_text_color(update_button,lv_color_hex(BG),0);
     lv_obj_add_flag(update_card,LV_OBJ_FLAG_HIDDEN);
     /* The frames in movement, with a line under the rows that says what
-     * the three numbers are and since when they count. */
-    static const int motion[]={SELF_FPS,SELF_INTERVAL,SELF_DRAW,SELF_FRAMES};
-    static const panel_text_id_t motion_names[]={TXT_SELF_FPS,TXT_SELF_INTERVAL,TXT_SELF_DRAW,TXT_SELF_FRAMES};
-    lv_obj_t *motion_card=self_card(column,TXT_SELF_MOTION,motion,4,motion_names);
-    int32_t note_top=PC_TITLE_ROOM+4*PC_ROW_STEP;
+     * the numbers are and since when they count. */
+    static const int motion[]={SELF_FPS,SELF_INTERVAL,SELF_DRAW,SELF_LEAD,SELF_PERIODS};
+    static const panel_text_id_t motion_names[]={TXT_SELF_FPS,TXT_SELF_INTERVAL,TXT_SELF_DRAW,
+                                                 TXT_SELF_LEAD,TXT_SELF_PERIODS};
+    lv_obj_t *motion_card=self_card(column,TXT_SELF_MOTION,motion,5,motion_names);
+    int32_t note_top=PC_TITLE_ROOM+5*PC_ROW_STEP;
     lv_obj_t *note=text_at(motion_card,panel_text(TXT_SELF_MOTION_WHAT),18,note_top,404,&panel_font_12,MUTED);
     lv_label_set_long_mode(note,LV_LABEL_LONG_WRAP);
     lv_obj_set_height(motion_card,note_top+2*lv_font_get_line_height(&panel_font_12)+PC_CARD_END+4);
@@ -1283,6 +1300,7 @@ void panel_ui_self_open(void)
     /* What the page shows stays as it was while it is open: its own frames,
      * its scroll among them, are not the movement it reports. */
     panel_frames_hold(&panel_frames,true);
+    self_frames_show();
     if(last_state_valid)self_show(&last_state);
 }
 static void self_clicked(lv_event_t *e){(void)e;feedback();panel_ui_self_open();}

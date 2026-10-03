@@ -4,6 +4,7 @@
 #include <string.h>
 #include "lvgl.h"
 #include "ui.h"
+#include "panel_frames.h"
 static uint8_t pixels[480*480*4];
 static void flush(lv_display_t *display,const lv_area_t *area,uint8_t *data){(void)area;(void)data;lv_display_flush_ready(display);}
 /* The band is the one object that scrolls sideways and holds the pages. */
@@ -25,6 +26,28 @@ static lv_obj_t *find_label(lv_obj_t *root,const char *text)
     }
     return NULL;
 }
+/* The frames of a scroll at 16 MHz for the page of the panel, as its count
+ * takes them: 184 frames that took two, three, two and four frames of the
+ * panel in turn. */
+static void count_frames(void)
+{
+    static const int64_t frames[][3]={{2000,29000,33150},{3000,31000,49725},
+                                       {2000,30000,33150},{9000,45000,66300}};
+    panel_frames_reset(&panel_frames);
+    panel_frames_period(&panel_frames,16575);
+    int64_t shown=1000000;
+    panel_frames_begin(&panel_frames,shown-20000);
+    panel_frames_drawn(&panel_frames,shown-10000);
+    panel_frames_shown(&panel_frames,shown);
+    for(unsigned i=0;i<184;i++){
+        const int64_t *frame=frames[i%4];
+        panel_frames_begin(&panel_frames,shown+frame[0]);
+        panel_frames_drawn(&panel_frames,shown+frame[0]+frame[1]);
+        shown+=frame[2];
+        panel_frames_shown(&panel_frames,shown);
+    }
+}
+
 int main(int argc,char **argv)
 {
     lv_init();
@@ -77,11 +100,8 @@ int main(int argc,char **argv)
         .heap_least=98*1024};
     s.self=self;
     snprintf(s.update.offered,sizeof s.update.offered,"64-2b7f0c1");
-    /* The frames of a scroll, as the page of the panel counts them.
-     * "self-frames" shows them with no update in the way. */
-    s.frames=(panel_frame_stats_t){.frames=412,.fps=41,.interval_mean_ms=24,
-        .interval_p95_ms=45,.interval_most_ms=67,.draw_mean_ms=14,.draw_p95_ms=19,
-        .draw_most_ms=31};
+    /* "self-frames" shows the frames of a scroll with no update in the
+     * way. The page counts them itself: see count_frames. */
     if(argc>2&&strcmp(argv[2],"self-frames")==0)s.update.offered[0]=0;
     if(argc>2&&strcmp(argv[2],"self-failed")==0){
         s.update.phase=PANEL_UPDATE_FAILED;s.update.failure=TXT_UPDATE_BROKEN;
@@ -185,7 +205,7 @@ int main(int argc,char **argv)
         }
     }
     if(argc>2&&strcmp(argv[2],"pads")==0)panel_ui_pads_open();
-    if(argc>2&&strncmp(argv[2],"self",4)==0)panel_ui_self_open();
+    if(argc>2&&strncmp(argv[2],"self",4)==0){count_frames();panel_ui_self_open();}
     if(argc>2&&strstr(argv[2],"-menu")){
         const char *reading=strncmp(argv[2],"gpu",3)==0?"56 °C":"49 °C";
         lv_obj_t *value=find_label(lv_screen_active(),reading);

@@ -9,7 +9,12 @@
 //   hold <0|1>                      panel_frames_hold
 //   break                           panel_frames_break
 //   reset                           panel_frames_reset
-//   stats                           the numbers of the page, on one line
+//   period <us>                     panel_frames_period
+//   stats                           the numbers of the page, on one line:
+//                                   the frames, the rate, the interval,
+//                                   the draw time and the lead time (each
+//                                   mean, 95 % and most), and the shares
+//                                   of one to four and more periods
 #include <stdio.h>
 #include <string.h>
 
@@ -33,6 +38,8 @@ int main(void)
             panel_frames_drawn(&frames, a);
         } else if (sscanf(line, "shown %lld", &a) == 1) {
             panel_frames_shown(&frames, a);
+        } else if (sscanf(line, "period %lld", &a) == 1) {
+            panel_frames_period(&frames, a);
         } else if (sscanf(line, "hold %d", &on) == 1) {
             panel_frames_hold(&frames, on != 0);
         } else if (strncmp(line, "break", 5) == 0) {
@@ -42,9 +49,11 @@ int main(void)
         } else if (strncmp(line, "stats", 5) == 0) {
             panel_frame_stats_t s;
             panel_frames_stats(&frames, &s);
-            printf("%u %d %d %d %d %d %d %d\n", (unsigned)s.frames, s.fps,
+            printf("%u %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n", (unsigned)s.frames, s.fps,
                    s.interval_mean_ms, s.interval_p95_ms, s.interval_most_ms,
-                   s.draw_mean_ms, s.draw_p95_ms, s.draw_most_ms);
+                   s.draw_mean_ms, s.draw_p95_ms, s.draw_most_ms,
+                   s.lead_mean_ms, s.lead_p95_ms, s.lead_most_ms,
+                   s.periods_pct[0], s.periods_pct[1], s.periods_pct[2], s.periods_pct[3]);
         } else {
             return 2;
         }

@@ -10,7 +10,9 @@ panel_frames_t panel_frames;
 
 void panel_frames_reset(panel_frames_t *frames)
 {
+    int64_t period_us = frames->period_us;
     memset(frames, 0, sizeof *frames);
+    frames->period_us = period_us;
 }
 
 void panel_frames_break(panel_frames_t *frames)
@@ -21,6 +23,14 @@ void panel_frames_break(panel_frames_t *frames)
 void panel_frames_hold(panel_frames_t *frames, bool hold)
 {
     frames->held = hold;
+    panel_frames_break(frames);
+}
+
+void panel_frames_period(panel_frames_t *frames, int64_t period_us)
+{
+    if (period_us < 0) period_us = 0;
+    if (period_us == frames->period_us) return;
+    frames->period_us = period_us;
     panel_frames_break(frames);
 }
 
@@ -49,14 +59,27 @@ static void add(panel_frames_spread_t *spread, int64_t us)
     if (us > spread->most_us) spread->most_us = (uint32_t)us;
 }
 
+/* The periods of the panel in an interval, to the nearest whole one: the
+ * frames come at the ends of periods, a little late at times, never
+ * between. One at the least, and the last count for four and more. */
+static int periods(int64_t interval_us, int64_t period_us)
+{
+    int64_t taken = (interval_us + period_us / 2) / period_us;
+    if (taken < 1) return 1;
+    return taken < PANEL_FRAMES_PERIODS ? (int)taken : PANEL_FRAMES_PERIODS;
+}
+
 void panel_frames_shown(panel_frames_t *frames, int64_t now_us)
 {
     if (frames->held) return;
     bool whole = frames->begun_us && frames->drawn_us;
-    if (whole && frames->shown_us &&
-        now_us - frames->shown_us < (int64_t)PANEL_FRAMES_GAP_MS * 1000) {
-        add(&frames->interval, now_us - frames->shown_us);
+    int64_t interval_us = now_us - frames->shown_us;
+    if (whole && frames->shown_us && interval_us < (int64_t)PANEL_FRAMES_GAP_MS * 1000) {
+        add(&frames->interval, interval_us);
         add(&frames->draw, frames->drawn_us - frames->begun_us);
+        add(&frames->lead, frames->begun_us - frames->shown_us);
+        if (frames->period_us)
+            frames->periods[periods(interval_us, frames->period_us) - 1]++;
         frames->counted++;
     }
     frames->shown_us = now_us;
@@ -83,6 +106,29 @@ static int to_ms(uint64_t us)
     return (int)(us / 1000);
 }
 
+/* Whole percent that add up to a hundred: each share rounded down, and the
+ * points left over to the shares that lost the most by it, the first of
+ * equals first. */
+static void shares(const uint32_t *counts, int *out)
+{
+    uint64_t total = 0, lost[PANEL_FRAMES_PERIODS];
+    for (int i = 0; i < PANEL_FRAMES_PERIODS; i++) total += counts[i];
+    if (!total) return;
+    int given = 0;
+    for (int i = 0; i < PANEL_FRAMES_PERIODS; i++) {
+        out[i] = (int)((uint64_t)counts[i] * 100 / total);
+        lost[i] = (uint64_t)counts[i] * 100 % total;
+        given += out[i];
+    }
+    for (; given < 100; given++) {
+        int most = 0;
+        for (int i = 1; i < PANEL_FRAMES_PERIODS; i++)
+            if (lost[i] > lost[most]) most = i;
+        out[most]++;
+        lost[most] = 0;
+    }
+}
+
 void panel_frames_stats(const panel_frames_t *frames, panel_frame_stats_t *out)
 {
     memset(out, 0, sizeof *out);
@@ -98,4 +144,9 @@ void panel_frames_stats(const panel_frames_t *frames, panel_frame_stats_t *out)
     out->draw_mean_ms = to_ms(draw->sum_us / frames->counted);
     out->draw_p95_ms = p95(draw);
     out->draw_most_ms = to_ms(draw->most_us);
+    const panel_frames_spread_t *lead = &frames->lead;
+    out->lead_mean_ms = to_ms(lead->sum_us / frames->counted);
+    out->lead_p95_ms = p95(lead);
+    out->lead_most_ms = to_ms(lead->most_us);
+    shares(frames->periods, out->periods_pct);
 }

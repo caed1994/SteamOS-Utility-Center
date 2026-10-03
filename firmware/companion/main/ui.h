@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "panel_frames.h"
 #include "panel_history.h"
 #include "panel_pages.h"
 #include "panel_text.h"
@@ -197,9 +196,10 @@ typedef struct {
      * the network has set the clock. */
     bool clock_set;
     int hour, minute, weekday, day, month;
-    /* The frames in movement, for the page of the panel. See
-     * panel_frames.h. */
-    panel_frame_stats_t frames;
+    /* The frames in movement are not in here. They change at each frame
+     * of a movement, and a state that changes makes panel_ui_update do
+     * all of its work again: in a scroll, at every tick. The page of the
+     * panel reads them itself. See panel_frames.h. */
 } panel_state_t;
 
 typedef void (*panel_action_cb_t)(panel_action_t action);

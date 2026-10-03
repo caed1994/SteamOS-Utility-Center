@@ -20,7 +20,7 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 # blends comes through the data cache. The code runs out of PSRAM as well,
 # through the instruction cache, and since the Wi-Fi library left IRAM it
 # shares that cache with the drawing. The page of the panel measured a
-# frame at 39 ms of drawing, and the panel shows one every 22.5 ms.
+# frame at 39 ms of drawing, and the panel showed one every 22.1 ms.
 #
 # ESP-IDF names a larger cache as a way to more speed in general
 # (api-guides/performance/speed). Espressif's own RGB examples keep the
@@ -42,11 +42,11 @@ CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
 # The refresh and the touch every 15 ms, under the frame of the panel.
 #
-# The panel shows a frame every 16.9 ms (16 MHz, about 60 Hz), and every
-# 22.5 ms (12 MHz) in the startup animation. The flush waits for the end
+# The panel shows a frame every 16.6 ms (16 MHz, about 60 Hz), and every
+# 22.1 ms (12 MHz) in the startup animation. The flush waits for the end
 # of that frame. With 33 ms here, at 12 MHz, a refresh began 33 ms after
 # the one before it and then waited for the next frame, so a scroll showed
-# its frames 22.5 and 45 ms apart in turn: an uneven step that a person
+# its frames 22.1 and 44.2 ms apart in turn: an uneven step that a person
 # sees. Under the frame of the panel, the next refresh
 # begins as soon as the last one is on the glass, and each frame takes one
 # frame of the panel, or two of them when the work does not fit in one.

@@ -12,6 +12,7 @@
 #include "lvgl.h"
 #include "ui.h"
 #include "panel_fonts.h"
+#include "panel_frames.h"
 static unsigned actions;
 static panel_action_t last_action;
 static void action(panel_action_t a){actions++;last_action=a;}
@@ -130,6 +131,31 @@ static lv_obj_t *name_above(lv_obj_t *card,lv_obj_t *between)
            &&lv_obj_get_y(c)<lv_obj_get_y(between))return c;
     }
     return NULL;
+}
+// Four frames of a scroll at 16 MHz, after the frame that starts it. The
+// numbers the card of the frames shows for them, worked out by hand:
+//   rate      4 frames in 182.3 ms, 22 a second
+//   interval  33.15, 49.7, 33.15 and 66.3 ms: mean 45, 95 % 66, most 66
+//   draw      29, 31, 30 and 45 ms: mean 33, 95 % 45, most 45
+//   lead      2, 3, 2 and 9 ms: mean 4, 95 % 9, most 9
+//   periods   two, three, two and four of 16.575 ms: 0, 50, 25 and 25 %
+static void count_some_frames(void)
+{
+    static const int64_t frames[][3]={{2000,29000,33150},{3000,31000,49725},
+                                       {2000,30000,33150},{9000,45000,66300}};
+    panel_frames_reset(&panel_frames);
+    panel_frames_period(&panel_frames,16575);
+    int64_t shown=1000000;
+    panel_frames_begin(&panel_frames,shown-20000);
+    panel_frames_drawn(&panel_frames,shown-10000);
+    panel_frames_shown(&panel_frames,shown);
+    for(unsigned i=0;i<sizeof frames/sizeof *frames;i++){
+        panel_frames_begin(&panel_frames,shown+frames[i][0]);
+        panel_frames_drawn(&panel_frames,shown+frames[i][0]+frames[i][1]);
+        shown+=frames[i][2];
+        panel_frames_shown(&panel_frames,shown);
+    }
+    assert(panel_frames.counted==4);
 }
 static panel_state_t base(void)
 {
@@ -1331,33 +1357,47 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
-    // The frames in movement, on the page of the panel: four rows and the
-    // line that says what they are, each whole. The count stands still
-    // while the page is open, and starts again when it closes.
+    // The frames in movement, on the page of the panel: five rows and the
+    // line that says what they are, each whole. The page reads the count
+    // itself as it opens, and not the state: a state that changes at every
+    // frame made panel_ui_update do all of its work at every tick of a
+    // scroll. The count stands still while the page is open, and starts
+    // again when it closes.
     {
         panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
         panel_ui_create(action,setting,sound,&english);
         panel_state_t p=base();
         p.self=(panel_self_t){.version="61-1eec536",.heap_free=142*1024,
                               .psram_free=6400*1024,.heap_least=98*1024};
-        p.frames=(panel_frame_stats_t){.frames=412,.fps=41,.interval_mean_ms=24,
-            .interval_p95_ms=45,.interval_most_ms=67,.draw_mean_ms=14,.draw_p95_ms=19,
-            .draw_most_ms=31};
         panel_ui_update(&p);
+        // No frame counted yet: dashes in each row.
         panel_ui_self_open();
         lv_obj_t *screen_now=lv_screen_active();
+        lv_obj_t *card=lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_MOTION)));
+        assert(card);
+        unsigned dashes=0;
+        for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+            lv_obj_t *c=lv_obj_get_child(card,i);
+            if(lv_obj_check_type(c,&lv_label_class)&&strcmp(lv_label_get_text(c),"--")==0)dashes++;
+        }
+        assert(dashes==5);
+        click_in(screen_now,panel_text(TXT_BACK));
+        // Four frames, and the page shows what they work out at.
+        count_some_frames();
+        panel_ui_self_open();
+        screen_now=lv_screen_active();
         lv_obj_update_layout(screen_now);
         lv_refr_now(screen);
-        static const char *const shown[]={"41 fps","24 / 45 / 67 ms","14 / 19 / 31 ms","412",
-            "142 KB (min 98 KB), PSRAM 6.2 MB"};
+        static const char *const shown[]={"22 fps (4 frames)","45 / 66 / 66 ms","33 / 45 / 45 ms",
+            "4 / 9 / 9 ms","0 / 50 / 25 / 25 %","142 KB (min 98 KB), PSRAM 6.2 MB"};
         for(unsigned i=0;i<sizeof shown/sizeof *shown;i++){
             lv_obj_t *value=label(screen_now,shown[i]);
             assert(value&&name_fits(value));
         }
-        lv_obj_t *card=lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_MOTION)));
-        assert(lv_obj_get_parent(label(screen_now,"41 fps"))==card);
-        assert(lv_obj_get_parent(label(screen_now,"412"))==card);
-        static const panel_text_id_t names[]={TXT_SELF_FPS,TXT_SELF_INTERVAL,TXT_SELF_DRAW,TXT_SELF_FRAMES};
+        card=lv_obj_get_parent(label(screen_now,panel_text(TXT_SELF_MOTION)));
+        for(unsigned i=0;i<5;i++)assert(lv_obj_get_parent(label(screen_now,shown[i]))==card);
+        static const panel_text_id_t names[]={TXT_SELF_FPS,TXT_SELF_INTERVAL,TXT_SELF_DRAW,
+                                              TXT_SELF_LEAD,TXT_SELF_PERIODS};
         for(unsigned i=0;i<sizeof names/sizeof *names;i++)
             assert(name_fits(label(card,panel_text(names[i]))));
         // Under the firmware and above the network, on the first screen
@@ -1374,54 +1414,50 @@ int main(void)
         int32_t line_high=lv_font_get_line_height(&panel_font_12);
         assert(lv_obj_get_height(note)<=2*line_high);
         assert(lv_obj_get_y(note)+lv_obj_get_height(note)<=lv_obj_get_height(card));
-        // No frame counted yet: dashes, and the memory without its least.
-        p.frames=(panel_frame_stats_t){0};
+        // A new state changes the rest of the page and not the frames.
         p.self.heap_least=0;
         panel_ui_update(&p);
-        assert(!label(screen_now,"41 fps")&&!label(screen_now,"412"));
-        unsigned dashes=0;
-        for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
-            lv_obj_t *c=lv_obj_get_child(card,i);
-            if(lv_obj_check_type(c,&lv_label_class)&&strcmp(lv_label_get_text(c),"--")==0)dashes++;
-        }
-        assert(dashes==4);
         assert(label(screen_now,"142 KB, PSRAM 6.2 MB"));
+        assert(label(screen_now,"22 fps (4 frames)"));
         // The page holds the count: frames while it is open do not count.
         assert(panel_frames.held);
-        panel_frames_begin(&panel_frames,1000000);panel_frames_drawn(&panel_frames,1010000);
-        panel_frames_shown(&panel_frames,1020000);
-        panel_frames_begin(&panel_frames,1020000);panel_frames_drawn(&panel_frames,1030000);
-        panel_frames_shown(&panel_frames,1040000);
-        assert(panel_frames.counted==0);
-        // Back, and the count starts again and counts.
+        panel_frames_begin(&panel_frames,3000000);panel_frames_drawn(&panel_frames,3010000);
+        panel_frames_shown(&panel_frames,3020000);
+        panel_frames_begin(&panel_frames,3020000);panel_frames_drawn(&panel_frames,3030000);
+        panel_frames_shown(&panel_frames,3040000);
+        assert(panel_frames.counted==4);
+        // Back, and the count starts again and counts, with the period
+        // of the panel kept.
         click_in(screen_now,panel_text(TXT_BACK));
         assert(strcmp(panel_ui_where(),"the panel")!=0);
-        assert(!panel_frames.held&&panel_frames.counted==0);
-        panel_frames_begin(&panel_frames,2000000);panel_frames_drawn(&panel_frames,2010000);
-        panel_frames_shown(&panel_frames,2020000);
-        panel_frames_begin(&panel_frames,2020000);panel_frames_drawn(&panel_frames,2030000);
-        panel_frames_shown(&panel_frames,2042000);
-        assert(panel_frames.counted==1);
+        assert(!panel_frames.held&&panel_frames.counted==0&&panel_frames.period_us==16575);
+        panel_frames_begin(&panel_frames,4000000);panel_frames_drawn(&panel_frames,4010000);
+        panel_frames_shown(&panel_frames,4020000);
+        panel_frames_begin(&panel_frames,4020000);panel_frames_drawn(&panel_frames,4030000);
+        panel_frames_shown(&panel_frames,4053150);
+        assert(panel_frames.counted==1&&panel_frames.periods[1]==1);
         // In German, the same: each row whole and the line in two.
         panel_settings_t german=english;german.language=PANEL_GERMAN;
         panel_ui_create(action,setting,sound,&german);
-        p.frames=(panel_frame_stats_t){.frames=412,.fps=41,.interval_mean_ms=24,
-            .interval_p95_ms=45,.interval_most_ms=67,.draw_mean_ms=14,.draw_p95_ms=19,
-            .draw_most_ms=31};
         p.self.heap_least=98*1024;
         panel_ui_update(&p);
+        count_some_frames();
         panel_ui_self_open();
         screen_now=lv_screen_active();
         lv_obj_update_layout(screen_now);
         lv_refr_now(screen);
         card=lv_obj_get_parent(label(screen_now,"ANZEIGE IN BEWEGUNG"));
         assert(card);
-        static const char *const german_names[]={"Bildrate","Bildabstand","Zeichenzeit","Gezählte Bilder"};
+        assert(lv_obj_get_parent(label(screen_now,"22 fps (4 Bilder)"))==card);
+        static const char *const german_names[]={"Bildrate","Bildabstand","Zeichenzeit","Vorlauf",
+                                                 "Panelbilder"};
         for(unsigned i=0;i<sizeof german_names/sizeof *german_names;i++)
             assert(name_fits(label(card,german_names[i])));
         note=label(card,panel_text(TXT_SELF_MOTION_WHAT));
         assert(note&&lv_obj_get_height(note)<=2*line_high);
         assert(lv_obj_get_y(note)+lv_obj_get_height(note)<=lv_obj_get_height(card));
+        lv_obj_get_coords(card,&card_area);
+        assert(card_area.y2<480);
         assert(complaints==0);
         panel_ui_create(action,setting,sound,&english);
     }

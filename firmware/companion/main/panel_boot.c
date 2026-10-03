@@ -43,9 +43,10 @@ static lv_obj_t *cover;
  * about nine times the work where the shape changes.
  *
  * That alone does not make a step anybody sees. The step comes from the
- * flush, which waits for a frame boundary of the panel. A period is about
- * 22.5 ms, measured off the heaps these numbers fall into, so a frame
- * takes 45 ms or 67 or 90 and nothing between. Work that runs past a
+ * flush, which waits for a frame boundary of the panel. A period is 22.1
+ * ms at the clock of the animation (PANEL_FRAME_CLOCKS in
+ * panel_display.c), so a frame takes 44 ms or 66 or 88 and nothing
+ * between. Work that runs past a
  * boundary costs a whole period, and the heavy frames land a rung lower
  * than the rest.
  * LV_EVENT_DRAW_POST_END arrives once for each frame that reaches the
