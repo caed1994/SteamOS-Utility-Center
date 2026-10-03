@@ -252,6 +252,7 @@
     X(TXT_GPU_LOAD,        "GPU load",              "GPU-Last") \
     X(TXT_GPU_VRAM,        "VRAM",                  "VRAM") \
     X(TXT_GPU_CLOCK,       "GPU clock",             "GPU-Takt") \
+    X(TXT_GPU_BOOST,       "Cooling Boost",         "Lüfter-Boost") \
     X(TXT_HISTORY,         "History",               "Verlauf") \
     X(TXT_HISTORY_EMPTY,   "No readings yet",       "Noch keine Werte") \
     X(TXT_HISTORY_NOW,     "now",                   "jetzt") \

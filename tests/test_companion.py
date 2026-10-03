@@ -339,6 +339,8 @@ class AnswerSizeTest(unittest.TestCase):
                 mock.patch.object(companion, "led",
                                   return_value={"desktop": longest,
                                                 "game": longest}), \
+                mock.patch.object(companion._boost, "read",
+                                  return_value=False), \
                 mock.patch.object(companion.pcinfo, "system",
                                   return_value={"os": "O" * 31,
                                                 "build": "B" * 23,
@@ -727,6 +729,135 @@ class ServiceTest(unittest.TestCase):
             answer = conn.getresponse()
             said = json.loads(answer.read())
         self.assertEqual(said["led"], effects)
+
+
+class BoostTest(unittest.TestCase):
+    """Cooling Boost: its state in the status, and its two presses."""
+
+    BOOSTED = {"fan_control_enabled": True,
+               "fan_control_settings": {"mode": "static",
+                                        "static_speed": 1.0}}
+    CARD = {"fan_control_enabled": False}
+
+    def daemon(self, config=None, devices=None, refuse=None):
+        """A LACT daemon that answers each question, and the questions it
+        got."""
+        asked = []
+
+        def talk(name, path=None, args=None, timeout=None):
+            asked.append((name, timeout))
+            if refuse:
+                raise companion.lact.LactError(refuse)
+            if name == "list_devices":
+                return [{"id": "1002:744C"}] if devices is None else devices
+            return self.BOOSTED if config is None else config
+
+        for patcher in (mock.patch.object(companion.lact, "available",
+                                          return_value=True),
+                        mock.patch.object(companion.lact, "talk",
+                                          side_effect=talk)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return asked
+
+    def test_the_fan_of_the_card_is_the_answer(self):
+        self.daemon()
+        self.assertIs(companion.BoostState().read(), True)
+
+    def test_a_fan_that_the_boost_does_not_hold_is_off(self):
+        self.daemon(config=self.CARD)
+        self.assertIs(companion.BoostState().read(), False)
+
+    def test_no_lact_no_card_and_no_answer_are_no_switch(self):
+        with mock.patch.object(companion.lact, "available",
+                               return_value=False):
+            self.assertIsNone(companion.BoostState().read())
+        for devices in ([], [{}], "not a list", [{"id": ""}]):
+            with self.subTest(devices=devices):
+                with mock.patch.object(companion.lact, "available",
+                                       return_value=True), \
+                        mock.patch.object(companion.lact, "talk",
+                                          return_value=devices):
+                    self.assertIsNone(companion.BoostState().read())
+
+    def test_a_daemon_that_does_not_answer_is_no_switch(self):
+        asked = self.daemon(refuse="LACT did not answer within 0.5 seconds")
+        self.assertIsNone(companion.BoostState().read())
+        self.assertEqual(asked, [("list_devices", companion.BOOST_WAIT)])
+
+    def test_each_question_waits_a_moment_and_not_the_status(self):
+        """The panel waits four seconds for the whole status."""
+        asked = self.daemon()
+        companion.BoostState().read()
+        self.assertEqual([wait for _, wait in asked],
+                         [companion.BOOST_WAIT] * 2)
+        self.assertLess(2 * companion.BOOST_WAIT, 4)
+
+    def test_one_pair_of_questions_in_its_time_at_the_most(self):
+        asked = self.daemon()
+        now = [100.0]
+        state = companion.BoostState(clock=lambda: now[0])
+        state.read()
+        now[0] += companion.BOOST_EVERY - 0.1
+        state.read()
+        self.assertEqual(len(asked), 2)
+        now[0] += 0.1
+        state.read()
+        self.assertEqual(len(asked), 4)
+
+    def test_a_press_makes_the_next_status_ask_again(self):
+        asked = self.daemon()
+        state = companion.BoostState(clock=lambda: 100.0)
+        state.read()
+        with mock.patch.object(companion, "_boost", state):
+            self.assertEqual(companion.boost_press("gpu-boost-on",
+                                                   run=lambda: None)[0], 200)
+        state.read()
+        self.assertEqual(len(asked), 4)
+
+    def test_each_press_names_where_to_go(self):
+        """Not a toggle: the status the panel has is up to three seconds
+        old."""
+        ran = []
+        actions = {name: (lambda name=name: ran.append(name))
+                   for name in ("gpu-boost-on", "gpu-boost-off")}
+        with mock.patch.dict(companion.ctl.ACTION, actions):
+            self.assertEqual(companion.press("gpu_boost_on"), (200, {"ok": True}))
+            self.assertEqual(companion.press("gpu_boost_off")[0], 200)
+        self.assertEqual(ran, ["gpu-boost-on", "gpu-boost-off"])
+        self.assertEqual(companion.press("gpu_boost"), (400, {"error": "unsupported action"}))
+
+    def test_a_refusal_comes_back_as_its_own_code(self):
+        def refuse(error):
+            def run():
+                raise error
+            return run
+
+        for error, code in ((companion.ctl.CtlError("no card"), 501),
+                            (companion.lact.LactError("refused"), 503)):
+            with mock.patch.object(companion.sys, "stderr"):
+                self.assertEqual(
+                    companion.boost_press("gpu-boost-on", run=refuse(error))[0],
+                    code, error)
+
+    def test_the_status_carries_it(self):
+        with mock.patch.object(companion._boost, "read", return_value=True):
+            self.assertIs(companion.status("127.0.0.1", TOKEN)["boost"], True)
+
+    def test_every_press_the_panel_sends_is_one_the_service_knows(self):
+        """Two ends of one wire. A press with a name only the panel knows
+        is a switch that answers 400."""
+        with open(os.path.join(REPO, "firmware", "companion", "main",
+                               "main.c"), encoding="utf-8") as handle:
+            main = handle.read()
+        table = re.search(r"const char \*names\[\]=\{(.*?)\};", main, re.S)
+        self.assertIsNotNone(table)
+        names = re.findall(r'"([a-z_]+)"', table.group(1))
+        self.assertIn("gpu_boost_on", names)
+        self.assertIn("gpu_boost_off", names)
+        for name in names:
+            self.assertTrue(name in companion.ACTIONS
+                            or name in companion.BOOST_PRESSES, name)
 
 
 class LedTest(unittest.TestCase):

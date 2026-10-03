@@ -10,7 +10,7 @@ sends a press as a second request. firmware/companion holds its side.
 This service answers four paths and nothing else:
 
     GET  /v1/status     the controllers, the audio and the sensors
-    POST /v1/action     one of the named presses
+    POST /v1/action     one of the named presses, Cooling Boost among them
     POST /v1/led        the effect of the LED bar, on the desktop and in the
                         rainbow slot of Game Mode
     GET  /v1/firmware   the firmware of the panel, for its update
@@ -45,11 +45,12 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import config as config_module
-from . import ctl, desktop, modules, pcinfo, steamapps, steamcontroller
+from . import ctl, desktop, lact, modules, pcinfo, steamapps, steamcontroller
 from . import temperature
 
 # The port, and the file that holds the shared secret.
@@ -136,6 +137,23 @@ ACTIONS = {
     # a fix takes a second thing with it.
     "game_mode": ("steamos-session-select", "gamescope"),
 }
+
+# Cooling Boost: the fan of the graphics card at full speed, the switch on the
+# page of the card. Two presses and not one, for the reason that desktop_mode
+# and game_mode give above: where to go, and not "the other one".
+#
+# Each one is a call of ctl and not a command: the call that the plugin in
+# Game Mode makes. It speaks to the LACT daemon over its socket as this user,
+# and the socket is open to the group of the desktop user. See lact.py.
+BOOST_PRESSES = {"gpu_boost_on": "gpu-boost-on",
+                 "gpu_boost_off": "gpu-boost-off"}
+
+# How old the answer about the boost in the status can be, and how long one
+# question to LACT can take. The panel waits four seconds for the whole
+# status, and a daemon that is slow to answer must not make the panel say that
+# the PC is gone. See BoostState.
+BOOST_EVERY = 5.0
+BOOST_WAIT = 0.5
 
 # The path of a change of the LED bar, and what a change can be. Each key of
 # a request names one setting of the LED service, and its value must be in
@@ -1009,6 +1027,9 @@ def status(address=None, token=None, offer=None):
         # The two effects of the LED bar for its page, or None where this
         # machine has no LED module. See led.
         "led": led(),
+        # Whether Cooling Boost has the fan of the card, or None for no
+        # switch. See BoostState.
+        "boost": _boost.read(),
         # The firmware for the panel, or None. See FirmwareOffer.
         "firmware": offer.signed(token),
     }
@@ -1021,6 +1042,8 @@ def press(name):
     and somebody who presses "Suspend" and sees nothing happen otherwise has
     no way to tell a rejected press from a lost one.
     """
+    if isinstance(name, str) and name in BOOST_PRESSES:
+        return boost_press(BOOST_PRESSES[name])
     if not isinstance(name, str) or name not in ACTIONS:
         return 400, {"error": "unsupported action"}
     try:
@@ -1040,6 +1063,80 @@ def press(name):
         return 501, {"error": "command not available on this machine"}
     except OSError:
         return 503, {"error": "command unavailable"}
+    return 200, {"ok": True}
+
+
+class BoostState:
+    """Whether Cooling Boost has the fan of the card: True, False or None.
+
+    None where this machine has no LACT, no card in it, or no answer in
+    BOOST_WAIT. The panel shows no switch for None.
+
+    Two questions to the daemon, and one pair in BOOST_EVERY seconds at the
+    most, because the status comes every three seconds. A press makes the
+    next status ask again, so the switch shows the press at once. The answer
+    is the card and not a flag of ours, as for the plugin: somebody can set
+    the same speed in LACT. See ctl.boosting.
+    """
+
+    def __init__(self, path=None, clock=time.monotonic):
+        self.path = path
+        self.clock = clock
+        self._value = None
+        self._at = None
+        # ThreadingHTTPServer answers each request in a thread of its own.
+        self._lock = threading.Lock()
+
+    def read(self):
+        with self._lock:
+            now = self.clock()
+            if self._at is None or now - self._at >= BOOST_EVERY:
+                self._value = self._ask()
+                self._at = now
+            return self._value
+
+    def forget(self):
+        """The next read asks the daemon again."""
+        with self._lock:
+            self._at = None
+
+    def _ask(self):
+        if not lact.available(self.path):
+            return None
+        try:
+            devices = lact.talk("list_devices", self.path, timeout=BOOST_WAIT)
+            first = devices[0] if isinstance(devices, list) and devices else {}
+            gpu = first.get("id", "") if isinstance(first, dict) else ""
+            if not gpu:
+                return None
+            config = lact.talk("get_gpu_config", self.path, {"id": gpu},
+                               timeout=BOOST_WAIT)
+        except lact.LactError:
+            return None
+        return ctl.boosting(lact.fan(config if isinstance(config, dict)
+                                     else {}))
+
+
+_boost = BoostState()
+
+
+def boost_press(action, run=None):
+    """Runs one press of Cooling Boost. Returns (HTTP code, body).
+
+    The plugin in Game Mode holds its own switch while a change of the card
+    waits for Keep it, because the boost keeps whatever waits. The panel
+    cannot see that wait. It lasts five seconds, and a press of the panel in
+    those seconds keeps the change of the plugin with the boost.
+    """
+    try:
+        (ctl.ACTION[action] if run is None else run)()
+    except ctl.CtlError:
+        return 501, {"error": "no graphics card that LACT reports"}
+    except (lact.LactError, ValueError) as exc:
+        sys.stderr.write("Cooling Boost was refused: %s\n" % exc)
+        return 503, {"error": "LACT did not take the change"}
+    finally:
+        _boost.forget()
     return 200, {"ok": True}
 
 

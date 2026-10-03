@@ -826,6 +826,11 @@ static int request(const char *path, const char *body, int wait_ms)
         &&vram_used->valuedouble>=0&&vram_used->valuedouble<=vram_total->valuedouble;
     state.vram_used=vram?(uint64_t)vram_used->valuedouble:0;
     state.vram_total=vram?(uint64_t)vram_total->valuedouble:0;
+    /* Cooling Boost: true or false where the PC has LACT with a card, and
+     * null or nothing at all where it has none. */
+    cJSON *boost=cJSON_GetObjectItemCaseSensitive(root,"boost");
+    state.boost_here=cJSON_IsBool(boost);
+    state.boost_on=cJSON_IsTrue(boost);
     state.answers++;
     state.cpu_sensor_count=sensors_read(state.cpu_sensors,
         cJSON_GetObjectItemCaseSensitive(telemetry,"cpu_sensors"));
@@ -1154,7 +1159,8 @@ static void network_task(void *arg)
      * the name of another one. tests/test_panel_pages.py holds the two
      * lengths equal. */
     const char *names[]={"volume_down","mute","volume_up","suspend","reboot",
-                         "poweroff","desktop_mode","game_mode"};
+                         "poweroff","desktop_mode","game_mode","gpu_boost_on",
+                         "gpu_boost_off"};
     TickType_t last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
     TickType_t feedback_until=0;
     TickType_t last_health=xTaskGetTickCount();

@@ -67,6 +67,11 @@ static int history_minutes=30;
 #define HISTORY_WINDOWS 3
 static const int history_windows[HISTORY_WINDOWS]={15,30,60};
 static lv_obj_t *gpu_load_value,*gpu_load_track,*gpu_load_bar,*vram_value,*vram_track,*vram_bar,*gpu_clock_value;
+/* Cooling Boost, under the clock of the card: the field that takes the tap,
+ * and the track and the knob of its switch. boost_shown is what they show,
+ * -1 for nothing yet, 0 off and 1 on, so that only a change goes to LVGL. */
+static lv_obj_t *boost_field,*boost_track,*boost_knob;
+static int boost_shown=-1;
 static lv_obj_t *history_chart,*history_empty,*history_ago,*history_axis[4],*history_buttons[HISTORY_WINDOWS];
 static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
 /* The colours of the three curves, and the legend that names them. The
@@ -84,6 +89,16 @@ static const uint32_t curve_colors[PANEL_HISTORY_SERIES]={BLUE,CURVE_GPU,CURVE_W
 #define GPU_COLUMN_X1 146
 #define GPU_COLUMN_X2 326
 #define GPU_BAR_WIDTH 116
+/* The row of Cooling Boost under the clock of the card: from 62 down to the
+ * border, around the line of the bars at 72, and its switch. "Cooling Boost"
+ * takes 85 of the 126 of the column in the 12 point font, and the switch
+ * takes the rest but a gap of 5. */
+#define BOOST_Y 62
+#define BOOST_HEIGHT 30
+#define BOOST_TRACK_WIDTH 36
+#define BOOST_TRACK_HEIGHT 20
+#define BOOST_KNOB_OFF 2
+#define BOOST_KNOB_ON (BOOST_TRACK_WIDTH-BOOST_TRACK_HEIGHT+2)
 #define CHART_X 52
 #define CHART_Y 66
 #define CHART_WIDTH 356
@@ -1023,6 +1038,39 @@ static void history_window_clicked(lv_event_t *e)
 /* The load, the memory and the clock of the card. "--" where the
  * service sent nothing, as on the page of the PC, and for all of them
  * while the PC is gone: the last reading would read as current. */
+/* The switch of Cooling Boost: there where the PC has LACT with a card, as
+ * the last answer said, and usable while the PC answers. On is blue with the
+ * knob at the right, as the switch of the audio. */
+static void boost_show(const panel_state_t *s)
+{
+    if(!boost_field)return;
+    if(s->boost_here==lv_obj_has_flag(boost_field,LV_OBJ_FLAG_HIDDEN)){
+        if(s->boost_here)lv_obj_remove_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
+    }
+    if(s->online==lv_obj_has_state(boost_field,LV_STATE_DISABLED)){
+        if(s->online)lv_obj_remove_state(boost_field,LV_STATE_DISABLED);
+        else lv_obj_add_state(boost_field,LV_STATE_DISABLED);
+    }
+    int on=s->online&&s->boost_on;
+    if(on==boost_shown)return;
+    boost_shown=on;
+    lv_obj_set_style_bg_color(boost_track,lv_color_hex(on?BLUE:EDGE),0);
+    lv_obj_set_x(boost_knob,on?BOOST_KNOB_ON:BOOST_KNOB_OFF);
+}
+/* A tap asks for the other state than the one the switch shows. The switch
+ * moves when the next status says so, which comes at once after the press:
+ * a switch that moved before the PC took it would show a fan that is not.
+ *
+ * Not through clicked, whose range asks first and holds these two: a fan at
+ * full speed interrupts nothing. */
+static void boost_clicked(lv_event_t *e)
+{
+    (void)e;
+    if(!last_state_valid||!last_state.online||!last_state.boost_here)return;
+    feedback();
+    if(send_action)send_action(last_state.boost_on?PANEL_GPU_BOOST_OFF:PANEL_GPU_BOOST_ON);
+}
 static void card_show(const panel_state_t *s)
 {
     if(!gpu_load_value)return;
@@ -1051,6 +1099,7 @@ static void card_show(const panel_state_t *s)
     }
     if(s->online&&s->gpu_mhz>=0)lv_label_set_text_fmt(gpu_clock_value,"%d MHz",s->gpu_mhz);
     else lv_label_set_text(gpu_clock_value,"--");
+    boost_show(s);
 }
 static void sensor_close(void){if(sensor_layer){lv_obj_delete(sensor_layer);sensor_layer=NULL;}}
 static void sensor_outside(lv_event_t *e){(void)e;sensor_close();}
@@ -1770,6 +1819,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     timer_go=NULL;timer_go_label=NULL;timer_reset=NULL;alarm_layer=NULL;
     gpu_load_value=NULL;gpu_load_track=NULL;gpu_load_bar=NULL;
     vram_value=NULL;vram_track=NULL;vram_bar=NULL;gpu_clock_value=NULL;
+    boost_field=NULL;boost_track=NULL;boost_knob=NULL;boost_shown=-1;
     history_chart=NULL;history_empty=NULL;history_ago=NULL;
     for(int i=0;i<4;i++)history_axis[i]=NULL;
     for(int i=0;i<HISTORY_WINDOWS;i++)history_buttons[i]=NULL;
@@ -1992,6 +2042,30 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
         lv_obj_remove_flag(*bars[i],LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(*tracks[i],LV_OBJ_FLAG_HIDDEN);
     }
+    /* Cooling Boost, under the clock, where the other two columns have
+     * their bars: its name and a switch, and the whole row one place to
+     * tap. See boost_show. */
+    boost_field=lv_obj_create(gpu_card);lv_obj_remove_style_all(boost_field);
+    lv_obj_set_pos(boost_field,GPU_COLUMN_X2-6,BOOST_Y);lv_obj_set_size(boost_field,gpu_room[2]+6,BOOST_HEIGHT);
+    lv_obj_remove_flag(boost_field,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_radius(boost_field,5,0);
+    lv_obj_set_style_bg_color(boost_field,lv_color_hex(0x1B2B3C),LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(boost_field,LV_OPA_COVER,LV_STATE_PRESSED);
+    lv_obj_set_style_opa(boost_field,LV_OPA_40,LV_STATE_DISABLED);
+    lv_obj_add_event_cb(boost_field,boost_clicked,LV_EVENT_CLICKED,NULL);
+    lv_obj_t *boost_name=text_at(boost_field,panel_text(TXT_GPU_BOOST),6,
+                                 (BOOST_HEIGHT-lv_font_get_line_height(&panel_font_12))/2,
+                                 gpu_room[2]-BOOST_TRACK_WIDTH-4,&panel_font_12,MUTED);
+    lv_obj_set_height(boost_name,lv_font_get_line_height(&panel_font_12));
+    lv_obj_remove_flag(boost_name,LV_OBJ_FLAG_CLICKABLE);
+    boost_track=panel(boost_field,gpu_room[2]+6-BOOST_TRACK_WIDTH,(BOOST_HEIGHT-BOOST_TRACK_HEIGHT)/2,
+                      BOOST_TRACK_WIDTH,BOOST_TRACK_HEIGHT,EDGE,false);
+    lv_obj_set_style_radius(boost_track,LV_RADIUS_CIRCLE,0);
+    lv_obj_remove_flag(boost_track,LV_OBJ_FLAG_CLICKABLE);
+    boost_knob=panel(boost_track,BOOST_KNOB_OFF,2,BOOST_TRACK_HEIGHT-4,BOOST_TRACK_HEIGHT-4,TEXT,false);
+    lv_obj_set_style_radius(boost_knob,LV_RADIUS_CIRCLE,0);
+    lv_obj_remove_flag(boost_knob,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *history_card=panel(page[4],10,106,460,194,CARD,true);
     text_at(history_card,panel_text(TXT_HISTORY),16,14,120,&panel_font_14,MUTED);
     for(int i=0;i<HISTORY_WINDOWS;i++){

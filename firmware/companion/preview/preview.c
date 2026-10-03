@@ -175,9 +175,11 @@ int main(int argc,char **argv)
     }
     /* The fifth page. "card" is 35 minutes of the board's machine: ten
      * idle, then a game, with a minute in it in which the PC did not
-     * answer. "card-60" shows the hour, and "card-empty" is a panel that
-     * just started. */
+     * answer. "card-60" shows the hour, "card-empty" is a panel that just
+     * started, and "card-boost" has Cooling Boost on. */
     if(argc>2&&strncmp(argv[2],"card",4)==0){
+        s.boost_here=true;
+        s.boost_on=strcmp(argv[2],"card-boost")==0;
         if(strcmp(argv[2],"card-empty")!=0){
             uint32_t seed=7;
             panel_state_t t=s;

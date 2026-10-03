@@ -102,6 +102,11 @@ static lv_obj_t *button_with(lv_obj_t *row,const char *caption)
     }
     return NULL;
 }
+// Whether the knob of a switch stands in the right half of its track: on.
+static bool knob_right(lv_obj_t *knob)
+{
+    return lv_obj_get_x(knob)+lv_obj_get_width(knob)/2>lv_obj_get_width(lv_obj_get_parent(knob))/2;
+}
 // The card of the page of the LED bar for one mode, and its arrows.
 static lv_obj_t *led_card_of(lv_obj_t *page,panel_led_mode_t mode)
 {
@@ -1947,6 +1952,87 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
+    // Cooling Boost on the page of the card: a switch under the clock,
+    // there where the PC has LACT with a card, that sends where to go at a
+    // tap and asks nothing first. It shows what the status says.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        for(int language=0;language<2;language++){
+            panel_settings_t in_it=english;in_it.language=language?PANEL_GERMAN:PANEL_ENGLISH;
+            panel_ui_create(action,setting,sound,&in_it);
+            panel_state_t t=base();
+            lv_obj_t *page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_CARD);
+            // A PC without LACT, or a service older than this firmware:
+            // no switch.
+            panel_ui_update(&t);
+            assert(!label(page,panel_text(TXT_GPU_BOOST)));
+            t.boost_here=true;t.answers++;
+            panel_ui_update(&t);
+            lv_obj_t *name=label(page,panel_text(TXT_GPU_BOOST));
+            assert(name);
+            lv_obj_update_layout(page);
+            // The name whole on one line, left of its switch, and the row
+            // under the clock of the card.
+            lv_point_t size;
+            lv_text_get_size(&size,lv_label_get_text(name),lv_obj_get_style_text_font(name,0),
+                             0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+            assert(size.x<=lv_obj_get_width(name));
+            assert(lv_obj_get_height(name)==lv_font_get_line_height(lv_obj_get_style_text_font(name,0)));
+            lv_obj_t *field=lv_obj_get_parent(name),*track=NULL;
+            for(unsigned i=0;i<lv_obj_get_child_count(field);i++)
+                if(lv_obj_get_child(field,i)!=name)track=lv_obj_get_child(field,i);
+            assert(track&&lv_obj_get_child_count(track)==1);
+            lv_obj_t *knob=lv_obj_get_child(track,0);
+            lv_area_t at_name,at_track,at_field,at_clock;
+            lv_obj_get_coords(name,&at_name);lv_obj_get_coords(track,&at_track);
+            lv_obj_get_coords(field,&at_field);
+            lv_obj_get_coords(label(page,panel_text(TXT_GPU_CLOCK)),&at_clock);
+            assert(at_name.x1+size.x<at_track.x1);
+            assert(at_name.x1==at_clock.x1);
+            assert(at_field.y1>at_clock.y2);
+            lv_obj_t *card=lv_obj_get_parent(field);
+            lv_area_t at_card;lv_obj_get_coords(card,&at_card);
+            assert(at_field.y2<at_card.y2&&at_track.x2<at_card.x2);
+            // Off: the knob at the left, and a tap asks for on, at once.
+            assert(knob_right(knob)==false);
+            lv_color_t off_colour=lv_obj_get_style_bg_color(track,0);
+            actions=0;
+            lv_obj_send_event(field,LV_EVENT_CLICKED,NULL);
+            assert(actions==1&&last_action==PANEL_GPU_BOOST_ON);
+            assert(!label(lv_screen_active(),panel_text(TXT_CONFIRM)));
+            // The switch moves when the status says so, and not before.
+            assert(knob_right(knob)==false);
+            t.boost_on=true;t.answers++;
+            panel_ui_update(&t);
+            lv_obj_update_layout(page);
+            assert(knob_right(knob)==true);
+            assert(!lv_color_eq(lv_obj_get_style_bg_color(track,0),off_colour));
+            lv_obj_send_event(field,LV_EVENT_CLICKED,NULL);
+            assert(actions==2&&last_action==PANEL_GPU_BOOST_OFF);
+            // A PC that does not answer: the switch stays, grey, and a tap
+            // sends nothing.
+            t.online=false;
+            panel_ui_update(&t);
+            lv_obj_update_layout(page);
+            assert(label(page,panel_text(TXT_GPU_BOOST)));
+            assert(lv_obj_has_state(field,LV_STATE_DISABLED));
+            assert(knob_right(knob)==false);
+            assert(lv_color_eq(lv_obj_get_style_bg_color(track,0),off_colour));
+            lv_obj_send_event(field,LV_EVENT_CLICKED,NULL);
+            assert(actions==2);
+            t.online=true;
+            panel_ui_update(&t);
+            assert(!lv_obj_has_state(field,LV_STATE_DISABLED));
+            // LACT gone from the PC: the switch goes with it.
+            t.boost_here=false;t.boost_on=false;t.answers++;
+            panel_ui_update(&t);
+            assert(!label(page,panel_text(TXT_GPU_BOOST)));
+            lv_refr_now(screen);
+            assert(complaints==0);
+        }
+        panel_ui_create(action,setting,sound,&english);
+    }
+
     // The page of the LED bar: the effect of the PC on the desktop and in
     // the rainbow entry of Steam in Game Mode, with an arrow on each side.
     // A tap shows the next effect at once, and the change goes to main.c
@@ -2120,7 +2206,7 @@ int main(void)
          "page of the PC that scrolls, and a choice of sensor for each tile "
          "of the temperatures, and the page of the panel with its update, "
          "its power chip in detail and its frames in movement, and the page "
-         "of the card with its history, and the page of the LED bar with "
-         "the effect of each mode of the PC.");
+         "of the card with its history and its Cooling Boost, and the page "
+         "of the LED bar with the effect of each mode of the PC.");
     return 0;
 }
