@@ -398,6 +398,137 @@ class PassiveModeTest(FakeCpu):
         self.assertEqual(self._get(0, power.GOVERNOR), "schedutil")
 
 
+class ProfileTest(FakeCpu):
+    """The profiles of the wall panel, on amd-pstate in its active mode."""
+
+    def test_three_profiles_and_steamos_in_the_order_of_the_panel(self):
+        self.assertEqual(power.profiles(self.root),
+                         ["powersave", "balanced", "performance", "steamos"])
+
+    def test_each_is_a_governor_and_a_preference_this_machine_has(self):
+        self.assertEqual(power.profile_settings("powersave", self.root),
+                         {"CPU_GOVERNOR": "powersave", "CPU_EPP": "power"})
+        self.assertEqual(power.profile_settings("balanced", self.root),
+                         {"CPU_GOVERNOR": "powersave",
+                          "CPU_EPP": "balance_performance"})
+        self.assertEqual(power.profile_settings("performance", self.root),
+                         {"CPU_GOVERNOR": "performance"})
+        for name in power.profiles(self.root):
+            settings = dict(power.DEFAULTS,
+                            **power.profile_settings(name, self.root))
+            power.validate(settings, self.root)
+
+    def test_steamos_is_no_setting_at_all(self):
+        self.assertEqual(power.profile_settings("steamos", self.root),
+                         {"CPU_GOVERNOR": power.UNSET})
+
+    def test_a_name_that_is_no_profile_has_no_settings(self):
+        for name in ("turbo", "", "custom", "PERFORMANCE"):
+            self.assertIsNone(power.profile_settings(name, self.root), name)
+
+    def test_the_profiles_stay_while_performance_pins_the_preference(self):
+        """The kernel then offers one preference. The profiles are for after
+        the change, as the menus of the control panel are. See
+        epp_values."""
+        for cpu in range(self.CPUS):
+            where = os.path.join(self.root,
+                                 "sys/devices/system/cpu/cpu%d/cpufreq" % cpu)
+            self._put(os.path.join(where, power.GOVERNOR), "performance")
+            self._put(os.path.join(where, power.EPP_AVAILABLE), "performance")
+        self.assertEqual(power.profiles(self.root),
+                         ["powersave", "balanced", "performance", "steamos"])
+
+    def test_the_file_says_which_profile_it_is(self):
+        def of(**values):
+            return power.profile_of(dict(power.DEFAULTS, **values), self.root)
+
+        self.assertEqual(of(), "steamos")
+        self.assertEqual(of(CPU_GOVERNOR="powersave", CPU_EPP="power"),
+                         "powersave")
+        self.assertEqual(of(CPU_GOVERNOR="powersave",
+                            CPU_EPP="balance_performance"), "balanced")
+        # The preference does not count under the governor that pins it.
+        self.assertEqual(of(CPU_GOVERNOR="performance", CPU_EPP="power"),
+                         "performance")
+        # A setting of the control panel that no profile is.
+        self.assertEqual(of(CPU_GOVERNOR="powersave", CPU_EPP="balance_power"),
+                         "custom")
+        self.assertEqual(of(CPU_GOVERNOR="powersave", CPU_EPP="default"),
+                         "custom")
+
+    def test_each_profile_is_its_own_profile_again(self):
+        for name in power.profiles(self.root):
+            settings = dict(power.DEFAULTS,
+                            **power.profile_settings(name, self.root))
+            self.assertEqual(power.profile_of(settings, self.root), name)
+
+    def test_applied_it_runs_on_every_policy(self):
+        settings = power.profile_settings("powersave", self.root)
+        code, said = self._apply(**settings)
+        self.assertEqual(code, 0, said)
+        for cpu in range(self.CPUS):
+            self.assertEqual(self._get(cpu, power.GOVERNOR), "powersave")
+            self.assertEqual(self._get(cpu, power.EPP), "power")
+
+
+class IntelProfileTest(ProfileTest):
+    """intel_pstate in its active mode: the same five preferences."""
+
+    DRIVER = "intel_pstate"
+    MODE = ""
+
+
+class OldIntelProfileTest(FakeCpu):
+    """acpi-cpufreq: no preference, so no "powersave" profile, and a
+    balanced one that follows the load."""
+
+    DRIVER = "acpi-cpufreq"
+    GOVERNORS = "conservative ondemand userspace powersave performance"
+    PREFERENCES = ""
+    MODE = ""
+
+    def test_the_profiles_it_has(self):
+        self.assertEqual(power.profiles(self.root),
+                         ["balanced", "performance", "steamos"])
+        self.assertEqual(power.profile_settings("balanced", self.root),
+                         {"CPU_GOVERNOR": "ondemand"})
+        self.assertIsNone(power.profile_settings("powersave", self.root))
+
+    def test_the_lowest_clock_is_no_profile(self):
+        self.assertEqual(power.profile_of(
+            dict(power.DEFAULTS, CPU_GOVERNOR="powersave"), self.root),
+            "custom")
+
+
+class PassiveProfileTest(FakeCpu):
+    """amd-pstate in its passive mode: schedutil is the balanced one."""
+
+    GOVERNORS = "conservative ondemand userspace powersave performance schedutil"
+    PREFERENCES = ""
+    MODE = "passive"
+    DRIVER = "amd-pstate"
+
+    def test_schedutil_comes_before_ondemand(self):
+        self.assertEqual(power.profiles(self.root),
+                         ["balanced", "performance", "steamos"])
+        self.assertEqual(power.profile_settings("balanced", self.root),
+                         {"CPU_GOVERNOR": "schedutil"})
+        self.assertEqual(power.profile_of(
+            dict(power.DEFAULTS, CPU_GOVERNOR="schedutil", CPU_EPP="power"),
+            self.root), "balanced")
+        self.assertEqual(power.profile_of(
+            dict(power.DEFAULTS, CPU_GOVERNOR="ondemand"), self.root),
+            "custom")
+
+
+class NoCpufreqProfileTest(unittest.TestCase):
+
+    def test_steamos_is_the_one_profile_of_a_machine_without_cpufreq(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(power.profiles(root), ["steamos"])
+            self.assertIsNone(power.profile_settings("balanced", root))
+
+
 class ConfigFileTest(FakeCpu):
 
     def test_the_file_round_trips(self):

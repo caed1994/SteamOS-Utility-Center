@@ -341,6 +341,14 @@ class AnswerSizeTest(unittest.TestCase):
                                                 "game": longest}), \
                 mock.patch.object(companion._boost, "read",
                                   return_value=False), \
+                mock.patch.object(companion, "cpu",
+                                  return_value={
+                                      "profile": "performance",
+                                      "offers": ["powersave", "balanced",
+                                                 "performance", "steamos"],
+                                      "governor": "G" * companion.CPU_WORD,
+                                      "epp": "E" * companion.CPU_WORD,
+                                      "driver": "D" * companion.CPU_WORD}), \
                 mock.patch.object(companion.pcinfo, "system",
                                   return_value={"os": "O" * 31,
                                                 "build": "B" * 23,
@@ -717,6 +725,40 @@ class ServiceTest(unittest.TestCase):
         wrote.assert_not_called()
         ran.assert_not_called()
 
+    def test_a_signed_change_of_the_cpu_is_applied(self):
+        self.serve()
+        with mock.patch.object(companion, "cpu_change",
+                               return_value=(200, {"ok": True})) as changed:
+            answer = self.ask("POST", companion.CPU_PATH,
+                              json.dumps({"profile": "balanced"}).encode())
+        self.assertEqual(answer.status, 200)
+        changed.assert_called_once_with({"profile": "balanced"})
+
+    def test_an_unsigned_change_of_the_cpu_reaches_nothing(self):
+        conn = self.serve()
+        with mock.patch.object(companion, "cpu_change") as changed:
+            conn.request("POST", companion.CPU_PATH,
+                         json.dumps({"profile": "performance"}).encode())
+            answer = conn.getresponse()
+            answer.read()
+        self.assertEqual(answer.status, 401)
+        changed.assert_not_called()
+
+    def test_the_status_carries_the_cpu(self):
+        conn = self.serve()
+        profile = {"profile": "balanced", "offers": ["balanced", "steamos"],
+                   "governor": "powersave", "epp": "balance_performance",
+                   "driver": "amd-pstate-epp"}
+        with mock.patch.object(companion, "cpu", return_value=profile):
+            nonce = self.nonces.issue()
+            conn.request("GET", "/v1/status", headers={
+                companion.NONCE_HEADER: nonce,
+                companion.AUTH_HEADER: companion.signature(
+                    TOKEN, "GET", "/v1/status", nonce, b"")})
+            answer = conn.getresponse()
+            said = json.loads(answer.read())
+        self.assertEqual(said["cpu"], profile)
+
     def test_the_status_carries_the_led_bar(self):
         conn = self.serve()
         effects = {"desktop": "aurora", "game": "load"}
@@ -858,6 +900,150 @@ class BoostTest(unittest.TestCase):
         for name in names:
             self.assertTrue(name in companion.ACTIONS
                             or name in companion.BOOST_PRESSES, name)
+
+
+class CpuTest(unittest.TestCase):
+    """The CPU profile, as the status reports it and a change sets it."""
+
+    def machine(self, governors="performance powersave",
+                preferences="default performance balance_performance "
+                            "balance_power power",
+                running=("powersave", "balance_performance")):
+        """A sysfs with two policies of amd-pstate in its active mode."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        for cpu in range(2):
+            where = os.path.join(root,
+                                 "sys/devices/system/cpu/cpu%d/cpufreq" % cpu)
+            os.makedirs(where)
+            files = {"scaling_driver": "amd-pstate-epp",
+                     "scaling_available_governors": governors,
+                     "scaling_governor": running[0]}
+            if preferences:
+                files["energy_performance_available_preferences"] = preferences
+                files["energy_performance_preference"] = running[1]
+            for name, text in files.items():
+                with open(os.path.join(where, name), "w") as handle:
+                    handle.write(text + "\n")
+        return root
+
+    def status(self, root, settings=None, present=True):
+        with mock.patch.object(companion.power, "read",
+                               return_value=dict(companion.power.DEFAULTS,
+                                                 **(settings or {}))):
+            return companion.cpu(present=lambda path: present, root=root)
+
+    def test_a_machine_without_the_power_module_has_no_page(self):
+        self.assertIsNone(self.status(self.machine(), present=False))
+
+    def test_the_power_module_is_known_by_its_applier(self):
+        looked = []
+        companion.cpu(present=lambda path: looked.append(path),
+                      root=self.machine())
+        self.assertEqual(looked, [companion.ctl.APPLY_POWER])
+
+    def test_a_machine_without_cpufreq_has_no_page(self):
+        empty = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        self.assertIsNone(self.status(empty))
+
+    def test_the_profile_of_the_file_and_what_runs(self):
+        said = self.status(self.machine(), {"CPU_GOVERNOR": "powersave",
+                                            "CPU_EPP": "power"})
+        self.assertEqual(said, {"profile": "powersave",
+                                "offers": ["powersave", "balanced",
+                                           "performance", "steamos"],
+                                "governor": "powersave",
+                                "epp": "balance_performance",
+                                "driver": "amd-pstate-epp"})
+
+    def test_no_setting_is_steamos_and_another_setting_is_custom(self):
+        root = self.machine()
+        self.assertEqual(self.status(root)["profile"], "steamos")
+        self.assertEqual(self.status(root, {"CPU_GOVERNOR": "powersave",
+                                            "CPU_EPP": "balance_power"})
+                         ["profile"], "custom")
+
+    def test_a_machine_without_a_preference_offers_less(self):
+        root = self.machine(governors="ondemand performance powersave",
+                            preferences="", running=("ondemand", ""))
+        said = self.status(root)
+        self.assertEqual(said["offers"], ["balanced", "performance",
+                                          "steamos"])
+        self.assertEqual(said["epp"], "")
+
+    def test_a_word_of_the_kernel_is_cut_to_the_room_of_the_panel(self):
+        root = self.machine(governors="performance " + "g" * 40,
+                            running=("g" * 40, "balance_performance"))
+        said = self.status(root)
+        self.assertEqual(len(said["governor"]), companion.CPU_WORD)
+
+    def change(self, request, root, refusal=None):
+        wrote = []
+
+        def write(updates):
+            wrote.append(updates)
+            if refusal:
+                raise refusal
+
+        return companion.cpu_change(request, write=write, root=root), wrote
+
+    def test_each_profile_reaches_its_settings(self):
+        root = self.machine()
+        for name in companion.power.profiles(root):
+            (code, _), wrote = self.change({"profile": name}, root)
+            self.assertEqual((code, wrote),
+                             (200, [companion.power.profile_settings(name,
+                                                                     root)]),
+                             name)
+        self.assertEqual(self.change({"profile": "steamos"}, root)[1],
+                         [{"CPU_GOVERNOR": ""}])
+
+    def test_anything_else_reaches_nothing(self):
+        root = self.machine(governors="ondemand performance powersave",
+                            preferences="", running=("ondemand", ""))
+        for request in (None, [], "balanced", {}, {"profile": "turbo"},
+                        {"profile": "powersave"}, {"profile": "custom"},
+                        {"profile": 3}, {"profile": "balanced", "epp": "x"},
+                        {"CPU_GOVERNOR": "performance"}):
+            (code, _), wrote = self.change(request, root)
+            self.assertEqual((code, wrote), (400, []), request)
+
+    def test_a_refusal_comes_back_as_its_own_code(self):
+        root = self.machine()
+        for refusal, wanted in (
+                (companion.ctl.NotInstalled("no module"), 501),
+                (companion.ctl.NotPermitted("no rule"), 403),
+                (companion.ctl.CtlError("refused"), 502),
+                (ValueError("not offered"), 502)):
+            with mock.patch.object(companion.sys, "stderr"):
+                (code, _), _ = self.change({"profile": "balanced"}, root,
+                                           refusal)
+            self.assertEqual(code, wanted, refusal)
+
+    def test_a_second_change_during_the_first_waits_its_turn(self):
+        root = self.machine()
+        started, release = threading.Event(), threading.Event()
+        answers = []
+
+        def slow(updates):
+            started.set()
+            release.wait(5)
+
+        first = threading.Thread(target=lambda: answers.append(
+            companion.cpu_change({"profile": "balanced"}, write=slow,
+                                 root=root)))
+        first.start()
+        self.assertTrue(started.wait(5))
+        (code, _), wrote = self.change({"profile": "powersave"}, root)
+        self.assertEqual((code, wrote), (409, []))
+        # The LED bar has a lock of its own.
+        self.assertEqual(companion.led_change({"desktop": "off"},
+                                              write=lambda updates: None)[0],
+                         200)
+        release.set()
+        first.join(5)
+        self.assertEqual(answers[0][0], 200)
 
 
 class LedTest(unittest.TestCase):

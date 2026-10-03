@@ -112,8 +112,9 @@ SAYS = {
         "does": "Answers a Smart 86 Box on the network. The panel shows the "
                 "battery of your controller, the volume and the two "
                 "temperatures, and its buttons reach the volume, standby, "
-                "restart and power off. With the LED bar installed, it also "
-                "sets the effect of the bar.",
+                "restart and power off. Where the LED bar and the CPU and "
+                "GPU power module are installed, it also sets the effect of "
+                "the bar, the energy profile of the CPU and Cooling Boost.",
         "brings": "a service in your own session, and a secret that it and "
                   "the panel share. It needs no password and no root, so the "
                   "panel reaches what you reach and nothing more.",

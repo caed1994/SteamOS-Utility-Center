@@ -286,3 +286,82 @@ def validate(values, root=""):
         raise ValueError(
             "CPU_EPP=%s is not one this machine offers: %s"
             % (epp, ", ".join(epp_values(root))))
+
+
+# -- the profiles of the wall panel -----------------------------------------
+#
+# The wall panel has room for a few buttons, and no words for each value that
+# a kernel knows. So it offers profiles: a governor and a preference together,
+# under a name that means something to a person. The control panel and the
+# plugin in Game Mode keep each value.
+#
+# A profile is the first of its candidates that this machine offers. With a
+# preference, "balanced" and "powersave" are the powersave governor, which
+# lets the firmware pick the clock, with the preference that leans one way or
+# the other. Without a preference, "balanced" is a governor that follows the
+# load. The classic powersave governor holds the lowest clock. That is no
+# profile for a machine that plays games, so "powersave" needs a preference.
+# A candidate with no preference asks for none: performance pins it, and the
+# classic governors have none.
+PROFILE_STEAMOS = "steamos"
+PROFILE_CUSTOM = "custom"
+PROFILES = (
+    ("powersave", (("powersave", "power"),)),
+    ("balanced", (("powersave", "balance_performance"),
+                  ("schedutil", UNSET), ("ondemand", UNSET))),
+    ("performance", ((PINNED_GOVERNOR, UNSET),)),
+)
+
+
+def profile_settings(name, root=""):
+    """The settings of one profile on this machine, or None.
+
+    None for a name that is no profile, and for a profile that has none of
+    its candidates here.
+
+    "steamos" is no setting at all. It puts the governor back to unset, and
+    the program that applies it then leaves the CPU alone: SteamOS has the
+    CPU again at the next start, and not before. Nothing knows the governor
+    that SteamOS had before this project changed it.
+    """
+    if name == PROFILE_STEAMOS:
+        return {"CPU_GOVERNOR": UNSET}
+    offered = governors(root)
+    preferences = epp_values(root)
+    for profile, candidates in PROFILES:
+        if profile != name:
+            continue
+        for governor, epp in candidates:
+            if governor not in offered:
+                continue
+            if epp == UNSET:
+                return {"CPU_GOVERNOR": governor}
+            if epp in preferences:
+                return {"CPU_GOVERNOR": governor, "CPU_EPP": epp}
+    return None
+
+
+def profiles(root=""):
+    """The names of the profiles this machine offers, in the order of the
+    panel: the three from the least power to the most, then "steamos"."""
+    return [name for name, _candidates in PROFILES
+            if profile_settings(name, root)] + [PROFILE_STEAMOS]
+
+
+def profile_of(values, root=""):
+    """The profile that these settings are, or "custom" for none of them.
+
+    The settings come from the file, which is what a person asked for. The
+    sysfs files say what runs, and the two can differ: the profile "steamos"
+    leaves the last governor in force until the next start.
+    """
+    governor = values.get("CPU_GOVERNOR", UNSET)
+    if governor == UNSET:
+        return PROFILE_STEAMOS
+    for name, _candidates in PROFILES:
+        wanted = profile_settings(name, root)
+        if not wanted or wanted["CPU_GOVERNOR"] != governor:
+            continue
+        if "CPU_EPP" not in wanted or wanted["CPU_EPP"] == values.get("CPU_EPP"):
+            return name
+    return PROFILE_CUSTOM

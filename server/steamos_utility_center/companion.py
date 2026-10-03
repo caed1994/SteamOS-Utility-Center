@@ -7,12 +7,13 @@ The panel is an ESP32-S3 with a 4 inch touch screen on the wall. It has no
 cable to this machine. It asks over the network every three seconds, and it
 sends a press as a second request. firmware/companion holds its side.
 
-This service answers four paths and nothing else:
+This service answers five paths and nothing else:
 
     GET  /v1/status     the controllers, the audio and the sensors
     POST /v1/action     one of the named presses, Cooling Boost among them
     POST /v1/led        the effect of the LED bar, on the desktop and in the
                         rainbow slot of Game Mode
+    POST /v1/cpu        the energy profile of the CPU
     GET  /v1/firmware   the firmware of the panel, for its update
 
 It runs in the session of the desktop user and never as root. That is not a
@@ -21,11 +22,12 @@ both belong to a session, and a service with no root cannot lose more than
 that session holds. The panel therefore reaches exactly what the person at
 the keyboard reaches.
 
-The LED bar is no exception. Its settings are a file of root, and a change
-goes through the applier of the LED module with `sudo -n`. The rule that
-permits this is the rule the installer writes for the plugin in Game Mode.
-It names one program and one file, so the panel gets no right that the
-person at the keyboard does not have already. See led_change.
+The LED bar and the CPU are no exception. Their settings are files of root,
+and a change goes through the applier of its module with `sudo -n`. The rule
+that permits this is the rule the installer writes for the plugin in Game
+Mode. It names one program and one file for each module, so the panel gets
+no right that the person at the keyboard does not have already. See
+led_change and cpu_change.
 
 The sensors come from temperature.py, which this project already uses for the
 LED bar. Two readers of /sys/class/hwmon become two answers on the day one of
@@ -50,7 +52,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import config as config_module
-from . import ctl, desktop, lact, modules, pcinfo, steamapps, steamcontroller
+from . import ctl, desktop, lact, modules, pcinfo, power, steamapps
+from . import steamcontroller
 from . import temperature
 
 # The port, and the file that holds the shared secret.
@@ -165,6 +168,13 @@ BOOST_WAIT = 0.5
 # Steam keeps the other entries of that menu, and nothing here changes them.
 # See RAINBOW_SHOWS in the configuration file.
 LED_PATH = "/v1/led"
+# The path of a change of the CPU profile. Its one key is "profile", and the
+# value is a profile that this machine offers. See power.PROFILES.
+CPU_PATH = "/v1/cpu"
+# What the panel keeps of the governor, the preference and the driver that
+# run: 23 characters. The longest a kernel of 2026 writes is
+# "balance_performance", at 19.
+CPU_WORD = 23
 LED_CHOICES = {"desktop": ("DESKTOP_SCENE", config_module.DESKTOP_SCENES),
                "game": ("RAINBOW_SHOWS", config_module.RAINBOW_CHOICES)}
 
@@ -1030,6 +1040,9 @@ def status(address=None, token=None, offer=None):
         # Whether Cooling Boost has the fan of the card, or None for no
         # switch. See BoostState.
         "boost": _boost.read(),
+        # The energy profile of the CPU for its page, or None where this
+        # machine has no power module. See cpu.
+        "cpu": cpu(),
         # The firmware for the panel, or None. See FirmwareOffer.
         "firmware": offer.signed(token),
     }
@@ -1202,9 +1215,38 @@ def led(settings=None, present=None):
     return (_led_settings if settings is None else settings).read()
 
 
-# One change at a time. Each change starts the LED service again, and a
-# second change that comes during the first must not overtake it.
+# One change at a time for each module. A change of the LED bar starts the
+# LED service again, and a second change that comes during the first must not
+# overtake it.
 _led_change = threading.Lock()
+_cpu_change = threading.Lock()
+
+
+def _change(write, updates, lock, what):
+    """Gives one change to the applier of a module. Returns (code, body).
+
+    Each refusal has a code of its own, which the panel names: 409 for a
+    change while one runs, 501 for no module, 403 for no sudo rule, and 502
+    for a change that the module refused.
+    """
+    if not lock.acquire(blocking=False):
+        return 409, {"error": "a change is in progress"}
+    try:
+        write(updates)
+    except ctl.NotInstalled:
+        return 501, {"error": "the %s module is not installed" % what}
+    except ctl.NotPermitted:
+        # The installer ran with --no-sudoers, or before the module came.
+        return 403, {"error": "no sudo rule permits the change"}
+    except ValueError as exc:
+        # CtlError and ConfigError are both a ValueError. The sentence goes
+        # to the journal, where a person can read it, and the panel says
+        # that the change did not come through.
+        sys.stderr.write("The %s change was refused: %s\n" % (what, exc))
+        return 502, {"error": "the change was refused"}
+    finally:
+        lock.release()
+    return 200, {"ok": True}
 
 
 def led_change(request, write=None):
@@ -1229,24 +1271,52 @@ def led_change(request, write=None):
         if not isinstance(value, str) or value not in allowed:
             return 400, {"error": "unsupported effect"}
         updates[name] = value
-    if not _led_change.acquire(blocking=False):
-        return 409, {"error": "a change is in progress"}
-    try:
-        (ctl.strip_write if write is None else write)(updates)
-    except ctl.NotInstalled:
-        return 501, {"error": "the LED module is not installed"}
-    except ctl.NotPermitted:
-        # The installer ran with --no-sudoers, or before the LED module came.
-        return 403, {"error": "no sudo rule permits the change"}
-    except ValueError as exc:
-        # CtlError and ConfigError are both a ValueError. The sentence goes
-        # to the journal, where a person can read it, and the panel says
-        # that the change did not come through.
-        sys.stderr.write("The LED change was refused: %s\n" % exc)
-        return 502, {"error": "the change was refused"}
-    finally:
-        _led_change.release()
-    return 200, {"ok": True}
+    return _change(ctl.strip_write if write is None else write, updates,
+                   _led_change, "LED")
+
+
+def cpu(present=None, root=""):
+    """The CPU for the page of the panel, or None.
+
+    None where the power module is not on this machine, and where the
+    machine has no cpufreq. The panel then shows a sentence in place of the
+    buttons.
+
+    "profile" is the profile of the settings file: a name of
+    power.PROFILES, "steamos" for no setting, or "custom" for a setting of
+    the control panel that no profile is. "offers" holds the profiles of
+    this machine. "governor" and "epp" are what runs, which can differ from
+    the file: "steamos" leaves the last governor in force until the next
+    start. Files in sysfs and one in /etc, and no process.
+    """
+    if not modules.installed(modules.POWER, present=present):
+        return None
+    if not power.policies(root):
+        return None
+    running = power.current(root)
+    return {"profile": power.profile_of(power.read(), root),
+            "offers": power.profiles(root),
+            "governor": running.get("CPU_GOVERNOR", "")[:CPU_WORD],
+            "epp": running.get("CPU_EPP", "")[:CPU_WORD],
+            "driver": power.driver(root)[:CPU_WORD]}
+
+
+def cpu_change(request, write=None, root=""):
+    """Applies one profile from the page of the CPU. Returns (code, body).
+
+    request is the JSON of the body: {"profile": "balanced"}. A profile that
+    this machine does not offer reaches nothing, and a key beside "profile"
+    neither. The change goes through ctl.power_write, as a change from the
+    plugin in Game Mode does: the applier checks it against the machine,
+    writes sysfs and keeps it for the next start.
+    """
+    if not isinstance(request, dict) or set(request) != {"profile"}:
+        return 400, {"error": "invalid request"}
+    name = request["profile"]
+    if not isinstance(name, str) or name not in power.profiles(root):
+        return 400, {"error": "unsupported profile"}
+    return _change(ctl.power_write if write is None else write,
+                   power.profile_settings(name, root), _cpu_change, "CPU")
 
 
 def signature(token, method, path, nonce, body):
@@ -1381,7 +1451,7 @@ def make_handler(token, nonces=None, offer=None):
                 return self.reply(400, {"error": "invalid request"})
             if not self.authorized(body):
                 return self.reply(401, {"error": "unauthorized"})
-            if self.path not in ("/v1/action", LED_PATH):
+            if self.path not in ("/v1/action", LED_PATH, CPU_PATH):
                 return self.reply(404, {"error": "not found"})
             try:
                 request = json.loads(body)
@@ -1389,6 +1459,8 @@ def make_handler(token, nonces=None, offer=None):
                 return self.reply(400, {"error": "invalid request"})
             if self.path == LED_PATH:
                 return self.reply(*led_change(request))
+            if self.path == CPU_PATH:
+                return self.reply(*cpu_change(request))
             if not isinstance(request, dict) or "action" not in request:
                 return self.reply(400, {"error": "invalid request"})
             self.reply(*press(request["action"]))
