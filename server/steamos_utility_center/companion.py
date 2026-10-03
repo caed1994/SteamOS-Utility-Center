@@ -12,7 +12,8 @@ This service answers five paths and nothing else:
     GET  /v1/status     the controllers, the audio and the sensors
     POST /v1/action     one of the named presses, Cooling Boost among them
     POST /v1/led        the effect of the LED bar, on the desktop and in the
-                        rainbow slot of Game Mode
+                        rainbow slot of Game Mode, and the colour and the
+                        brightness of the desktop scenes
     POST /v1/cpu        the energy profile of the CPU
     GET  /v1/firmware   the firmware of the panel, for its update
 
@@ -52,7 +53,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import config as config_module
-from . import ctl, desktop, lact, modules, pcinfo, power, steamapps
+from . import ctl, desktop, lact, modules, notify, pcinfo, power, steamapps
 from . import steamcontroller
 from . import temperature
 
@@ -177,6 +178,20 @@ CPU_PATH = "/v1/cpu"
 CPU_WORD = 23
 LED_CHOICES = {"desktop": ("DESKTOP_SCENE", config_module.DESKTOP_SCENES),
                "game": ("RAINBOW_SHOWS", config_module.RAINBOW_CHOICES)}
+# The colour and the brightness of the scenes on the desktop. The same key is
+# in the status and in a change, and the value is the setting of the LED
+# service that the key names. desktop.SCENES_WITH_COLOUR and
+# desktop.SCENES_LIT say which scenes use each one.
+LED_LOOK = {"desktop_color": "DESKTOP_COLOR",
+            "desktop_brightness": "DESKTOP_BRIGHTNESS"}
+# The colours that a change can set: the nine colours that the control panel
+# offers for DESKTOP_COLOR, in its order. The file accepts each colour, and
+# the panel offers these and no others. tests/test_companion.py holds this
+# list equal to the list of the control panel.
+LED_COLOURS = ("#ff0000", "#ff8000", "#ffff00", "#00ff00", "#00ffff",
+               "#0000ff", "#8000ff", "#ff00ff", "#ffffff")
+# The limits of DESKTOP_BRIGHTNESS. config.validate has the same two.
+LED_BRIGHTNESS = (0, 255)
 
 # Where a person of this machine looks for a drive.
 #
@@ -1034,8 +1049,9 @@ def status(address=None, token=None, offer=None):
         "achievements": steamapps.now_playing_achievements(),
         "drives": drives()[:PANEL_DRIVES],
         "pc": pc(address),
-        # The two effects of the LED bar for its page, or None where this
-        # machine has no LED module. See led.
+        # The two effects of the LED bar for its page, and the colour and
+        # the brightness of the desktop scenes, or None where this machine
+        # has no LED module. See led.
         "led": led(),
         # Whether Cooling Boost has the fan of the card, or None for no
         # switch. See BoostState.
@@ -1154,7 +1170,8 @@ def boost_press(action, run=None):
 
 
 class LedSettings:
-    """The two effects of the LED bar, out of the file of the LED service.
+    """The two effects of the LED bar, and the colour and the brightness of
+    the desktop scenes, out of the file of the LED service.
 
     The panel asks every three seconds, and the file changes only when
     somebody changes a setting. So this reads the file again only when its
@@ -1172,7 +1189,9 @@ class LedSettings:
         self._lock = threading.Lock()
 
     def read(self):
-        """{"desktop": scene, "game": effect of the rainbow slot}, or None.
+        """{"desktop": scene, "game": effect of the rainbow slot,
+        "desktop_color": "#rrggbb", "desktop_brightness": 0 to 255}, or
+        None.
 
         None for a file with an error. The LED service does not start with
         such a file, so there is no effect to show.
@@ -1198,14 +1217,23 @@ class LedSettings:
             config_module.validate(values)
         except (OSError, ValueError):
             return None
-        return {key: values[name] for key, (name, _) in LED_CHOICES.items()}
+        found = {key: values[name] for key, (name, _) in LED_CHOICES.items()}
+        # The file can name a colour as "#RRGGBB", "r,g,b" or the name of a
+        # notification. The panel compares the colour with its own list, so
+        # the status gives each colour in the one form of that list.
+        found["desktop_color"] = "#%02x%02x%02x" % notify.parse_color(
+            values[LED_LOOK["desktop_color"]])
+        found["desktop_brightness"] = int(
+            values[LED_LOOK["desktop_brightness"]])
+        return found
 
 
 _led_settings = LedSettings()
 
 
 def led(settings=None, present=None):
-    """The effects for the page of the LED bar, or None.
+    """The effects, the colour and the brightness for the page of the LED
+    bar, or None.
 
     None where the LED module is not on this machine, or where its file has
     an error. The panel then shows a sentence in place of the buttons.
@@ -1249,13 +1277,23 @@ def _change(write, updates, lock, what):
     return 200, {"ok": True}
 
 
+def _led_look_takes(key, value):
+    """Whether a change can set this value of LED_LOOK."""
+    if key == "desktop_color":
+        return isinstance(value, str) and value in LED_COLOURS
+    # A JSON true is an int to Python, and it is no brightness.
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and LED_BRIGHTNESS[0] <= value <= LED_BRIGHTNESS[1])
+
+
 def led_change(request, write=None):
     """Applies one change from the page of the LED bar.
 
     Returns (HTTP code, body) for the panel. request is the JSON of the
-    body: {"desktop": "fire"}, {"game": "ooze"}, or the two keys together.
-    A key that is not in LED_CHOICES, or a value that is not in its list,
-    reaches nothing.
+    body: {"desktop": "fire"}, {"game": "ooze"}, {"desktop_color":
+    "#ff0000"}, {"desktop_brightness": 200}, or more than one of these
+    keys together. A key that is not in LED_CHOICES or LED_LOOK, or a value
+    that is not in its list or its limits, reaches nothing.
 
     The change goes through ctl.strip_write, as a change from the plugin in
     Game Mode does. The LED service checks the new file before the applier
@@ -1263,10 +1301,15 @@ def led_change(request, write=None):
     second or two, and the panel waits for this answer.
     """
     if (not isinstance(request, dict) or not request
-            or not set(request) <= set(LED_CHOICES)):
+            or not set(request) <= set(LED_CHOICES) | set(LED_LOOK)):
         return 400, {"error": "invalid request"}
     updates = {}
     for key, value in request.items():
+        if key in LED_LOOK:
+            if not _led_look_takes(key, value):
+                return 400, {"error": "unsupported colour or brightness"}
+            updates[LED_LOOK[key]] = value
+            continue
         name, allowed = LED_CHOICES[key]
         if not isinstance(value, str) or value not in allowed:
             return 400, {"error": "unsupported effect"}

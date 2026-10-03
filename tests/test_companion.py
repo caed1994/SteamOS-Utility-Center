@@ -30,8 +30,10 @@ from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "server"))
+sys.path.insert(0, os.path.join(REPO, "gui"))
 
 from steamos_utility_center import companion, temperature      # noqa: E402
+import ledpanel                                                 # noqa: E402
 
 TOKEN = "x" * 32
 # A machine with no input devices, for the tests of the batteries alone.
@@ -338,7 +340,9 @@ class AnswerSizeTest(unittest.TestCase):
                                   return_value=[drive] * 12), \
                 mock.patch.object(companion, "led",
                                   return_value={"desktop": longest,
-                                                "game": longest}), \
+                                                "game": longest,
+                                                "desktop_color": "#ffffff",
+                                                "desktop_brightness": 255}), \
                 mock.patch.object(companion._boost, "read",
                                   return_value=False), \
                 mock.patch.object(companion, "cpu",
@@ -691,6 +695,15 @@ class ServiceTest(unittest.TestCase):
         with mock.patch.object(companion.ctl, "strip_write") as wrote:
             self.assertEqual(self.led({"desktop": "fire"}).status, 200)
         wrote.assert_called_once_with({"DESKTOP_SCENE": "fire"})
+
+    def test_a_signed_change_of_the_colour_is_applied(self):
+        self.serve()
+        with mock.patch.object(companion.ctl, "strip_write") as wrote:
+            self.assertEqual(self.led({"desktop_color": "#ff0000",
+                                       "desktop_brightness": 200}).status,
+                             200)
+        wrote.assert_called_once_with({"DESKTOP_COLOR": "#ff0000",
+                                       "DESKTOP_BRIGHTNESS": 200})
 
     def test_an_unsigned_change_of_the_led_bar_reaches_nothing(self):
         conn = self.serve()
@@ -1072,21 +1085,38 @@ class LedTest(unittest.TestCase):
 
     def test_the_two_effects_come_from_the_file(self):
         reader = companion.LedSettings(
-            self.settings("DESKTOP_SCENE=fire\nRAINBOW_SHOWS=ooze\n"))
+            self.settings("DESKTOP_SCENE=fire\nRAINBOW_SHOWS=ooze\n"
+                          "DESKTOP_COLOR=#ff8000\nDESKTOP_BRIGHTNESS=200\n"))
         self.assertEqual(companion.led(reader, present=lambda path: True),
-                         {"desktop": "fire", "game": "ooze"})
+                         {"desktop": "fire", "game": "ooze",
+                          "desktop_color": "#ff8000",
+                          "desktop_brightness": 200})
 
     def test_what_the_file_leaves_out_is_the_default(self):
         for text in ("LED_COUNT=17\n", None):
             reader = companion.LedSettings(self.settings(text))
             self.assertEqual(reader.read(),
-                             {"desktop": "steam", "game": "rainbow"}, text)
+                             {"desktop": "steam", "game": "rainbow",
+                              "desktop_color": "#ffffff",
+                              "desktop_brightness": 128}, text)
+
+    def test_each_form_of_a_colour_comes_in_the_form_of_the_panel(self):
+        """The file takes "#RRGGBB", "r,g,b" and the name of a kind of
+        notification. The panel compares "#rrggbb" with its list."""
+        for text, colour in (("#FF8000", "#ff8000"), ("ff8000", "#ff8000"),
+                             ("255, 128, 0", "#ff8000"),
+                             ("message", "#%02x%02x%02x"
+                              % companion.notify.KINDS["message"])):
+            reader = companion.LedSettings(
+                self.settings("DESKTOP_COLOR=%s\n" % text))
+            self.assertEqual(reader.read()["desktop_color"], colour, text)
 
     def test_a_file_that_the_service_refuses_has_no_effects(self):
         """The service does not start with such a file, so the bar shows
         none of its effects."""
         for text in ("DESKTOP_SCENE=plasma\n", "NOT_A_SETTING=1\n",
-                     "no equals sign\n"):
+                     "no equals sign\n", "DESKTOP_COLOR=chartreuse\n",
+                     "DESKTOP_BRIGHTNESS=300\n"):
             self.assertIsNone(
                 companion.LedSettings(self.settings(text)).read(), text)
 
@@ -1152,12 +1182,63 @@ class LedChangeTest(unittest.TestCase):
              "game": ("RAINBOW_SHOWS",
                       companion.config_module.RAINBOW_CHOICES)})
 
+    def test_each_colour_and_brightness_reaches_its_setting(self):
+        for colour in companion.LED_COLOURS:
+            (code, _), wrote = self.change({"desktop_color": colour})
+            self.assertEqual((code, wrote),
+                             (200, [{"DESKTOP_COLOR": colour}]), colour)
+        for level in (0, 1, 128, 255):
+            (code, _), wrote = self.change({"desktop_brightness": level})
+            self.assertEqual((code, wrote),
+                             (200, [{"DESKTOP_BRIGHTNESS": level}]), level)
+        (code, _), wrote = self.change({"desktop": "breath",
+                                        "desktop_color": "#00ffff",
+                                        "desktop_brightness": 64})
+        self.assertEqual(wrote, [{"DESKTOP_SCENE": "breath",
+                                  "DESKTOP_COLOR": "#00ffff",
+                                  "DESKTOP_BRIGHTNESS": 64}])
+
+    def test_the_colours_are_the_colours_of_the_control_panel(self):
+        """The panel offers what the control panel offers for the desktop
+        colour, and the service takes those and no other."""
+        self.assertEqual(
+            companion.LED_COLOURS,
+            tuple(value for _, value in ledpanel.NOTIFICATION_COLOURS))
+
+    def test_the_service_takes_each_colour_and_each_limit(self):
+        """A change that passes here and fails in the LED service is a
+        refusal on the panel for a choice the panel offered."""
+        values = dict(companion.config_module.DEFAULTS)
+        for colour in companion.LED_COLOURS:
+            companion.config_module.validate(
+                dict(values, DESKTOP_COLOR=colour))
+        low, high = companion.LED_BRIGHTNESS
+        for level in (low, high):
+            companion.config_module.validate(
+                dict(values, DESKTOP_BRIGHTNESS=level))
+        for level in (low - 1, high + 1):
+            with self.assertRaises(companion.config_module.ConfigError):
+                companion.config_module.validate(
+                    dict(values, DESKTOP_BRIGHTNESS=level))
+
     def test_anything_else_reaches_nothing(self):
         for request in (None, [], "fire", {}, {"desktop": "plasma"},
                         {"game": "off"}, {"desktop": 3},
                         {"desktop": ["fire"]}, {"DESKTOP_SCENE": "fire"},
                         {"desktop": "fire", "LED_COUNT": 1},
-                        {"desktop": "fire", "game": "steam"}):
+                        {"desktop": "fire", "game": "steam"},
+                        {"desktop_color": "#123456"},
+                        {"desktop_color": "#FF0000"},
+                        {"desktop_color": "red"}, {"desktop_color": 0xff0000},
+                        {"desktop_color": ["#ff0000"]},
+                        {"desktop_brightness": -1},
+                        {"desktop_brightness": 256},
+                        {"desktop_brightness": True},
+                        {"desktop_brightness": 12.5},
+                        {"desktop_brightness": "128"},
+                        {"DESKTOP_COLOR": "#ff0000"},
+                        {"desktop_color": "#ff0000", "desktop": "plasma"},
+                        {"desktop": "fire", "desktop_brightness": 300}):
             (code, _), wrote = self.change(request)
             self.assertEqual((code, wrote), (400, []), request)
 
