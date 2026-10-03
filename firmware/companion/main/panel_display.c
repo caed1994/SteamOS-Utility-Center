@@ -206,6 +206,25 @@ static void frame_flushed(lv_event_t *e)
     else panel_frames_shown(&panel_frames,esp_timer_get_time());
 }
 
+/* The clock of LVGL, in whole milliseconds out of the system timer.
+ *
+ * esp_lvgl_port counts the clock itself: a timer of its own adds
+ * timer_period_ms to it each time it fires, and that is 5 ms by default
+ * (ESP_LVGL_PORT_INIT_CONFIG). So the clock moved in steps of 5 ms. An
+ * animation of LVGL, such as the snap of the band, works out where it is
+ * from that clock at each frame, and a frame of 33 ms took 30 or 35 ms of
+ * it. With this the clock is the time that passed, to the millisecond.
+ *
+ * The count of the port goes on and nothing reads it: lv_tick_get takes
+ * this function when there is one. The clock jumps forward once, by the
+ * time from the start of the chip to the start of the port, and that is
+ * before anything is on the screen. It runs over after 49 days, which
+ * LVGL takes: lv_tick_diff counts across the wrap. */
+static uint32_t lvgl_tick_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time()/1000);
+}
+
 lv_display_t *panel_display_start(void)
 {
     const char *tag="panel_display";
@@ -248,6 +267,11 @@ lv_display_t *panel_display_start(void)
     ESP_ERROR_CHECK(lvgl_port_init(&port));
     /* After lvgl_port_init, which is what calls lv_init. */
     lv_log_register_print_cb(lvgl_log);
+    /* Under the lock, so the clock does not change in the middle of a turn
+     * of the LVGL task. See lvgl_tick_ms. */
+    lvgl_port_lock(0);
+    lv_tick_set_cb(lvgl_tick_ms);
+    lvgl_port_unlock();
 
     esp_lcd_panel_handle_t panel=NULL;
     esp_lcd_panel_io_handle_t io=NULL;

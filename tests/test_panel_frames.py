@@ -18,8 +18,8 @@ The frames are not in the state of the screen. A state that changed at
 each frame made panel_ui_update do all of its work at each tick of a
 scroll. The page of the panel reads the count itself.
 
-The last rules hold the internal memory that the radio gives back to the
-display, and the larger caches that it pays for.
+The last rules hold the clock of LVGL, the internal memory that the radio
+gives back to the display, and the larger caches that it pays for.
 """
 
 from __future__ import annotations
@@ -486,6 +486,26 @@ class ThreadsTest(unittest.TestCase):
 
     def test_the_lvgl_task_keeps_the_smaller_stack(self):
         self.assertIn("#define PANEL_LVGL_STACK (16 * 1024)", code("panel_display.c"))
+
+
+class ClockTest(unittest.TestCase):
+    """The clock of LVGL comes from the system timer, to the millisecond.
+    esp_lvgl_port counts it in steps of 5 ms, and an animation of LVGL
+    finds where it is from that clock at each frame."""
+
+    def test_the_clock_reads_the_system_timer(self):
+        self.assertIn("return (uint32_t)(esp_timer_get_time()/1000);",
+                      function(code("panel_display.c"), "lvgl_tick_ms"))
+
+    def test_the_clock_is_set_after_lv_init_and_under_the_lock(self):
+        start = function(code("panel_display.c"), "panel_display_start")
+        self.assertEqual(start.count("lv_tick_set_cb("), 1)
+        found = re.search(r"lvgl_port_lock\(0\);\s*lv_tick_set_cb\(lvgl_tick_ms\);\s*"
+                          r"lvgl_port_unlock\(\);", start)
+        self.assertIsNotNone(found)
+        self.assertLess(start.index("ESP_ERROR_CHECK(lvgl_port_init(&port));"), found.start())
+        # Before the display and anything on it.
+        self.assertLess(found.start(), start.index("bsp_display_new("))
 
 
 class CacheTest(unittest.TestCase):
