@@ -14,7 +14,24 @@ CONFIG_SPIRAM_RODATA=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
+# Larger caches for the drawing, paid for with internal memory.
+#
+# LVGL draws straight into the frame buffer in PSRAM, so each pixel it
+# blends comes through the data cache. The code runs out of PSRAM as well,
+# through the instruction cache, and since the Wi-Fi library left IRAM it
+# shares that cache with the drawing. The page of the panel measured a
+# frame at 39 ms of drawing, and the panel shows one every 22.5 ms.
+#
+# ESP-IDF names a larger cache as a way to more speed in general
+# (api-guides/performance/speed). Espressif's own RGB examples keep the
+# defaults, so the gain here is the one the card of the frames measures.
+#
+# The data cache goes from 32 to 64 KB, and the instruction cache from 16
+# to 32 KB. Together they take about 48 KB of internal memory, and the
+# least the panel measured free before them was 86 KB.
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
 
 CONFIG_FREERTOS_HZ=1000
 # The memory of LVGL out of PSRAM first, through main/panel_lvgl_mem.c.

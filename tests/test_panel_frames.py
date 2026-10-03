@@ -11,7 +11,8 @@ firmware/companion/main/panel_frames.c counts the frames, and the harness
 in tests/c/panel-frames-harness.c drives it here. The rules below hold
 where the frames come from, when the count stands still, and the pace of
 the refresh and of the tasks around the drawing. The last rules hold the
-internal memory that the radio gives back to the display.
+internal memory that the radio gives back to the display, and the larger
+caches that it pays for.
 """
 
 from __future__ import annotations
@@ -293,6 +294,17 @@ class RoomTest(unittest.TestCase):
             self.assertRegex(settings, r"(?m)^%s$" % re.escape(line))
         # No other option puts the code of the radio back into IRAM.
         self.assertNotRegex(settings, r"(?m)^CONFIG_ESP_WIFI_(SLP|EXTRA)_IRAM_OPT=y")
+
+
+class CacheTest(unittest.TestCase):
+    """LVGL draws into a frame buffer in PSRAM and runs out of PSRAM, both
+    through the caches. With internal memory to spare, both are larger."""
+
+    def test_the_caches_are_the_largest_this_chip_has(self):
+        settings = defaults()
+        for line in ("CONFIG_ESP32S3_DATA_CACHE_64KB=y", "CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y",
+                     "CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y"):
+            self.assertRegex(settings, r"(?m)^%s$" % re.escape(line))
 
 
 if __name__ == "__main__":
