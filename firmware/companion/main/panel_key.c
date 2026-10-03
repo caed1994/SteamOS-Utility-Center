@@ -20,3 +20,4 @@ bool panel_key_sample(panel_key_t *key,bool pressed,uint32_t now)
     key->down=false;
     return short_press;
 }
+bool panel_key_pressed(uint32_t levels,uint32_t pin){return (levels&pin)!=0;}

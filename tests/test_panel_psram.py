@@ -129,8 +129,8 @@ class WhereTest(unittest.TestCase):
         self.assertIn('panel_psram_task(sound_task,"panel_sound",6144,3,tskNO_AFFINITY)', main)
         self.assertIn('panel_psram_task(motion_task, "panel_motion", MOTION_TASK_STACK,',
                       code("panel_motion.c"))
-        self.assertIn('panel_psram_task(key_task,"panel_pwrkey",3072,PWRKEY_TASK_PRIORITY,'
-                      'tskNO_AFFINITY)', code("panel_power.c"))
+        self.assertIn('panel_psram_task(key_task,"panel_pwrkey",PWRKEY_TASK_STACK,'
+                      'PWRKEY_TASK_PRIORITY,tskNO_AFFINITY)', code("panel_power.c"))
         for name in ("main.c", "panel_motion.c", "panel_power.c"):
             self.assertNotRegex(code(name), r"\bxTaskCreate\(", name)
 

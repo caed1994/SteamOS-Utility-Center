@@ -1294,8 +1294,8 @@ static void network_task(void *arg)
                 clock_mhz,clock_low,
                 /* The slowest turn of the key loop since the last line.
                  * The shortest press the panel can see is about twice
-                 * this, so a number far above PWRKEY_PERIOD_MS is why a
-                 * press did nothing. See panel_power.c. */
+                 * this, so a number far above PWRKEY_PERIOD_MS means a
+                 * short press can be lost. See panel_power.c. */
                 (unsigned)panel_power_slowest_read_ms(),
                 /* The frames in movement since the page of the panel was
                  * last closed: mean, 95th percentile and most, and the
