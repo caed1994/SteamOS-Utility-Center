@@ -920,8 +920,8 @@ int main(void)
         assert(lv_obj_has_flag(page,LV_OBJ_FLAG_SCROLLABLE));
         assert(lv_obj_get_scroll_dir(page)==LV_DIR_VER);
         assert(lv_obj_get_scroll_bottom(page)>0);
-        // Each row is one line. Its value fits, the name of the card does,
-        // and the bar of the memory is as long as its share.
+        // Each row is one line. Its value fits, and the name of the card
+        // does.
         // The kernel is longer than its room and ends in dots, which LVGL
         // writes into the text. Its label is the one after its name.
         lv_obj_t *kernel_name=label(page,panel_text(TXT_PC_KERNEL));
@@ -933,14 +933,14 @@ int main(void)
         lv_obj_t *gpu=label(page,"Radeon RX 9070/9070 XT/9070 GRE");
         lv_text_get_size(&room,lv_label_get_text(gpu),&panel_font_14,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
         assert(room.x<=lv_obj_get_width(gpu));
+        // The memory is a row of text and nothing more: no bar under it,
+        // and the next row 30 below it, as everywhere else.
         lv_obj_t *memory_row=label(page,"10.0 / 32.0 GB");
         lv_obj_t *card=lv_obj_get_parent(memory_row);
-        lv_obj_t *track=NULL;
-        for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
-            lv_obj_t *o=lv_obj_get_child(card,i);
-            if(lv_obj_get_child_count(o)==1&&!lv_obj_check_type(o,&lv_label_class))track=o;
-        }
-        assert(track&&lv_obj_get_width(lv_obj_get_child(track,0))==lv_obj_get_width(track)*10/32);
+        for(unsigned i=0;i<lv_obj_get_child_count(card);i++)
+            assert(lv_obj_check_type(lv_obj_get_child(card,i),&lv_label_class));
+        assert(lv_obj_get_y(label(card,panel_text(TXT_PC_FAN)))-
+               lv_obj_get_y(label(card,panel_text(TXT_PC_MEMORY)))==30);
         // A number nobody sent is "--", and so is a text.
         panel_pc_t none={.uptime_s=-1,.cpu_load=-1,.fan_rpm=-1,.gpu_fan_rpm=-1,.link_mbit=-1,.answer_ms=-1};
         c.pc=none;
@@ -1007,9 +1007,10 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
-    // The tiles of the temperatures: one for the processor, and one for the
-    // card with its power beside, a short line between. A tap on either
-    // opens the choice of its sensor.
+    // The temperatures and the power of the card: one card across the
+    // screen, three fields of the same width, a short line between each
+    // two. A tap on the processor, or on the card or its power, opens the
+    // choice of its sensor.
     {
         panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
         panel_ui_create(action,setting,sound,&english);
@@ -1025,21 +1026,38 @@ int main(void)
         lv_obj_t *cpu_tile=lv_obj_get_parent(label(screen_now,"49 °C"));
         lv_obj_t *gpu_tile=lv_obj_get_parent(label(screen_now,"56 °C"));
         assert(cpu_tile!=gpu_tile&&lv_obj_get_parent(label(screen_now,"78 W"))==gpu_tile);
+        // One card for the three, across the screen, and not a place for a
+        // tap of its own.
+        lv_obj_t *foot=lv_obj_get_parent(cpu_tile);
+        assert(lv_obj_get_parent(gpu_tile)==foot&&lv_obj_get_parent(foot)==screen_now);
+        assert(!lv_obj_has_flag(foot,LV_OBJ_FLAG_CLICKABLE));
         lv_obj_update_layout(screen_now);
-        assert(lv_obj_get_y(cpu_tile)==lv_obj_get_y(gpu_tile));
-        assert(lv_obj_get_x(cpu_tile)+lv_obj_get_width(cpu_tile)<lv_obj_get_x(gpu_tile));
-        // The line between the temperature and the power of the card.
-        lv_point_t reading;
-        lv_text_get_size(&reading,"56 °C",&panel_font_18,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
-        int32_t temperature_end=lv_obj_get_x(label(screen_now,"56 °C"))+reading.x;
-        int32_t power_start=lv_obj_get_x(label(screen_now,"78 W"));
-        bool between=false;
-        for(unsigned i=0;i<lv_obj_get_child_count(gpu_tile);i++){
-            lv_obj_t *o=lv_obj_get_child(gpu_tile,i);
-            if(lv_obj_get_width(o)==1&&lv_obj_get_height(o)==30
-               &&lv_obj_get_x(o)>temperature_end&&lv_obj_get_x(o)<power_start)between=true;
+        lv_area_t across;
+        lv_obj_get_coords(foot,&across);
+        assert(across.x1==10&&lv_area_get_width(&across)==460);
+        // A line at a third of it and one at two thirds, and nothing else
+        // as thin.
+        int32_t lines[3];
+        unsigned line_count=0;
+        lv_obj_t *holders[2]={foot,gpu_tile};
+        for(unsigned h=0;h<2;h++)
+            for(unsigned i=0;i<lv_obj_get_child_count(holders[h]);i++){
+                lv_obj_t *o=lv_obj_get_child(holders[h],i);
+                if(lv_obj_get_width(o)!=1||lv_obj_get_height(o)!=30)continue;
+                lv_area_t at;
+                lv_obj_get_coords(o,&at);
+                assert(line_count<2);
+                lines[line_count++]=at.x1-across.x1;
+            }
+        assert(line_count==2);
+        assert((lines[0]==153&&lines[1]==306)||(lines[0]==306&&lines[1]==153));
+        // The three readings the same distance into their thirds.
+        static const char *const readings[]={"49 °C","56 °C","78 W"};
+        for(unsigned i=0;i<3;i++){
+            lv_area_t at;
+            lv_obj_get_coords(label(screen_now,readings[i]),&at);
+            assert(at.x1-across.x1==(int32_t)(46+153*i));
         }
-        assert(between);
         // The processor: the choice of the service and both sensors, with
         // a mark on the choice of the service.
         lv_obj_send_event(cpu_tile,LV_EVENT_CLICKED,NULL);

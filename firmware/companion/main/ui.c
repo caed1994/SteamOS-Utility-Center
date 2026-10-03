@@ -167,12 +167,14 @@ static const struct { uint8_t group; panel_text_id_t name; } pc_rows[PC_ROWS]={
     {2,TXT_PC_IP},{2,TXT_PC_LINK},{2,TXT_PC_MAC},{2,TXT_PC_ANSWER}};
 static const panel_text_id_t pc_titles[PC_GROUPS]={TXT_PC_SYSTEM,TXT_PC_HARDWARE,TXT_PC_NETWORK};
 static lv_obj_t *pc_screen,*pc_none,*pc_cards[PC_GROUPS],*pc_values[PC_ROWS];
-static lv_obj_t *pc_memory_track,*pc_memory_bar;
 /* The cards of the page of the PC: the title of a card, a row for each
- * thing 30 apart, the bar of the memory under its row, and the room at
- * the end of a card and between two. A row is one line at 14 px, its name
- * on the left and its value on the right: "Radeon RX 9070/9070 XT/9070
- * GRE" fits the value at that size, and a longer one ends in dots. */
+ * thing 30 apart, and the room at the end of a card and between two. A row
+ * is one line at 14 px, its name on the left and its value on the right:
+ * "Radeon RX 9070/9070 XT/9070 GRE" fits the value at that size, and a
+ * longer one ends in dots.
+ *
+ * The memory is its row of text and nothing more. A bar under it said the
+ * same thing again, and its owner had it taken out. */
 /* The menu of the sensors: the title, a row of 44 for each choice 50
  * apart, and the end of the box. Seven rows at the most, the choice of the
  * service and six sensors, fit the screen. */
@@ -185,13 +187,11 @@ static lv_obj_t *pc_memory_track,*pc_memory_bar;
 #define PC_CARD_TOP 78
 #define PC_TITLE_ROOM 40
 #define PC_ROW_STEP 30
-#define PC_BAR_ROOM 14
 #define PC_CARD_END 10
 #define PC_CARD_GAP 14
 #define PC_NAME_WIDTH 140
 #define PC_VALUE_X 150
 #define PC_VALUE_WIDTH 272
-#define PC_BAR_WIDTH 404
 static void say_size(char *out,size_t room,uint64_t bytes);
 /* The page of the controllers, one card for each of four. */
 static lv_obj_t *pads_screen,*pads_none;
@@ -795,7 +795,7 @@ static lv_obj_t *head_area(lv_obj_t *s,int x,int width,lv_event_cb_t opens)
  * settings_drop: this only drops, and pc_forget deletes as well. */
 static void pc_drop(void)
 {
-    pc_screen=NULL;pc_none=NULL;pc_memory_track=NULL;pc_memory_bar=NULL;
+    pc_screen=NULL;pc_none=NULL;
     for(int i=0;i<PC_GROUPS;i++)pc_cards[i]=NULL;
     for(int i=0;i<PC_ROWS;i++)pc_values[i]=NULL;
 }
@@ -863,12 +863,7 @@ static void pc_show(const panel_state_t *s)
         if(unit)*unit=0;
         snprintf(said,sizeof said,"%s / %s",used,total);
         pc_say(PC_MEMORY,said);
-        lv_obj_remove_flag(pc_memory_track,LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_width(pc_memory_bar,(int32_t)(PC_BAR_WIDTH*pc->memory_used/pc->memory_total));
-    }else{
-        pc_say(PC_MEMORY,"");
-        lv_obj_add_flag(pc_memory_track,LV_OBJ_FLAG_HIDDEN);
-    }
+    }else pc_say(PC_MEMORY,"");
     pc_count(said,sizeof said,panel_text(TXT_RPM),pc->fan_rpm);pc_say(PC_FAN,said);
     pc_count(said,sizeof said,panel_text(TXT_RPM),pc->gpu_fan_rpm);pc_say(PC_GPU_FAN,said);
     pc_say(PC_IP,pc->ip);
@@ -896,7 +891,7 @@ void panel_ui_pc_open(void)
     for(int g=0;g<PC_GROUPS;g++){
         int rows=0;
         for(int r=0;r<PC_ROWS;r++)if(pc_rows[r].group==g)rows++;
-        int height=PC_TITLE_ROOM+rows*PC_ROW_STEP+(g==1?PC_BAR_ROOM:0)+PC_CARD_END;
+        int height=PC_TITLE_ROOM+rows*PC_ROW_STEP+PC_CARD_END;
         lv_obj_t *card=panel(pc_screen,20,top,440,height,CARD,true);
         lv_obj_remove_flag(card,LV_OBJ_FLAG_CLICKABLE);
         pc_cards[g]=card;
@@ -913,17 +908,6 @@ void panel_ui_pc_open(void)
             lv_obj_set_height(pc_values[r],high);
             lv_obj_set_style_text_align(pc_values[r],LV_TEXT_ALIGN_RIGHT,0);
             y+=PC_ROW_STEP;
-            if(r==PC_MEMORY){
-                /* The bar of the memory, under its row, as long as the share
-                 * in use. */
-                pc_memory_track=panel(card,18,y-8,PC_BAR_WIDTH,8,EDGE,false);
-                lv_obj_set_style_radius(pc_memory_track,LV_RADIUS_CIRCLE,0);
-                lv_obj_remove_flag(pc_memory_track,LV_OBJ_FLAG_CLICKABLE);
-                pc_memory_bar=panel(pc_memory_track,0,0,0,8,BLUE,false);
-                lv_obj_set_style_radius(pc_memory_bar,LV_RADIUS_CIRCLE,0);
-                lv_obj_remove_flag(pc_memory_bar,LV_OBJ_FLAG_CLICKABLE);
-                y+=PC_BAR_ROOM;
-            }
         }
         top+=height+PC_CARD_GAP;
     }
@@ -1118,6 +1102,26 @@ static void sensor_menu(bool gpu)
                    s->online?list[i].celsius:-1,known&&panel_sensor_key(list[i].id)==chosen);
 }
 static void cpu_tile_clicked(lv_event_t *e){(void)e;feedback();sensor_menu(false);}
+/* A third of the card of the sensors, which is 460 wide: the processor
+ * from 0, the card from 153 and its power from 306, with a line of 1 at
+ * 153 and at 306. What stands in the card counts from inside its border,
+ * one further in, so those lines are at 152 and 305 there. Each third has
+ * its sign and its words where the two tiles before it had them, 13 and
+ * 46 from the start of the third. See the card in panel_ui_create. */
+#define SENSOR_FIELD 153
+/* A part of that card that a tap opens a choice from: clear, and lit while
+ * it is pressed. */
+static lv_obj_t *sensor_field(lv_obj_t *card,int x,int w,lv_event_cb_t cb)
+{
+    lv_obj_t *f=lv_obj_create(card);lv_obj_remove_style_all(f);
+    lv_obj_set_pos(f,x,0);lv_obj_set_size(f,w,46);
+    lv_obj_remove_flag(f,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_radius(f,5,0);
+    lv_obj_set_style_bg_color(f,lv_color_hex(0x1B2B3C),LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(f,LV_OPA_COVER,LV_STATE_PRESSED);
+    lv_obj_add_event_cb(f,cb,LV_EVENT_CLICKED,NULL);
+    return f;
+}
 /* "Build 61 (1eec536)", out of the version "61-1eec536". */
 static void say_version(char *out,size_t room,const char *version)
 {
@@ -1858,24 +1862,28 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     center_text(history_empty);
     history_stale=true;
     history_show();
-    /* The temperatures and the power of the card: a tile for the
-     * processor, and one for the card that holds its temperature and its
-     * power, with a short line between the two. A tap on a tile opens the
-     * choice of its temperature sensor. */
-    lv_obj_t *cpu_tile=panel(s,10,386,150,48,CARD,true);
-    lv_obj_t *foot=panel(s,170,386,300,48,CARD,true);
-    lv_obj_t *tiles[2]={cpu_tile,foot};
-    for(int i=0;i<2;i++){
-        lv_obj_set_style_bg_color(tiles[i],lv_color_hex(0x1B2B3C),LV_STATE_PRESSED);
-        lv_obj_add_event_cb(tiles[i],i==0?cpu_tile_clicked:gpu_tile_clicked,LV_EVENT_CLICKED,NULL);
-    }
+    /* The temperatures and the power of the card, in one card across the
+     * screen: three fields of the same width, the processor, the card and
+     * its power, with a short line between each two. Two tiles stood
+     * here, the processor and the card with its power, and its owner found
+     * the gap between them not of a piece with the rest.
+     *
+     * A tap on the processor opens the choice of its temperature sensor,
+     * and a tap on the card or its power the choice of the card's. Each of
+     * the two is a field of its own that lights up while it is pressed. */
+    lv_obj_t *foot=panel(s,10,386,460,48,CARD,true);
+    lv_obj_remove_flag(foot,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *cpu_tile=sensor_field(foot,0,SENSOR_FIELD-1,cpu_tile_clicked);
+    lv_obj_t *gpu_tile=sensor_field(foot,SENSOR_FIELD,2*SENSOR_FIELD-1,gpu_tile_clicked);
     lv_obj_remove_flag(icon(cpu_tile,&icon_cpu,12,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
     text_at(cpu_tile,"CPU",45,6,99,&panel_font_12,MUTED);cpu_value=text_at(cpu_tile,"-- C",45,22,99,&panel_font_18,BLUE);
-    lv_obj_remove_flag(icon(foot,&icon_circuit_board,12,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
-    text_at(foot,"GPU",45,6,99,&panel_font_12,MUTED);gpu_value=text_at(foot,"-- C",45,22,99,&panel_font_18,BLUE);
-    line(foot,150,9,1,30);
-    lv_obj_remove_flag(icon(foot,&icon_zap,164,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
-    text_at(foot,"GPU-WATT",196,6,98,&panel_font_12,MUTED);power_value=text_at(foot,"-- W",196,22,98,&panel_font_18,BLUE);
+    line(foot,SENSOR_FIELD-1,9,1,30);
+    lv_obj_remove_flag(icon(gpu_tile,&icon_circuit_board,12,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
+    text_at(gpu_tile,"GPU",45,6,99,&panel_font_12,MUTED);gpu_value=text_at(gpu_tile,"-- C",45,22,99,&panel_font_18,BLUE);
+    line(gpu_tile,SENSOR_FIELD-1,9,1,30);
+    lv_obj_remove_flag(icon(gpu_tile,&icon_zap,SENSOR_FIELD+12,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
+    text_at(gpu_tile,"GPU-WATT",SENSOR_FIELD+45,6,99,&panel_font_12,MUTED);
+    power_value=text_at(gpu_tile,"-- W",SENSOR_FIELD+45,22,99,&panel_font_18,BLUE);
     /* The bottom row: the settings on the left, what the panel has to
      * say in the middle, and the state of the panel itself on the right.
      *
