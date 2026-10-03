@@ -43,6 +43,23 @@ static void click_in(lv_obj_t *root,const char *text)
     lv_obj_send_event(b,LV_EVENT_CLICKED,NULL);
 }
 static void click(const char *text){click_in(lv_screen_active(),text);}
+// Where the one sign in "holder" starts that stands from "start" on and
+// ends before "words": the sign of a third of the card of the sensors.
+static int32_t sign_before(lv_obj_t *holder,int32_t start,int32_t words)
+{
+    int32_t found=LV_COORD_MAX;
+    for(unsigned i=0;i<lv_obj_get_child_count(holder);i++){
+        lv_obj_t *o=lv_obj_get_child(holder,i);
+        if(!lv_obj_check_type(o,&lv_image_class))continue;
+        lv_area_t at;
+        lv_obj_get_coords(o,&at);
+        if(at.x1<start||at.x2>=words)continue;
+        assert(found==LV_COORD_MAX);
+        found=at.x1;
+    }
+    assert(found!=LV_COORD_MAX);
+    return found;
+}
 // The band is the one object on the screen that scrolls sideways.
 static lv_obj_t *find_band(lv_obj_t *root)
 {
@@ -1051,12 +1068,48 @@ int main(void)
             }
         assert(line_count==2);
         assert((lines[0]==153&&lines[1]==306)||(lines[0]==306&&lines[1]==153));
-        // The three readings the same distance into their thirds.
+        // Each third holds its sign, its caption and its reading as one
+        // block in its middle: the room before the sign is the room after
+        // the block, or one less. The block is as wide as the wider of the
+        // caption and the widest reading of the third, two digits for a
+        // temperature and three for the power.
         static const char *const readings[]={"49 °C","56 °C","78 W"};
+        static const char *const captions[]={"CPU","GPU","GPU-WATT"};
+        static const char *const widest[]={"00 °C","00 °C","000 W"};
+        int32_t signs[3];
         for(unsigned i=0;i<3;i++){
-            lv_area_t at;
-            lv_obj_get_coords(label(screen_now,readings[i]),&at);
-            assert(at.x1-across.x1==(int32_t)(46+153*i));
+            lv_obj_t *reading=label(screen_now,readings[i]),*caption=label(screen_now,captions[i]);
+            lv_area_t words,said;
+            lv_obj_get_coords(reading,&words);
+            lv_obj_get_coords(caption,&said);
+            // The caption over the reading, from the same edge.
+            assert(said.x1==words.x1);
+            int32_t start=across.x1+1+153*(int32_t)i,end=start+152;
+            signs[i]=sign_before(lv_obj_get_parent(reading),start,words.x1);
+            lv_point_t a,b;
+            lv_text_get_size(&a,captions[i],lv_obj_get_style_text_font(caption,0),0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+            lv_text_get_size(&b,widest[i],lv_obj_get_style_text_font(reading,0),0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+            int32_t before=signs[i]-start,after=end-(words.x1+LV_MAX(a.x,b.x));
+            assert(after-before==0||after-before==1);
+        }
+        // A reading of another width moves nothing. A block as wide as the
+        // reading of the moment would move its sign at each change of the
+        // number.
+        {
+            panel_state_t other=t;
+            other.cpu_temp=51;other.gpu_temp=100;other.gpu_watts=245;
+            panel_ui_update(&other);
+            lv_obj_update_layout(screen_now);
+            static const char *const changed[]={"51 °C","100 °C","245 W"};
+            for(unsigned i=0;i<3;i++){
+                lv_obj_t *reading=label(screen_now,changed[i]);
+                assert(reading);
+                lv_area_t words;
+                lv_obj_get_coords(reading,&words);
+                int32_t start=across.x1+1+153*(int32_t)i;
+                assert(sign_before(lv_obj_get_parent(reading),start,words.x1)==signs[i]);
+            }
+            panel_ui_update(&t);
         }
         // The processor: the choice of the service and both sensors, with
         // a mark on the choice of the service.

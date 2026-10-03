@@ -1105,10 +1105,39 @@ static void cpu_tile_clicked(lv_event_t *e){(void)e;feedback();sensor_menu(false
 /* A third of the card of the sensors, which is 460 wide: the processor
  * from 0, the card from 153 and its power from 306, with a line of 1 at
  * 153 and at 306. What stands in the card counts from inside its border,
- * one further in, so those lines are at 152 and 305 there. Each third has
- * its sign and its words where the two tiles before it had them, 13 and
- * 46 from the start of the third. See the card in panel_ui_create. */
+ * one further in, so those lines are at 152 and 305 there, and each third
+ * is SENSOR_FIELD-1 wide. See the card in panel_ui_create. */
 #define SENSOR_FIELD 153
+/* From the sign of a third to its words. */
+#define SENSOR_GAP 9
+/* How wide a text is in a font. */
+static int32_t text_width(const char *text,const lv_font_t *font)
+{
+    lv_point_t size;
+    lv_text_get_size(&size,text,font,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+    return size.x;
+}
+/* The sign, the caption and the reading of the third that starts at
+ * "from", as one block in the middle of the third. Returns the reading.
+ *
+ * Reported from the board: the readings stood at the left of their
+ * thirds, and the rest of each third was empty.
+ *
+ * The block is as wide as the wider of the caption and "widest", a
+ * reading as wide as the ones the third shows, and not as wide as the
+ * reading of the moment. The digits of this font are not all of one
+ * width, and a block that followed the reading would move its sign by
+ * three pixels from 49 to 51 degrees. */
+static lv_obj_t *sensor_reading(lv_obj_t *field,int from,const lv_image_dsc_t *sign,
+                                const char *caption,const char *widest,const char *first)
+{
+    int32_t words=LV_MAX(text_width(caption,&panel_font_12),text_width(widest,&panel_font_18));
+    int32_t x=from+(SENSOR_FIELD-1-(int32_t)sign->header.w-SENSOR_GAP-words)/2;
+    int32_t text=x+(int32_t)sign->header.w+SENSOR_GAP,room=from+SENSOR_FIELD-1-text;
+    lv_obj_remove_flag(icon(field,sign,x,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
+    text_at(field,caption,text,6,room,&panel_font_12,MUTED);
+    return text_at(field,first,text,22,room,&panel_font_18,BLUE);
+}
 /* A part of that card that a tap opens a choice from: clear, and lit while
  * it is pressed. */
 static lv_obj_t *sensor_field(lv_obj_t *card,int x,int w,lv_event_cb_t cb)
@@ -1875,15 +1904,11 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_remove_flag(foot,LV_OBJ_FLAG_CLICKABLE);
     lv_obj_t *cpu_tile=sensor_field(foot,0,SENSOR_FIELD-1,cpu_tile_clicked);
     lv_obj_t *gpu_tile=sensor_field(foot,SENSOR_FIELD,2*SENSOR_FIELD-1,gpu_tile_clicked);
-    lv_obj_remove_flag(icon(cpu_tile,&icon_cpu,12,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
-    text_at(cpu_tile,"CPU",45,6,99,&panel_font_12,MUTED);cpu_value=text_at(cpu_tile,"-- C",45,22,99,&panel_font_18,BLUE);
+    cpu_value=sensor_reading(cpu_tile,0,&icon_cpu,"CPU","00 °C","-- °C");
     line(foot,SENSOR_FIELD-1,9,1,30);
-    lv_obj_remove_flag(icon(gpu_tile,&icon_circuit_board,12,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
-    text_at(gpu_tile,"GPU",45,6,99,&panel_font_12,MUTED);gpu_value=text_at(gpu_tile,"-- C",45,22,99,&panel_font_18,BLUE);
+    gpu_value=sensor_reading(gpu_tile,0,&icon_circuit_board,"GPU","00 °C","-- °C");
     line(gpu_tile,SENSOR_FIELD-1,9,1,30);
-    lv_obj_remove_flag(icon(gpu_tile,&icon_zap,SENSOR_FIELD+12,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
-    text_at(gpu_tile,"GPU-WATT",SENSOR_FIELD+45,6,99,&panel_font_12,MUTED);
-    power_value=text_at(gpu_tile,"-- W",SENSOR_FIELD+45,22,99,&panel_font_18,BLUE);
+    power_value=sensor_reading(gpu_tile,SENSOR_FIELD,&icon_zap,"GPU-WATT","000 W","-- W");
     /* The bottom row: the settings on the left, what the panel has to
      * say in the middle, and the state of the panel itself on the right.
      *
