@@ -428,6 +428,22 @@ class MissingModuleTest(unittest.TestCase):
             ctl.privileged(["/bin/true", "/tmp/nothing"], run=refuse)
         self.assertIn(ctl.SUDO_RULE, str(caught.exception))
 
+    def test_each_refusal_has_a_class_that_a_caller_can_tell_apart(self):
+        """The wall panel shows a different text for each, and it must not
+        read the sentence to find out which one it got."""
+        def refuse(command, timeout=120):
+            return 1, "sudo: a password is required"
+
+        with self.assertRaises(ctl.NotInstalled):
+            ctl.privileged([ctl.APPLY_POWER, "/tmp/nothing"], run=refuse)
+        with self.assertRaises(ctl.NotPermitted):
+            ctl.privileged(["/bin/true", "/tmp/nothing"], run=refuse)
+        with self.assertRaises(ctl.CtlError) as caught:
+            ctl.privileged(["/bin/true"],
+                           run=lambda command, timeout=120: (1, "no drive"))
+        self.assertNotIsInstance(caught.exception,
+                                 (ctl.NotInstalled, ctl.NotPermitted))
+
     def test_the_switch_belongs_to_the_power_module(self):
         """It is that module's program, and it is not the file that marks it."""
         self.assertEqual(ctl.module_of(ctl.RESUME_WAKE), modules.POWER)

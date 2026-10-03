@@ -314,6 +314,8 @@ class AnswerSizeTest(unittest.TestCase):
                                      "size": companion.SLOT_BYTES,
                                      "sha256": sha, "sign": sha}
         name = mock.Mock(nodename="H" * 64)
+        longest = max(companion.config_module.DESKTOP_SCENES
+                      + companion.config_module.RAINBOW_CHOICES, key=len)
         with mock.patch.object(companion.steamcontroller, "batteries",
                                return_value=[pad] * 8), \
                 mock.patch.object(companion, "controllers",
@@ -334,6 +336,9 @@ class AnswerSizeTest(unittest.TestCase):
                                                 "total": 99999}), \
                 mock.patch.object(companion, "drives",
                                   return_value=[drive] * 12), \
+                mock.patch.object(companion, "led",
+                                  return_value={"desktop": longest,
+                                                "game": longest}), \
                 mock.patch.object(companion.pcinfo, "system",
                                   return_value={"os": "O" * 31,
                                                 "build": "B" * 23,
@@ -666,6 +671,216 @@ class ServiceTest(unittest.TestCase):
         for name, command in companion.ACTIONS.items():
             self.assertIsInstance(command, tuple, name)
             self.assertTrue(all(isinstance(one, str) for one in command), name)
+
+    def led(self, request, **kw):
+        return self.ask("POST", companion.LED_PATH,
+                        json.dumps(request).encode(), **kw)
+
+    def test_a_signed_change_of_the_led_bar_is_applied(self):
+        self.serve()
+        with mock.patch.object(companion.ctl, "strip_write") as wrote:
+            self.assertEqual(self.led({"desktop": "fire"}).status, 200)
+        wrote.assert_called_once_with({"DESKTOP_SCENE": "fire"})
+
+    def test_an_unsigned_change_of_the_led_bar_reaches_nothing(self):
+        conn = self.serve()
+        with mock.patch.object(companion.ctl, "strip_write") as wrote:
+            conn.request("POST", companion.LED_PATH,
+                         json.dumps({"desktop": "off"}).encode())
+            answer = conn.getresponse()
+            answer.read()
+        self.assertEqual(answer.status, 401)
+        wrote.assert_not_called()
+
+    def test_a_captured_change_cannot_carry_another_effect(self):
+        """The body is under the signature, as it is for a press."""
+        self.serve()
+        nonce = self.nonces.issue()
+        off = json.dumps({"desktop": "off"}).encode()
+        auth = companion.signature(TOKEN, "POST", companion.LED_PATH, nonce,
+                                   off)
+        with mock.patch.object(companion.ctl, "strip_write") as wrote:
+            self.assertEqual(self.led({"desktop": "fire"}, nonce=nonce,
+                                      auth=auth).status, 401)
+        wrote.assert_not_called()
+
+    def test_a_press_is_not_a_change_of_the_led_bar(self):
+        """Each path reads its own keys. A press sent to the path of the
+        LED bar changes nothing, and runs nothing."""
+        self.serve()
+        with mock.patch.object(companion.ctl, "strip_write") as wrote, \
+                mock.patch.object(companion.subprocess, "run") as ran:
+            self.assertEqual(self.led({"action": "poweroff"}).status, 400)
+            self.assertEqual(self.action("fire").status, 400)
+        wrote.assert_not_called()
+        ran.assert_not_called()
+
+    def test_the_status_carries_the_led_bar(self):
+        conn = self.serve()
+        effects = {"desktop": "aurora", "game": "load"}
+        with mock.patch.object(companion, "led", return_value=effects):
+            nonce = self.nonces.issue()
+            conn.request("GET", "/v1/status", headers={
+                companion.NONCE_HEADER: nonce,
+                companion.AUTH_HEADER: companion.signature(
+                    TOKEN, "GET", "/v1/status", nonce, b"")})
+            answer = conn.getresponse()
+            said = json.loads(answer.read())
+        self.assertEqual(said["led"], effects)
+
+
+class LedTest(unittest.TestCase):
+    """The two effects of the LED bar, as the status reports them."""
+
+    def settings(self, text):
+        """The path of a configuration file with that text, or of no file
+        for None."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        path = os.path.join(root, "steamos-utility-center.conf")
+        if text is not None:
+            with open(path, "w") as handle:
+                handle.write(text)
+        return path
+
+    def test_a_machine_without_the_led_module_has_no_effects(self):
+        reader = companion.LedSettings(self.settings("DESKTOP_SCENE=fire\n"))
+        self.assertIsNone(companion.led(reader, present=lambda path: False))
+
+    def test_the_led_module_is_known_by_its_applier(self):
+        looked = []
+        reader = companion.LedSettings(self.settings(None))
+        companion.led(reader, present=lambda path: looked.append(path))
+        self.assertEqual(looked, [companion.ctl.APPLY_CONFIG])
+
+    def test_the_two_effects_come_from_the_file(self):
+        reader = companion.LedSettings(
+            self.settings("DESKTOP_SCENE=fire\nRAINBOW_SHOWS=ooze\n"))
+        self.assertEqual(companion.led(reader, present=lambda path: True),
+                         {"desktop": "fire", "game": "ooze"})
+
+    def test_what_the_file_leaves_out_is_the_default(self):
+        for text in ("LED_COUNT=17\n", None):
+            reader = companion.LedSettings(self.settings(text))
+            self.assertEqual(reader.read(),
+                             {"desktop": "steam", "game": "rainbow"}, text)
+
+    def test_a_file_that_the_service_refuses_has_no_effects(self):
+        """The service does not start with such a file, so the bar shows
+        none of its effects."""
+        for text in ("DESKTOP_SCENE=plasma\n", "NOT_A_SETTING=1\n",
+                     "no equals sign\n"):
+            self.assertIsNone(
+                companion.LedSettings(self.settings(text)).read(), text)
+
+    def test_the_file_is_read_again_only_when_it_changes(self):
+        """Each read of a file with a retired setting writes a warning,
+        and the panel asks every three seconds."""
+        path = self.settings("DESKTOP_SCENE=fire\n")
+        reader = companion.LedSettings(path)
+        with mock.patch.object(companion.config_module, "parse_file",
+                               wraps=companion.config_module.parse_file) \
+                as parsed:
+            reader.read()
+            reader.read()
+            self.assertEqual(parsed.call_count, 1)
+            with open(path, "w") as handle:
+                handle.write("DESKTOP_SCENE=ooze\n")
+            stamp = os.stat(path).st_mtime_ns + 1000000
+            os.utime(path, ns=(stamp, stamp))
+            self.assertEqual(reader.read()["desktop"], "ooze")
+            self.assertEqual(parsed.call_count, 2)
+
+    def test_a_caller_cannot_change_what_the_reader_keeps(self):
+        reader = companion.LedSettings(self.settings("DESKTOP_SCENE=fire\n"))
+        reader.read()["desktop"] = "off"
+        self.assertEqual(reader.read()["desktop"], "fire")
+
+
+class LedChangeTest(unittest.TestCase):
+    """A change from the page of the LED bar."""
+
+    def change(self, request, refusal=None):
+        """The answer to one request, and what reached the applier."""
+        wrote = []
+
+        def write(updates):
+            wrote.append(updates)
+            if refusal:
+                raise refusal
+
+        return companion.led_change(request, write=write), wrote
+
+    def test_each_choice_reaches_its_own_setting(self):
+        (code, _), wrote = self.change({"desktop": "fire"})
+        self.assertEqual((code, wrote), (200, [{"DESKTOP_SCENE": "fire"}]))
+        (code, _), wrote = self.change({"game": "ooze"})
+        self.assertEqual((code, wrote), (200, [{"RAINBOW_SHOWS": "ooze"}]))
+        (code, _), wrote = self.change({"desktop": "off", "game": "load"})
+        self.assertEqual(wrote, [{"DESKTOP_SCENE": "off",
+                                  "RAINBOW_SHOWS": "load"}])
+
+    def test_every_effect_of_the_service_can_be_chosen(self):
+        for key, (name, allowed) in companion.LED_CHOICES.items():
+            for value in allowed:
+                (code, _), wrote = self.change({key: value})
+                self.assertEqual((code, wrote), (200, [{name: value}]),
+                                 (key, value))
+
+    def test_the_lists_are_the_lists_of_the_service(self):
+        self.assertEqual(
+            companion.LED_CHOICES,
+            {"desktop": ("DESKTOP_SCENE",
+                         companion.config_module.DESKTOP_SCENES),
+             "game": ("RAINBOW_SHOWS",
+                      companion.config_module.RAINBOW_CHOICES)})
+
+    def test_anything_else_reaches_nothing(self):
+        for request in (None, [], "fire", {}, {"desktop": "plasma"},
+                        {"game": "off"}, {"desktop": 3},
+                        {"desktop": ["fire"]}, {"DESKTOP_SCENE": "fire"},
+                        {"desktop": "fire", "LED_COUNT": 1},
+                        {"desktop": "fire", "game": "steam"}):
+            (code, _), wrote = self.change(request)
+            self.assertEqual((code, wrote), (400, []), request)
+
+    def test_a_refusal_comes_back_as_its_own_code(self):
+        for refusal, wanted in (
+                (companion.ctl.NotInstalled("no module"), 501),
+                (companion.ctl.NotPermitted("no rule"), 403),
+                (companion.ctl.CtlError("the service said no"), 502),
+                (companion.config_module.ConfigError("bad file"), 502)):
+            with mock.patch.object(companion.sys, "stderr"):
+                (code, _), _ = self.change({"desktop": "fire"}, refusal)
+            self.assertEqual(code, wanted, refusal)
+
+    def test_a_second_change_during_the_first_waits_its_turn(self):
+        """Each change starts the service again. The panel sends the second
+        one again after the answer to the first."""
+        started, release = threading.Event(), threading.Event()
+        answers = []
+
+        def slow(updates):
+            started.set()
+            release.wait(5)
+
+        first = threading.Thread(target=lambda: answers.append(
+            companion.led_change({"desktop": "fire"}, write=slow)))
+        first.start()
+        self.assertTrue(started.wait(5))
+        (code, _), wrote = self.change({"desktop": "off"})
+        self.assertEqual((code, wrote), (409, []))
+        release.set()
+        first.join(5)
+        self.assertEqual(answers[0][0], 200)
+        (code, _), wrote = self.change({"desktop": "off"})
+        self.assertEqual(code, 200)
+
+    def test_the_lock_is_free_again_after_a_refusal(self):
+        with mock.patch.object(companion.sys, "stderr"):
+            self.change({"desktop": "fire"}, companion.ctl.CtlError("no"))
+        (code, _), _ = self.change({"desktop": "fire"})
+        self.assertEqual(code, 200)
 
 
 def _net(self, cards, routes=()):

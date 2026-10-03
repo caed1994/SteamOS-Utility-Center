@@ -136,6 +136,22 @@ class CtlError(ValueError):
     """
 
 
+class NotInstalled(CtlError):
+    """The module that brings the applier is not on this machine.
+
+    A class of its own, so that a caller can tell this refusal from the
+    others without reading the sentence. The wall panel shows a different
+    text for each. See companion.led_change.
+    """
+
+
+class NotPermitted(CtlError):
+    """sudo refused, because no rule permits the applier.
+
+    The installer writes the rule, so the fix is to install again.
+    """
+
+
 def _run(command, timeout=120):
     """Runs a command and returns (exit status, what it printed)."""
     try:
@@ -192,11 +208,12 @@ def privileged(command, may_prompt=False, run=None):
     # explain.
     owner = module_of(command[0])
     if owner and not os.path.exists(command[0]):
-        raise CtlError("the %s module is not installed on this machine. "
-                       "Install it from its page in the panel, or with "
-                       "install.sh --with %s." % (modules.title(owner), owner))
+        raise NotInstalled("the %s module is not installed on this machine. "
+                           "Install it from its page in the panel, or with "
+                           "install.sh --with %s."
+                           % (modules.title(owner), owner))
     if refused_for_rights(said):
-        raise CtlError(
+        raise NotPermitted(
             "%s may not run this without a password. The installer writes %s "
             "to permit it. Reinstall, or use --may-prompt where a person can "
             "answer." % (os.path.basename(command[0]), SUDO_RULE))

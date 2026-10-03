@@ -112,7 +112,8 @@ SAYS = {
         "does": "Answers a Smart 86 Box on the network. The panel shows the "
                 "battery of your controller, the volume and the two "
                 "temperatures, and its buttons reach the volume, standby, "
-                "restart and power off.",
+                "restart and power off. With the LED bar installed, it also "
+                "sets the effect of the bar.",
         "brings": "a service in your own session, and a secret that it and "
                   "the panel share. It needs no password and no root, so the "
                   "panel reaches what you reach and nothing more.",

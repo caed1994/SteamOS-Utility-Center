@@ -7,10 +7,12 @@ The panel is an ESP32-S3 with a 4 inch touch screen on the wall. It has no
 cable to this machine. It asks over the network every three seconds, and it
 sends a press as a second request. firmware/companion holds its side.
 
-This service answers three paths and nothing else:
+This service answers four paths and nothing else:
 
     GET  /v1/status     the controllers, the audio and the sensors
     POST /v1/action     one of the named presses
+    POST /v1/led        the effect of the LED bar, on the desktop and in the
+                        rainbow slot of Game Mode
     GET  /v1/firmware   the firmware of the panel, for its update
 
 It runs in the session of the desktop user and never as root. That is not a
@@ -18,6 +20,12 @@ limitation to work around, it is the design: `systemctl suspend` and `wpctl`
 both belong to a session, and a service with no root cannot lose more than
 that session holds. The panel therefore reaches exactly what the person at
 the keyboard reaches.
+
+The LED bar is no exception. Its settings are a file of root, and a change
+goes through the applier of the LED module with `sudo -n`. The rule that
+permits this is the rule the installer writes for the plugin in Game Mode.
+It names one program and one file, so the panel gets no right that the
+person at the keyboard does not have already. See led_change.
 
 The sensors come from temperature.py, which this project already uses for the
 LED bar. Two readers of /sys/class/hwmon become two answers on the day one of
@@ -35,11 +43,14 @@ import re
 import secrets
 import struct
 import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import desktop, pcinfo, steamapps, steamcontroller, temperature
+from . import config as config_module
+from . import ctl, desktop, modules, pcinfo, steamapps, steamcontroller
+from . import temperature
 
 # The port, and the file that holds the shared secret.
 #
@@ -125,6 +136,19 @@ ACTIONS = {
     # a fix takes a second thing with it.
     "game_mode": ("steamos-session-select", "gamescope"),
 }
+
+# The path of a change of the LED bar, and what a change can be. Each key of
+# a request names one setting of the LED service, and its value must be in
+# the list of that setting. The lists come from the service, so this table
+# keeps no copy of them.
+#
+# "desktop" is the effect on the desktop, where Steam sets nothing. "game"
+# is what the rainbow entry of the LED menu of Steam shows in Game Mode.
+# Steam keeps the other entries of that menu, and nothing here changes them.
+# See RAINBOW_SHOWS in the configuration file.
+LED_PATH = "/v1/led"
+LED_CHOICES = {"desktop": ("DESKTOP_SCENE", config_module.DESKTOP_SCENES),
+               "game": ("RAINBOW_SHOWS", config_module.RAINBOW_CHOICES)}
 
 # Where a person of this machine looks for a drive.
 #
@@ -982,6 +1006,9 @@ def status(address=None, token=None, offer=None):
         "achievements": steamapps.now_playing_achievements(),
         "drives": drives()[:PANEL_DRIVES],
         "pc": pc(address),
+        # The two effects of the LED bar for its page, or None where this
+        # machine has no LED module. See led.
+        "led": led(),
         # The firmware for the panel, or None. See FirmwareOffer.
         "firmware": offer.signed(token),
     }
@@ -1013,6 +1040,115 @@ def press(name):
         return 501, {"error": "command not available on this machine"}
     except OSError:
         return 503, {"error": "command unavailable"}
+    return 200, {"ok": True}
+
+
+class LedSettings:
+    """The two effects of the LED bar, out of the file of the LED service.
+
+    The panel asks every three seconds, and the file changes only when
+    somebody changes a setting. So this reads the file again only when its
+    time of change is new. The parser also writes a warning for each
+    retired setting in the file, and with a read at each poll that was a
+    line in the journal every three seconds.
+    """
+
+    def __init__(self, path=config_module.DEFAULT_CONFIG_PATH):
+        self.path = path
+        self._stamp = None
+        self._values = None
+        self._read = False
+        # ThreadingHTTPServer answers each request in a thread of its own.
+        self._lock = threading.Lock()
+
+    def read(self):
+        """{"desktop": scene, "game": effect of the rainbow slot}, or None.
+
+        None for a file with an error. The LED service does not start with
+        such a file, so there is no effect to show.
+        """
+        try:
+            stamp = os.stat(self.path).st_mtime_ns
+        except OSError:
+            stamp = None
+        with self._lock:
+            if not self._read or stamp != self._stamp:
+                self._values = self._parse()
+                self._stamp = stamp
+                self._read = True
+            return None if self._values is None else dict(self._values)
+
+    def _parse(self):
+        values = dict(config_module.DEFAULTS)
+        try:
+            if os.path.exists(self.path):
+                values.update(config_module.parse_file(self.path))
+            # The same check as the service does at its start. A value
+            # outside its list is in no list of the panel either.
+            config_module.validate(values)
+        except (OSError, ValueError):
+            return None
+        return {key: values[name] for key, (name, _) in LED_CHOICES.items()}
+
+
+_led_settings = LedSettings()
+
+
+def led(settings=None, present=None):
+    """The effects for the page of the LED bar, or None.
+
+    None where the LED module is not on this machine, or where its file has
+    an error. The panel then shows a sentence in place of the buttons.
+    """
+    if not modules.installed(modules.LED, present=present):
+        return None
+    return (_led_settings if settings is None else settings).read()
+
+
+# One change at a time. Each change starts the LED service again, and a
+# second change that comes during the first must not overtake it.
+_led_change = threading.Lock()
+
+
+def led_change(request, write=None):
+    """Applies one change from the page of the LED bar.
+
+    Returns (HTTP code, body) for the panel. request is the JSON of the
+    body: {"desktop": "fire"}, {"game": "ooze"}, or the two keys together.
+    A key that is not in LED_CHOICES, or a value that is not in its list,
+    reaches nothing.
+
+    The change goes through ctl.strip_write, as a change from the plugin in
+    Game Mode does. The LED service checks the new file before the applier
+    replaces the old one, and then the service starts again. That takes a
+    second or two, and the panel waits for this answer.
+    """
+    if (not isinstance(request, dict) or not request
+            or not set(request) <= set(LED_CHOICES)):
+        return 400, {"error": "invalid request"}
+    updates = {}
+    for key, value in request.items():
+        name, allowed = LED_CHOICES[key]
+        if not isinstance(value, str) or value not in allowed:
+            return 400, {"error": "unsupported effect"}
+        updates[name] = value
+    if not _led_change.acquire(blocking=False):
+        return 409, {"error": "a change is in progress"}
+    try:
+        (ctl.strip_write if write is None else write)(updates)
+    except ctl.NotInstalled:
+        return 501, {"error": "the LED module is not installed"}
+    except ctl.NotPermitted:
+        # The installer ran with --no-sudoers, or before the LED module came.
+        return 403, {"error": "no sudo rule permits the change"}
+    except ValueError as exc:
+        # CtlError and ConfigError are both a ValueError. The sentence goes
+        # to the journal, where a person can read it, and the panel says
+        # that the change did not come through.
+        sys.stderr.write("The LED change was refused: %s\n" % exc)
+        return 502, {"error": "the change was refused"}
+    finally:
+        _led_change.release()
     return 200, {"ok": True}
 
 
@@ -1148,13 +1284,17 @@ def make_handler(token, nonces=None, offer=None):
                 return self.reply(400, {"error": "invalid request"})
             if not self.authorized(body):
                 return self.reply(401, {"error": "unauthorized"})
-            if self.path != "/v1/action":
+            if self.path not in ("/v1/action", LED_PATH):
                 return self.reply(404, {"error": "not found"})
             try:
-                name = json.loads(body)["action"]
-            except (ValueError, KeyError, TypeError):
+                request = json.loads(body)
+            except ValueError:
                 return self.reply(400, {"error": "invalid request"})
-            self.reply(*press(name))
+            if self.path == LED_PATH:
+                return self.reply(*led_change(request))
+            if not isinstance(request, dict) or "action" not in request:
+                return self.reply(400, {"error": "invalid request"})
+            self.reply(*press(request["action"]))
 
     return Handler
 
