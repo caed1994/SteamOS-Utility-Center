@@ -132,9 +132,9 @@ static void lvgl_log(lv_log_level_t level,const char *text)
         ESP_LOGI("lvgl","%.*s%s",(int)len,text,repeats?" and again":"");
 }
 
-/* Twenty-four kilobytes for the drawing task, until a true reading says
- * how much it uses. See panel_display_start. */
-#define PANEL_LVGL_STACK (24 * 1024)
+/* Sixteen kilobytes for the LVGL task: the most it used on the board, 9124
+ * bytes, and 7 KB over that. See panel_display_start. */
+#define PANEL_LVGL_STACK (16 * 1024)
 
 size_t panel_display_stack_bytes(void){return PANEL_LVGL_STACK;}
 
@@ -183,9 +183,8 @@ lv_display_t *panel_display_start(void)
      *
      * ESP_LVGL_PORT_INIT_CONFIG carries a number of its own and Espressif
      * has raised it at least once, so a panel that depends on it depends on
-     * something that moves under it. This says the number. Internal memory
-     * is not short here: the log reports 262 KiB free in the largest pool
-     * at startup, and this asks for twelve of them.
+     * something that moves under it. This says the number, and internal
+     * memory pays for it: see panel_psram.h.
      *
      * ui_tick measures what is really left, from inside this task, and says
      * so. A number here without that is a guess that nobody checks.
@@ -195,9 +194,15 @@ lv_display_t *panel_display_start(void)
      * then 716 bytes left. Those were not of this task. app_main calls
      * ui_tick once itself, on the start task, and the reading of that call
      * was the 3584 bytes of the start task. watch_stack now reads from the
-     * LVGL timer only, and the next health line says what this task really
-     * uses. Twenty-four stays until it has: then this number comes from
-     * that reading and not from a wrong one. */
+     * LVGL timer only, and the health line says what this task really
+     * uses.
+     *
+     * Two health lines from the board read 15548 and then 15452 of 24576
+     * bytes left, after a standby and after the end of the startup
+     * animation, so the task used 9124 bytes at the most. Sixteen
+     * kilobytes leave 7 KB over that, for the ways the panel did not take
+     * while it was read. The pixels are not drawn on this stack: LVGL
+     * draws in its threads "swdraw", on stacks of their own. */
     port.task_stack=PANEL_LVGL_STACK;
     ESP_ERROR_CHECK(lvgl_port_init(&port));
     /* After lvgl_port_init, which is what calls lv_init. */

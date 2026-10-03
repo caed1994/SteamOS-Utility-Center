@@ -56,10 +56,17 @@ CONFIG_LV_USE_CLIB_SPRINTF=y
 # number of reads, so it stays the same. See lv_indev.c.
 CONFIG_LV_DEF_REFR_PERIOD=15
 CONFIG_LV_OS_FREERTOS=y
-CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
-# The thread that draws, "swdraw", at the top of what LVGL offers, which
-# is FreeRTOS priority 4. It stood at 3, under the network task at 4, so a
-# poll of the PC held a frame back. main.c holds the network task under it.
+# Two threads that draw. LVGL 9.5 cuts an area larger than half the frame
+# buffer into one tile for each thread (refr_area in lv_refr.c), so a
+# scroll of the band is drawn in two halves at once, one on each core
+# when both are free. The second thread takes 8 KB of internal memory for
+# its stack (CONFIG_LV_DRAW_THREAD_STACK_SIZE), and the LVGL task gave 8 KB
+# back: see PANEL_LVGL_STACK in main/panel_display.c.
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
+# The threads that draw, "swdraw", at the top of what LVGL offers, which
+# is FreeRTOS priority 4. They stood at 3, under the network task at 4, so
+# a poll of the PC held a frame back. main.c holds the network task under
+# them.
 CONFIG_LV_DRAW_THREAD_PRIO=4
 # GCC 15 rejects conflicting section attributes when LVGL fast memory uses IRAM.
 CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=n

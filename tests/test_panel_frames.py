@@ -296,6 +296,21 @@ class RoomTest(unittest.TestCase):
         self.assertNotRegex(settings, r"(?m)^CONFIG_ESP_WIFI_(SLP|EXTRA)_IRAM_OPT=y")
 
 
+class ThreadsTest(unittest.TestCase):
+    """Two threads draw. LVGL cuts an area larger than half the frame
+    buffer into a tile for each, so a scroll of the band is drawn in two
+    halves at once."""
+
+    def test_two_threads_draw(self):
+        self.assertRegex(defaults(), r"(?m)^CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2$")
+
+    def test_the_stack_of_the_lvgl_task_paid_for_the_second(self):
+        # The second thread takes CONFIG_LV_DRAW_THREAD_STACK_SIZE, 8 KB by
+        # default, of internal memory. The LVGL task gave 8 KB back.
+        self.assertNotRegex(defaults(), r"(?m)^CONFIG_LV_DRAW_THREAD_STACK_SIZE=")
+        self.assertIn("#define PANEL_LVGL_STACK (16 * 1024)", code("panel_display.c"))
+
+
 class CacheTest(unittest.TestCase):
     """LVGL draws into a frame buffer in PSRAM and runs out of PSRAM, both
     through the caches. With internal memory to spare, both are larger."""

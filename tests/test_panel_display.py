@@ -515,6 +515,10 @@ class DrawingStackTest(unittest.TestCase):
         # overflow coming back. The readings that raised it to sixteen and
         # then twenty-four were of the start task: see the next rule.
         self.assertGreaterEqual(int(said.group(1)) * 1024, 12 * 1024)
+        # The health lines of the board read 15548 and 15452 of 24576
+        # bytes left, so the task used 9124 at the most. The stack holds
+        # that and 6 KB over it.
+        self.assertGreaterEqual(int(said.group(1)) * 1024, 9124 + 6 * 1024)
 
     def test_one_place_holds_the_number(self):
         """The health line prints the headroom against the whole. Two
