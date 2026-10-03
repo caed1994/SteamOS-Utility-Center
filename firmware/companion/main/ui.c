@@ -1546,9 +1546,13 @@ static void enable(lv_obj_t *o,bool on)
  * change, and when no answer shows the change in LED_SHOWN_MS. */
 #define LED_WAIT_MS 1500
 #define LED_SHOWN_MS 20000
-/* The button of the colour and the brightness: the room on each side, and
- * the dot of the colour with the room after it. */
-#define LOOK_PAD 12
+/* The two cards, one above the other with a gap of 8. The card of the
+ * desktop has the button of the colour and the brightness under its arrows,
+ * across the card as the button of SteamOS on the page of the CPU is, and
+ * the card of Game Mode a line in that place. */
+#define LED_DESKTOP_HIGH 158
+#define LED_GAME_HIGH 134
+/* In the button: the dot of the colour, and the room after it. */
 #define LOOK_DOT 14
 #define LOOK_GAP 8
 /* Their layer: the title, the colours in three rows, and the brightness with
@@ -1581,7 +1585,7 @@ typedef struct { int wanted; bool sent; uint32_t sent_at; } led_pick_t;
 static led_pick_t look_colour={.wanted=-1},look_level={.wanted=-1};
 /* The button under the effect of the desktop, with the dot of the colour
  * and its words, and the colour the dot has: -1 for none yet. */
-static lv_obj_t *look_pill,*look_dot,*look_words;
+static lv_obj_t *look_button,*look_dot,*look_words;
 static int32_t look_dot_rgb=-1;
 /* The layer that chooses the two, over the whole screen as the choice of a
  * sensor is. It has the colours only for a scene in the desktop colour.
@@ -1603,7 +1607,7 @@ static panel_text_id_t change_refusal(int code,panel_text_id_t no_module)
     default:return TXT_CHANGE_REFUSED;
     }
 }
-static void look_pill_show(const panel_state_t *s,int index,bool show);
+static void look_button_show(const panel_state_t *s,int index,bool show);
 static void look_show(const panel_state_t *s);
 static void led_show(const panel_state_t *s)
 {
@@ -1672,7 +1676,7 @@ static void led_show(const panel_state_t *s)
         else if(usable&&s->led_look&&panel_led_lit((panel_led_mode_t)m,index))look=true;
         else if(usable&&panel_led_coloured((panel_led_mode_t)m,index))note=panel_text(TXT_LED_COLOUR_WHAT);
         set_text(c->note,note);
-        if(m==PANEL_LED_DESKTOP)look_pill_show(s,index,look);
+        if(m==PANEL_LED_DESKTOP)look_button_show(s,index,look);
     }
     look_show(s);
 }
@@ -1742,11 +1746,11 @@ static int look_level_shown(const panel_state_t *s)
 {
     return look_level.wanted>=0?look_level.wanted:s->led_brightness;
 }
-static void look_pill_show(const panel_state_t *s,int index,bool show)
+static void look_button_show(const panel_state_t *s,int index,bool show)
 {
-    if(!look_pill)return;
-    if(show==lv_obj_has_flag(look_pill,LV_OBJ_FLAG_HIDDEN)){
-        if(show)lv_obj_remove_flag(look_pill,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(look_pill,LV_OBJ_FLAG_HIDDEN);
+    if(!look_button)return;
+    if(show==lv_obj_has_flag(look_button,LV_OBJ_FLAG_HIDDEN)){
+        if(show)lv_obj_remove_flag(look_button,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(look_button,LV_OBJ_FLAG_HIDDEN);
     }
     if(!show)return;
     /* The colour and the brightness for a scene in the desktop colour, and
@@ -1770,12 +1774,11 @@ static void look_pill_show(const panel_state_t *s,int index,bool show)
         look_dot_rgb=dot_now;
     }
     set_text(look_words,said);
-    /* The button is as wide as what it holds and its border, in the middle
-     * of the card. */
-    int32_t wide=(dot?LOOK_DOT+LOOK_GAP:0)+text_width(said,&panel_font_14)+2*LOOK_PAD+2;
-    lv_obj_set_width(look_pill,wide);
-    lv_obj_set_x(look_pill,14+(430-wide)/2);
-    lv_obj_set_x(look_words,LOOK_PAD+(dot?LOOK_DOT+LOOK_GAP:0));
+    /* The dot and the words together in the middle of the button, which
+     * is 428 wide inside its border. */
+    int32_t from=(428-(dot?LOOK_DOT+LOOK_GAP:0)-text_width(said,&panel_font_16))/2;
+    lv_obj_set_x(look_dot,from);
+    lv_obj_set_x(look_words,from+(dot?LOOK_DOT+LOOK_GAP:0));
 }
 static void look_close(void)
 {
@@ -1980,37 +1983,35 @@ static void cpu_page(lv_obj_t *page)
 static void led_card(lv_obj_t *page,panel_led_mode_t m,int y)
 {
     led_card_t *c=&led_cards[m];
-    lv_obj_t *card=panel(page,10,y,460,146,CARD,true);
+    lv_obj_t *card=panel(page,10,y,460,m==PANEL_LED_DESKTOP?LED_DESKTOP_HIGH:LED_GAME_HIGH,CARD,true);
     icon(card,m==PANEL_LED_GAME?&icon_gamepad_2:&icon_monitor,14,14,MUTED);
     text_at(card,panel_text(m==PANEL_LED_GAME?TXT_LED_GAME:TXT_LED_DESKTOP),52,16,290,&panel_font_14,MUTED);
     c->now=text_at(card,panel_text(TXT_LED_NOW),346,16,100,&panel_font_14,BLUE);
     lv_obj_set_style_text_align(c->now,LV_TEXT_ALIGN_RIGHT,0);
     lv_obj_add_flag(c->now,LV_OBJ_FLAG_HIDDEN);
-    line(card,14,44,432,1);
-    c->back=button(card,LV_SYMBOL_LEFT,14,56,72,56,led_step,m*2);
-    c->next=button(card,LV_SYMBOL_RIGHT,372,56,72,56,led_step,m*2+1);
+    line(card,14,40,432,1);
+    c->back=button(card,LV_SYMBOL_LEFT,14,48,72,52,led_step,m*2);
+    c->next=button(card,LV_SYMBOL_RIGHT,372,48,72,52,led_step,m*2+1);
     lv_obj_set_style_text_font(c->back,&panel_font_24,0);
     lv_obj_set_style_text_font(c->next,&panel_font_24,0);
     enable(c->back,false);enable(c->next,false);
-    c->name=text_at(card,panel_text(TXT_LED_UNKNOWN),94,56+(56-lv_font_get_line_height(&panel_font_24))/2,
+    c->name=text_at(card,panel_text(TXT_LED_UNKNOWN),94,48+(52-lv_font_get_line_height(&panel_font_24))/2,
                     270,&panel_font_24,TEXT);
     center_text(c->name);
-    c->note=text_at(card,"",14,120,430,&panel_font_12,MUTED);
+    c->note=text_at(card,"",14,m==PANEL_LED_DESKTOP?118:108,430,&panel_font_12,MUTED);
     center_text(c->note);
     if(m!=PANEL_LED_DESKTOP)return;
-    /* Hidden until a scene that uses it. look_pill_show sets its width and
-     * what it holds. */
-    look_pill=button(card,"",14,113,LOOK_PAD*2,30,look_clicked,0);
-    lv_obj_set_style_radius(look_pill,15,0);
-    lv_obj_set_ext_click_area(look_pill,8);
-    lv_obj_add_flag(look_pill,LV_OBJ_FLAG_HIDDEN);
-    look_dot=panel(look_pill,LOOK_PAD,(30-2-LOOK_DOT)/2,LOOK_DOT,LOOK_DOT,TEXT,false);
+    /* Hidden until a scene that uses it. look_button_show sets what it holds,
+     * and where. */
+    look_button=button(card,"",14,108,430,36,look_clicked,0);
+    lv_obj_add_flag(look_button,LV_OBJ_FLAG_HIDDEN);
+    look_dot=panel(look_button,0,(36-2-LOOK_DOT)/2,LOOK_DOT,LOOK_DOT,TEXT,false);
     lv_obj_set_style_radius(look_dot,LV_RADIUS_CIRCLE,0);
     lv_obj_set_style_border_width(look_dot,1,0);lv_obj_set_style_border_color(look_dot,lv_color_hex(MUTED),0);
     lv_obj_remove_flag(look_dot,LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(look_dot,LV_OBJ_FLAG_HIDDEN);
-    look_words=text_at(look_pill,"",LOOK_PAD,(30-2-lv_font_get_line_height(&panel_font_14))/2,
-                       LV_SIZE_CONTENT,&panel_font_14,TEXT);
+    look_words=text_at(look_button,"",0,(36-2-lv_font_get_line_height(&panel_font_16))/2,
+                       LV_SIZE_CONTENT,&panel_font_16,TEXT);
     look_dot_rgb=-1;
 }
 /* What the timer shows: what is left in minutes and seconds, a second
@@ -2169,7 +2170,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * that the old screen made goes with it. */
     for(int m=0;m<PANEL_LED_MODES;m++)led_cards[m]=(led_card_t){.wanted=-1};
     look_colour=look_level=(led_pick_t){.wanted=-1};
-    look_pill=NULL;look_dot=NULL;look_words=NULL;
+    look_button=NULL;look_dot=NULL;look_words=NULL;
     if(led_timer)lv_timer_pause(led_timer);
     for(int p=0;p<PANEL_CPU_PROFILES;p++){cpu_buttons[p]=NULL;cpu_lit[p]=-1;}
     cpu_running=NULL;cpu_driver_line=NULL;cpu_note=NULL;cpu_wanted=-1;cpu_refused=false;
@@ -2485,7 +2486,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     /* The sixth page: the effect of the LED bar of the PC, a card for the
      * desktop and one for Game Mode. See led_show. */
     led_card(page[PANEL_PAGE_LED],PANEL_LED_DESKTOP,0);
-    led_card(page[PANEL_PAGE_LED],PANEL_LED_GAME,154);
+    led_card(page[PANEL_PAGE_LED],PANEL_LED_GAME,LED_DESKTOP_HIGH+8);
     /* The seventh page: the energy profile of the CPU of the PC. See
      * cpu_show. */
     cpu_page(page[PANEL_PAGE_CPU]);

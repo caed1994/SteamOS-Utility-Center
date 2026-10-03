@@ -165,10 +165,10 @@ static const char *look_words_for(panel_text_id_t colour,int percent,bool colour
 }
 // The dot of the colour in the button of the colour and the brightness:
 // the one child that is no label.
-static lv_obj_t *pill_dot(lv_obj_t *pill)
+static lv_obj_t *look_dot_of(lv_obj_t *look)
 {
-    for(unsigned i=0;i<lv_obj_get_child_count(pill);i++)
-        if(!lv_obj_check_type(lv_obj_get_child(pill,i),&lv_label_class))return lv_obj_get_child(pill,i);
+    for(unsigned i=0;i<lv_obj_get_child_count(look);i++)
+        if(!lv_obj_check_type(lv_obj_get_child(look,i),&lv_label_class))return lv_obj_get_child(look,i);
     return NULL;
 }
 // A move of the slider of the layer to a per cent, and the finger off it.
@@ -2475,17 +2475,28 @@ int main(void)
         snprintf(red,sizeof red,"%s",look_words_for(TXT_COLOUR_RED,50,true));
         assert(label(desktop,red)&&!label(desktop,panel_text(TXT_LED_COLOUR_WHAT)));
         assert(!label(game,red)&&label(game,panel_text(TXT_LED_GAME_WHAT)));
-        // In the middle of the card, whole, and under the arrows.
+        // Across the card under the arrows, as wide as the row of the
+        // arrows, with room under it: a button that sat at the edge of the
+        // card looked like no part of it. The dot and the words stand
+        // together in its middle.
         {
-            lv_obj_t *pill=lv_obj_get_parent(label(desktop,red));
-            lv_area_t at,card,left;
-            lv_obj_get_coords(pill,&at);lv_obj_get_coords(desktop,&card);
+            lv_obj_t *look=lv_obj_get_parent(label(desktop,red));
+            lv_area_t at,card,left,right,dot,words;
+            lv_obj_get_coords(look,&at);lv_obj_get_coords(desktop,&card);
             lv_obj_get_coords(button_with(desktop,LV_SYMBOL_LEFT),&left);
-            int32_t middle=(card.x1+card.x2)/2,pill_middle=(at.x1+at.x2)/2;
-            assert(pill_middle-middle<=1&&middle-pill_middle<=1);
-            assert(at.y1>left.y2&&at.y2<card.y2&&at.x1>card.x1&&at.x2<card.x2);
+            lv_obj_get_coords(button_with(desktop,LV_SYMBOL_RIGHT),&right);
+            assert(at.x1==left.x1&&at.x2==right.x2&&at.y1>left.y2);
+            assert(card.y2-at.y2>=10);
+            // And the two cards still one above the other on the page.
+            lv_area_t other,whole;
+            lv_obj_get_coords(game,&other);lv_obj_get_coords(page,&whole);
+            assert(card.y2<other.y1&&other.y2<=whole.y2);
+            assert(lv_obj_get_style_radius(look,0)==lv_obj_get_style_radius(button_with(desktop,LV_SYMBOL_LEFT),0));
+            lv_obj_get_coords(look_dot_of(look),&dot);lv_obj_get_coords(label(desktop,red),&words);
+            int32_t before=dot.x1-at.x1,after=at.x2-words.x2;
+            assert(before-after<=2&&after-before<=2);
             lv_point_t size;
-            lv_text_get_size(&size,red,&panel_font_14,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+            lv_text_get_size(&size,red,&panel_font_16,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
             assert(lv_obj_get_width(label(desktop,red))>=size.x);
         }
         // A tap opens the layer: the nine colours, red chosen, the slider at
@@ -2604,8 +2615,8 @@ int main(void)
         click_in(layer,panel_text(TXT_LED_DONE));
         assert(!look_layer_of());
         const char *blue=look_words_for(TXT_COLOUR_BLUE,80,true);
-        lv_obj_t *pill=lv_obj_get_parent(label(desktop,blue));
-        lv_obj_send_event(pill,LV_EVENT_CLICKED,NULL);
+        lv_obj_t *look=lv_obj_get_parent(label(desktop,blue));
+        lv_obj_send_event(look,LV_EVENT_CLICKED,NULL);
         layer=look_layer_of();
         assert(layer);
         lv_obj_send_event(layer,LV_EVENT_CLICKED,NULL);
@@ -2619,13 +2630,13 @@ int main(void)
             lv_obj_send_event(tile,LV_EVENT_CLICKED,NULL);
             lv_obj_t *title=label(lv_screen_active(),panel_text(TXT_CPU_TEMPERATURE));
             assert(title);
-            lv_obj_send_event(pill,LV_EVENT_CLICKED,NULL);
+            lv_obj_send_event(look,LV_EVENT_CLICKED,NULL);
             assert(!look_layer_of());
             lv_obj_t *menu=title;
             while(lv_obj_get_parent(menu)!=lv_screen_active())menu=lv_obj_get_parent(menu);
             lv_obj_send_event(menu,LV_EVENT_CLICKED,NULL);
             assert(!label(lv_screen_active(),panel_text(TXT_CPU_TEMPERATURE)));
-            lv_obj_send_event(pill,LV_EVENT_CLICKED,NULL);
+            lv_obj_send_event(look,LV_EVENT_CLICKED,NULL);
             assert(look_layer_of());
             lv_obj_send_event(tile,LV_EVENT_CLICKED,NULL);
             assert(!label(lv_screen_active(),panel_text(TXT_CPU_TEMPERATURE)));
@@ -2673,7 +2684,7 @@ int main(void)
         snprintf(own,sizeof own,"%s",look_words_for(TXT_COLOUR_OWN,80,true));
         assert(label(desktop,own));
         {
-            lv_obj_t *dot=pill_dot(lv_obj_get_parent(label(desktop,own)));
+            lv_obj_t *dot=look_dot_of(lv_obj_get_parent(label(desktop,own)));
             assert(dot&&!lv_obj_has_flag(dot,LV_OBJ_FLAG_HIDDEN));
             assert(lv_color_eq(lv_obj_get_style_bg_color(dot,0),lv_color_hex(0x25D366)));
         }
@@ -2717,7 +2728,7 @@ int main(void)
         {
             lv_obj_t *words=label(desktop,look_words_for(TXT_COLOUR_OWN,80,false));
             assert(words);
-            lv_obj_t *dot=pill_dot(lv_obj_get_parent(words));
+            lv_obj_t *dot=look_dot_of(lv_obj_get_parent(words));
             assert(dot&&lv_obj_has_flag(dot,LV_OBJ_FLAG_HIDDEN));
         }
         strcpy(t.led_effect[PANEL_LED_DESKTOP],"color");
@@ -2739,7 +2750,7 @@ int main(void)
                 lv_obj_get_coords(lv_obj_get_parent(words),&at);lv_obj_get_coords(desktop,&card);
                 assert(at.x1>card.x1+8&&at.x2<card.x2-8);
                 lv_point_t size;
-                lv_text_get_size(&size,lv_label_get_text(words),&panel_font_14,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+                lv_text_get_size(&size,lv_label_get_text(words),&panel_font_16,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
                 assert(lv_obj_get_width(words)>=size.x);
             }
             click_in(desktop,look_words_for(TXT_COLOUR_WHITE,100,true));

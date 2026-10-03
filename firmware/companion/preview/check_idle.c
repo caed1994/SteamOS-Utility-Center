@@ -83,9 +83,9 @@ int main(void)
     /* Each search is held before its answer is used: LVGL waits for ever
      * on a null object, and a check that hangs says less than one that
      * stops. */
-    char pill[48];
-    snprintf(pill,sizeof pill,"%s • %d %%",panel_text(TXT_COLOUR_RED),50);
-    lv_obj_t *words=label(page,pill);
+    char look[48];
+    snprintf(look,sizeof look,"%s • %d %%",panel_text(TXT_COLOUR_RED),50);
+    lv_obj_t *words=label(page,look);
     assert(words);
     lv_obj_send_event(lv_obj_get_parent(words),LV_EVENT_CLICKED,NULL);
     lv_obj_update_layout(lv_screen_active());lv_refr_now(display);

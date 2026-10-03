@@ -242,8 +242,8 @@ int main(int argc,char **argv)
             char said[48];
             if(fire)snprintf(said,sizeof said,"%s %d %%",panel_text(TXT_LED_BRIGHTNESS),50);
             else snprintf(said,sizeof said,"%s • %d %%",panel_text(TXT_COLOUR_ORANGE),50);
-            lv_obj_t *pill=find_label(lv_screen_active(),said);
-            if(pill)lv_obj_send_event(lv_obj_get_parent(pill),LV_EVENT_CLICKED,NULL);
+            lv_obj_t *words=find_label(lv_screen_active(),said);
+            if(words)lv_obj_send_event(lv_obj_get_parent(words),LV_EVENT_CLICKED,NULL);
         }
         bool applying=strcmp(argv[2],"led-applying")==0,refused=strcmp(argv[2],"led-refused")==0;
         if(applying||refused){
