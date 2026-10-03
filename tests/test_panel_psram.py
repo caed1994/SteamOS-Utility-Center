@@ -5,10 +5,16 @@
 
 Asked for: more internal memory, so that the changes that make the scroll
 faster have room. The page of the panel read 33 KB free and 20 KB at the
-least. The objects of LVGL, the answer of the PC with its JSON, and four
+least. The objects of LVGL, the answer of the PC with its JSON, and three
 task stacks go to PSRAM now, and each falls back to internal memory when
 PSRAM has none. The stack of LVGL stays internal, for the speed of the
 drawing.
+
+The stack of the network task went to PSRAM as well, and came back.
+Reported from the board: the first answer of the PC restarted the panel at
+an assert, and every start after it did the same. The task confirms a new
+firmware at that answer, and that call maps flash. A map of flash freezes
+the caches and needs an internal stack.
 
 A line of the log at the end of the start says the internal memory free
 after each step, so the step that takes it is known.
@@ -115,20 +121,45 @@ class WhereTest(unittest.TestCase):
         hooks = start.index("cJSON_InitHooks(&json);")
         self.assertIn("cJSON_Hooks json={.malloc_fn=json_alloc,.free_fn=heap_caps_free};", start)
         # Before the first task that parses an answer.
-        self.assertLess(hooks, start.index("panel_psram_task(network_task"))
+        self.assertLess(hooks, start.index("xTaskCreatePinnedToCore(network_task"))
         self.assertLess(hooks, start.index("panel_ui_create("))
 
-    def test_four_stacks_are_in_psram(self):
+    def test_three_stacks_are_in_psram(self):
         main = code("main.c")
         self.assertIn('panel_psram_task(sound_task,"panel_sound",6144,3,tskNO_AFFINITY)', main)
-        self.assertRegex(main, r'panel_psram_task\(network_task,"panel_network",12288,'
-                               r'\s*PANEL_NETWORK_PRIORITY,0\)')
         self.assertIn('panel_psram_task(motion_task, "panel_motion", MOTION_TASK_STACK,',
                       code("panel_motion.c"))
         self.assertIn('panel_psram_task(key_task,"panel_pwrkey",3072,PWRKEY_TASK_PRIORITY,'
                       'tskNO_AFFINITY)', code("panel_power.c"))
         for name in ("main.c", "panel_motion.c", "panel_power.c"):
             self.assertNotRegex(code(name), r"\bxTaskCreate\(", name)
+
+    def test_the_task_that_maps_flash_has_an_internal_stack(self):
+        # The network task writes and confirms the updates of the firmware,
+        # and those calls map flash. esp_mmu_map stops at an assert when the
+        # stack is not internal.
+        main = code("main.c")
+        self.assertRegex(main, r'xTaskCreatePinnedToCore\(network_task,"panel_network",12288,NULL,'
+                               r'\s*PANEL_NETWORK_PRIORITY,NULL,0\)')
+        self.assertNotIn("panel_psram_task(network_task", main)
+        self.assertIn("It is not safe for a task that maps flash.", raw("panel_psram.h"))
+        # No other source calls the functions that map flash.
+        for name in sorted(os.listdir(FIRMWARE)):
+            if name.endswith(".c") and name not in ("main.c", "panel_ota.c"):
+                self.assertNotRegex(code(name), r"\bpanel_ota_(begin|finish|confirm)\(", name)
+                self.assertNotRegex(code(name), r"\besp_(ota|partition_mmap|mmu_map)_?\w*\(", name)
+
+    def test_a_map_of_flash_from_a_stack_in_psram_is_refused(self):
+        # A refusal and a line in the log, and not a restart at every start.
+        ota = code("panel_ota.c")
+        guard = function(ota, "may_map_flash")
+        self.assertIn("if (esp_ptr_in_dram((const void *)esp_cpu_get_sp())) return true;", guard)
+        self.assertIn("return false;", guard)
+        for name, call in (("panel_ota_begin", "esp_ota_get_next_update_partition("),
+                           ("panel_ota_finish", "esp_ota_end(handle)"),
+                           ("panel_ota_confirm", "esp_ota_get_running_partition()")):
+            body = function(ota, name)
+            self.assertLess(body.index("may_map_flash("), body.index(call), name)
 
     def test_the_start_says_the_memory_after_each_step(self):
         start = function(code("main.c"), "app_main")

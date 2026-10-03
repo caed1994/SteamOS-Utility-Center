@@ -8,7 +8,9 @@
 #include <stdio.h>
 
 #include "esp_app_desc.h"
+#include "esp_cpu.h"
 #include "esp_log.h"
+#include "esp_memory_utils.h"
 #include "esp_ota_ops.h"
 #include "mbedtls/md.h"
 
@@ -27,6 +29,18 @@ const char *panel_ota_version(void)
     return esp_app_get_description()->version;
 }
 
+/* Whether the calls that read the state of the partitions can run on this
+ * stack. They map flash, and esp_mmu_map stops at an assert when the stack
+ * is not internal: see panel_psram.h. A refusal and a line in the log, and
+ * not a restart at every start. */
+static bool may_map_flash(const char *what)
+{
+    if (esp_ptr_in_dram((const void *)esp_cpu_get_sp())) return true;
+    ESP_LOGE(tag, "%s refused: the stack of this task is in PSRAM, and a map of flash "
+             "needs an internal one", what);
+    return false;
+}
+
 void panel_ota_abort(void)
 {
     if (!writing) return;
@@ -38,6 +52,7 @@ void panel_ota_abort(void)
 esp_err_t panel_ota_begin(uint32_t size)
 {
     panel_ota_abort();
+    if (!may_map_flash("The update")) return ESP_ERR_INVALID_STATE;
     target = esp_ota_get_next_update_partition(NULL);
     if (!target) return ESP_ERR_NOT_FOUND;
     if (size == 0 || size > target->size) return ESP_ERR_INVALID_SIZE;
@@ -72,6 +87,10 @@ esp_err_t panel_ota_write(const void *data, size_t length)
 esp_err_t panel_ota_finish(const char *sha256)
 {
     if (!writing) return ESP_ERR_INVALID_STATE;
+    if (!may_map_flash("The end of the update")) {
+        panel_ota_abort();
+        return ESP_ERR_INVALID_STATE;
+    }
     bool whole = written == expected;
     unsigned char sum[32];
     char said[PANEL_AUTH_HEX];
@@ -102,6 +121,7 @@ esp_err_t panel_ota_finish(const char *sha256)
 
 bool panel_ota_confirm(void)
 {
+    if (!may_map_flash("The confirmation of the firmware")) return false;
     const esp_partition_t *running = esp_ota_get_running_partition();
     esp_ota_img_states_t state;
     if (!running || esp_ota_get_state_partition(running, &state) != ESP_OK)

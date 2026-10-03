@@ -1535,9 +1535,18 @@ void app_main(void)
      * thread of its own, "swdraw", at CONFIG_LV_DRAW_THREAD_PRIO, and that
      * thread takes either core. A poll of the PC parses its answer for
      * some milliseconds, and at the priority of the drawing or above it,
-     * that parse held a frame back while somebody scrolled. */
-    BaseType_t created=panel_psram_task(network_task,"panel_network",12288,
-                                        PANEL_NETWORK_PRIORITY,0);
+     * that parse held a frame back while somebody scrolled.
+     *
+     * Its stack is internal memory, and not PSRAM like the stacks of
+     * panel_psram.h. This task writes the updates of the firmware and
+     * confirms a new one, and each of those reads the state of the
+     * partitions through esp_partition_mmap. A map of flash freezes the
+     * caches and stops at an assert when the stack is not internal
+     * (esp_mmu_map, esp_cache_utils.c). Reported from the board, with the
+     * stack in PSRAM: the first answer of the PC restarted the panel, and
+     * every start after it did the same. */
+    BaseType_t created=xTaskCreatePinnedToCore(network_task,"panel_network",12288,NULL,
+                                               PANEL_NETWORK_PRIORITY,NULL,0);
     assert(created==pdPASS);
     ram_step("network");
     ESP_LOGI("panel_ram","internal KB free after each step of the start:%s, least %u",

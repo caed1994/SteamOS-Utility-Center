@@ -11,14 +11,23 @@
 //
 //   the objects of LVGL     panel_lvgl_mem.c, about 36 KB for the band
 //   the answer of the PC    8 KB and its JSON at every poll
-//   four task stacks        the network, the sound, the motion and the key
+//   three task stacks       the sound, the motion and the key
 //
 // Each falls back to internal memory when PSRAM has none.
 //
-// A stack in PSRAM is safe here for one reason. ESP-IDF says a task stack
-// in PSRAM must never be in use while the cache is off, and a write to
-// flash switches the cache off. With CONFIG_SPIRAM_XIP_FROM_PSRAM it does
-// not (docs: spi_flash_concurrency). The build stops if that option goes.
+// A stack in PSRAM is safe for a task that writes to flash, for one
+// reason. ESP-IDF says a task stack in PSRAM must never be in use while
+// the cache is off, and a write to flash switches the cache off. With
+// CONFIG_SPIRAM_XIP_FROM_PSRAM it does not (docs: spi_flash_concurrency):
+// a write takes a mutex and leaves the cache on. The build stops if that
+// option goes.
+//
+// It is not safe for a task that maps flash. esp_mmu_map, under
+// esp_partition_mmap, freezes the caches and stops at an assert when the
+// stack is not internal (esp_cache_utils.c). Each call of esp_ota_ that
+// reads the state of the partitions maps flash, so the network task, which
+// writes and confirms the updates, keeps an internal stack: see main.c.
+// panel_ota.c refuses those calls from a stack in PSRAM.
 #pragma once
 
 #include <stddef.h>

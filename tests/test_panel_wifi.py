@@ -387,7 +387,7 @@ class AnswerTest(unittest.TestCase):
     def test_the_client_is_quiet_and_the_panel_says_it_instead(self):
         start = self.body("void app_main(void)")
         self.assertLess(start.index('esp_log_level_set("HTTP_CLIENT",ESP_LOG_NONE);'),
-                        start.index("panel_psram_task(network_task"))
+                        start.index("xTaskCreatePinnedToCore(network_task"))
         task = self.body("static void network_task(void *arg)")
         self.assertIn("if (code!=answered) {", task)
         for said in ('"The PC answers"', "The PC refuses this panel",
