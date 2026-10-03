@@ -535,6 +535,19 @@ static void led_change(const char *const effect[PANEL_LED_MODES])
     xSemaphoreGive(lock);
 }
 
+/* The profile of the page of the CPU that waits for the network task, or
+ * -1. Under the lock. A second tap before the task takes the first one
+ * replaces it: the last tap is what somebody wants. */
+static int cpu_wanted=-1;
+
+/* From the LVGL task. See panel_ui_cpu_use. */
+static void cpu_change(int profile)
+{
+    xSemaphoreTake(lock,portMAX_DELAY);
+    cpu_wanted=profile;
+    xSemaphoreGive(lock);
+}
+
 static bool connected(void)
 {
     xSemaphoreTake(lock,portMAX_DELAY); bool result=state.wifi && !state.setup; xSemaphoreGive(lock);
@@ -599,12 +612,13 @@ static esp_err_t collect_data(esp_http_client_event_t *event)
 // answering. The network task alone writes and reads it.
 static esp_err_t last_http_error;
 
-// How long a request waits for its answer. A change of the LED bar waits
-// longer: the service answers it once the LED service has its new file
-// and runs again, which takes a second or two.
+// How long a request waits for its answer. A change of the LED bar or the
+// CPU waits longer: the service answers it once the applier of the module
+// is done, and the LED service then runs again, which takes a second or two.
 #define PANEL_ASK_MS 4000
-#define PANEL_LED_WAIT_MS 15000
+#define PANEL_CHANGE_WAIT_MS 15000
 #define PANEL_LED_PATH "/v1/led"
+#define PANEL_CPU_PATH "/v1/cpu"
 
 // One attempt. The token itself never goes on the wire: what goes is a
 // signature over the method, the path and the body, with the nonce that the
@@ -806,6 +820,10 @@ static int request(const char *path, const char *body, int wait_ms)
      * older than this firmware. The page says which of the last two it
      * is. */
     cJSON *led=cJSON_GetObjectItemCaseSensitive(root,"led");
+    /* The CPU, for its page, the same way: an object where the PC has the
+     * power module, null where it has none or no cpufreq, and nothing at
+     * all from a service older than this firmware. */
+    cJSON *cpu=cJSON_GetObjectItemCaseSensitive(root,"cpu");
     xSemaphoreTake(lock,portMAX_DELAY);
     memcpy(state.pads,pads,sizeof state.pads);
     state.pad_count=pad_count;
@@ -876,6 +894,18 @@ static int request(const char *path, const char *body, int wait_ms)
             if(into->free>into->total)into->free=into->total;
         }
     }
+    state.cpu_known=cpu!=NULL;
+    state.cpu_here=cJSON_IsObject(cpu);
+    pc_text(state.cpu_profile,sizeof state.cpu_profile,cpu,"profile");
+    pc_text(state.cpu_governor,sizeof state.cpu_governor,cpu,"governor");
+    pc_text(state.cpu_epp,sizeof state.cpu_epp,cpu,"epp");
+    pc_text(state.cpu_driver,sizeof state.cpu_driver,cpu,"driver");
+    state.cpu_offers=0;
+    cJSON *offered=NULL;
+    cJSON_ArrayForEach(offered,cJSON_GetObjectItemCaseSensitive(cpu,"offers")){
+        int profile=cJSON_IsString(offered)?panel_cpu_find(offered->valuestring):-1;
+        if(profile>=0)state.cpu_offers|=(uint8_t)(1u<<profile);
+    }
     state.led_known=led!=NULL;
     state.led_here=cJSON_IsObject(led);
     for(int mode=0;mode<PANEL_LED_MODES;mode++){
@@ -895,7 +925,7 @@ static int led_request(const char keys[PANEL_LED_MODES][PANEL_LED_KEY])
 {
     char body[96];
     if (!panel_led_body(body,sizeof(body),keys)) return 0;
-    return request(PANEL_LED_PATH,body,PANEL_LED_WAIT_MS);
+    return request(PANEL_LED_PATH,body,PANEL_CHANGE_WAIT_MS);
 }
 
 /* What a disconnect number means, in words.
@@ -1319,6 +1349,24 @@ static void network_task(void *arg)
             xSemaphoreGive(lock);
             last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
         }
+        /* A profile of the page of the CPU, the same way. */
+        xSemaphoreTake(lock,portMAX_DELAY);
+        int cpu_now=cpu_wanted;
+        cpu_wanted=-1;
+        bool cpu_online=state.online;
+        xSemaphoreGive(lock);
+        if (cpu_now>=0) {
+            char body[48];
+            int code=0;
+            if (cpu_online && connected() && panel_cpu_body(body,sizeof(body),cpu_now))
+                code=request(PANEL_CPU_PATH,body,PANEL_CHANGE_WAIT_MS);
+            ESP_LOGI("panel_cpu","profile=%s: %d",panel_cpu_key(cpu_now),code);
+            xSemaphoreTake(lock,portMAX_DELAY);
+            state.cpu_code=code;
+            state.cpu_replies++;
+            xSemaphoreGive(lock);
+            last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
+        }
         if (!atomic_load(&radio_resting) &&
             xTaskGetTickCount()-last_poll>=pdMS_TO_TICKS(3000)) {
             last_poll=xTaskGetTickCount();
@@ -1502,6 +1550,7 @@ void app_main(void)
     bsp_display_lock(0);
     panel_ui_create(action_send,setting_set,sound_send,&settings);
     panel_ui_led_use(led_change);
+    panel_ui_cpu_use(cpu_change);
     lv_timer_create(ui_tick,200,NULL);
     ui_tick(NULL);
     /* Over the finished screen, not in front of building it. Everything

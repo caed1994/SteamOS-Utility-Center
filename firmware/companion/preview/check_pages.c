@@ -29,6 +29,10 @@ static void led_change(const char *const effect[PANEL_LED_MODES])
     led_changes++;
     for(int m=0;m<PANEL_LED_MODES;m++)snprintf(led_last[m],PANEL_LED_KEY,"%s",effect[m]?effect[m]:"");
 }
+// The profiles of the page of the CPU, as main.c gets them.
+static unsigned cpu_changes;
+static int cpu_last=-1;
+static void cpu_change(int profile){cpu_changes++;cpu_last=profile;}
 // The wait of the page after the last tap, and the timers of LVGL that
 // it holds back.
 static void led_wait(uint32_t ms){lv_tick_inc(ms);lv_timer_handler();}
@@ -106,6 +110,19 @@ static lv_obj_t *button_with(lv_obj_t *row,const char *caption)
 static bool knob_right(lv_obj_t *knob)
 {
     return lv_obj_get_x(knob)+lv_obj_get_width(knob)/2>lv_obj_get_width(lv_obj_get_parent(knob))/2;
+}
+// The button of one profile on the page of the CPU.
+static lv_obj_t *cpu_button(lv_obj_t *page,int profile)
+{
+    lv_obj_t *caption=label(page,panel_text(panel_cpu_name(profile)));
+    assert(caption);
+    return lv_obj_get_parent(caption);
+}
+// Whether a button of the page of the CPU is lit: the colour of its
+// background against the colour of the buttons that are not.
+static bool cpu_lit_one(lv_obj_t *button,lv_color_t dark)
+{
+    return !lv_color_eq(lv_obj_get_style_bg_color(button,0),dark);
 }
 // The card of the page of the LED bar for one mode, and its arrows.
 static lv_obj_t *led_card_of(lv_obj_t *page,panel_led_mode_t mode)
@@ -1331,7 +1348,7 @@ int main(void)
     // and the screen in the settings changes it a place at a time.
     {
         static const uint8_t clock_first[PANEL_PAGES]={PANEL_PAGE_CLOCK,PANEL_PAGE_CONTROLS,
-            PANEL_PAGE_SESSION,PANEL_PAGE_PLAYING,PANEL_PAGE_CARD,PANEL_PAGE_LED};
+            PANEL_PAGE_SESSION,PANEL_PAGE_PLAYING,PANEL_PAGE_CARD,PANEL_PAGE_LED,PANEL_PAGE_CPU};
         panel_settings_t ordered={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH,
                                   .page_order=panel_pages_pack(clock_first)};
         panel_ui_create(action,setting,sound,&ordered);
@@ -1344,6 +1361,7 @@ int main(void)
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CONTROLS))==480);
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==4*480);
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_LED))==5*480);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CPU))==6*480);
         assert(strcmp(panel_ui_where(),"the clock")==0);
         // The screen of the order, behind a button in the settings.
         panel_ui_settings_open();
@@ -1359,7 +1377,7 @@ int main(void)
         lv_refr_now(screen);
         // A row for each place, in that order, the start page marked.
         static const panel_text_id_t first_names[PANEL_PAGES]={TXT_PAGE_CLOCK,TXT_PAGE_CONTROLS,
-            TXT_PAGE_SESSION,TXT_PLAYING,TXT_PAGE_CARD,TXT_PAGE_LED};
+            TXT_PAGE_SESSION,TXT_PLAYING,TXT_PAGE_CARD,TXT_PAGE_LED,TXT_PAGE_CPU};
         int32_t last_y=-1;
         for(int place=0;place<PANEL_PAGES;place++){
             lv_obj_t *name=label(screen_now,panel_text(first_names[place]));
@@ -1374,7 +1392,7 @@ int main(void)
         assert(start&&lv_obj_get_parent(start)==lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CLOCK))));
         // The top row has no way up, and the bottom row no way down.
         lv_obj_t *top=lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CLOCK)));
-        lv_obj_t *bottom=lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_LED)));
+        lv_obj_t *bottom=lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CPU)));
         lv_obj_t *top_up=NULL,*top_down=NULL,*bottom_up=NULL,*bottom_down=NULL;
         for(unsigned i=0;i<lv_obj_get_child_count(top);i++){
             lv_obj_t *c=lv_obj_get_child(top,i);
@@ -1396,7 +1414,7 @@ int main(void)
         saved_count=0;
         lv_obj_send_event(top_down,LV_EVENT_CLICKED,NULL);
         static const uint8_t controls_first[PANEL_PAGES]={PANEL_PAGE_CONTROLS,PANEL_PAGE_CLOCK,
-            PANEL_PAGE_SESSION,PANEL_PAGE_PLAYING,PANEL_PAGE_CARD,PANEL_PAGE_LED};
+            PANEL_PAGE_SESSION,PANEL_PAGE_PLAYING,PANEL_PAGE_CARD,PANEL_PAGE_LED,PANEL_PAGE_CPU};
         assert(saved_count==1&&saved_key==PANEL_PAGE_ORDER);
         assert((uint32_t)saved_value==panel_pages_pack(controls_first));
         lv_obj_update_layout(lv_screen_active());
@@ -1404,14 +1422,14 @@ int main(void)
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CLOCK))==480);
         start=label(screen_now,panel_text(TXT_PAGES_START));
         assert(start&&lv_obj_get_parent(start)==lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CONTROLS))));
-        // Up on the bottom row: the LED bar goes fifth.
+        // Up on the bottom row: the CPU goes sixth.
         lv_obj_send_event(bottom_up,LV_EVENT_CLICKED,NULL);
-        static const uint8_t led_fifth[PANEL_PAGES]={PANEL_PAGE_CONTROLS,PANEL_PAGE_CLOCK,
-            PANEL_PAGE_SESSION,PANEL_PAGE_PLAYING,PANEL_PAGE_LED,PANEL_PAGE_CARD};
-        assert((uint32_t)saved_value==panel_pages_pack(led_fifth));
+        static const uint8_t cpu_sixth[PANEL_PAGES]={PANEL_PAGE_CONTROLS,PANEL_PAGE_CLOCK,
+            PANEL_PAGE_SESSION,PANEL_PAGE_PLAYING,PANEL_PAGE_CARD,PANEL_PAGE_CPU,PANEL_PAGE_LED};
+        assert((uint32_t)saved_value==panel_pages_pack(cpu_sixth));
         lv_obj_update_layout(lv_screen_active());
-        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_LED))==4*480);
-        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==5*480);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CPU))==5*480);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_LED))==6*480);
         // A press on a disabled end moves nothing and saves nothing.
         int before=saved_count;
         lv_obj_send_event(top_up,LV_EVENT_CLICKED,NULL);
@@ -1424,7 +1442,7 @@ int main(void)
         // The next language keeps the order, in the words of that language
         // and each name whole.
         panel_settings_t german=ordered;german.language=PANEL_GERMAN;
-        german.page_order=panel_pages_pack(led_fifth);
+        german.page_order=panel_pages_pack(cpu_sixth);
         panel_ui_create(action,setting,sound,&german);
         panel_ui_settings_open();
         panel_ui_arrange_open();
@@ -1434,7 +1452,8 @@ int main(void)
         lv_refr_now(screen);
         assert(label(screen_now,"Seiten anordnen")&&label(screen_now,"Startseite"));
         static const char *const german_names[]={"Steuerung","Uhr und Timer",
-            "Sitzung und Datenträger","Läuft gerade","LED-Leiste","Grafikkarte und Verlauf"};
+            "Sitzung und Datenträger","Läuft gerade","Grafikkarte und Verlauf","CPU-Energie",
+            "LED-Leiste"};
         last_y=-1;
         for(int place=0;place<PANEL_PAGES;place++){
             lv_obj_t *name=label(screen_now,german_names[place]);
@@ -1471,7 +1490,7 @@ int main(void)
     // the last page that is shown cannot go.
     {
         static const panel_text_id_t names[PANEL_PAGES]={TXT_PAGE_CONTROLS,TXT_PAGE_SESSION,
-            TXT_PLAYING,TXT_PAGE_CLOCK,TXT_PAGE_CARD,TXT_PAGE_LED};
+            TXT_PLAYING,TXT_PAGE_CLOCK,TXT_PAGE_CARD,TXT_PAGE_LED,TXT_PAGE_CPU};
         panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
         panel_ui_create(action,setting,sound,&english);
         lv_obj_t *band_now=find_band(lv_screen_active());
@@ -1517,10 +1536,11 @@ int main(void)
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CLOCK))==2*480);
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==3*480);
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_LED))==4*480);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CPU))==5*480);
         assert(lv_obj_get_scroll_x(band_now)==0);
         // The band ends at the last page that is shown.
         lv_obj_scroll_to_x(band_now,PANEL_PAGES*480,LV_ANIM_OFF);
-        assert(lv_obj_get_scroll_x(band_now)==4*480);
+        assert(lv_obj_get_scroll_x(band_now)==5*480);
         // A move keeps the band on the page it shows, at its new place.
         lv_obj_scroll_to_x(band_now,3*480,LV_ANIM_OFF);
         assert(lv_obj_get_scroll_x(band_now)==3*480);
@@ -1561,6 +1581,8 @@ int main(void)
                                       LV_SYMBOL_EYE_OPEN),LV_EVENT_CLICKED,NULL);
         lv_obj_send_event(button_with(lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_LED))),
                                       LV_SYMBOL_EYE_OPEN),LV_EVENT_CLICKED,NULL);
+        lv_obj_send_event(button_with(lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CPU))),
+                                      LV_SYMBOL_EYE_OPEN),LV_EVENT_CLICKED,NULL);
         lv_obj_send_event(button_with(lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CLOCK))),
                                       LV_SYMBOL_EYE_OPEN),LV_EVENT_CLICKED,NULL);
         card_row=lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CARD)));
@@ -1578,7 +1600,7 @@ int main(void)
         // again.
         lv_obj_send_event(button_with(session_row,LV_SYMBOL_EYE_CLOSE),LV_EVENT_CLICKED,NULL);
         assert(saved_value==((1<<PANEL_PAGE_CONTROLS)|(1<<PANEL_PAGE_PLAYING)|(1<<PANEL_PAGE_CLOCK)
-                             |(1<<PANEL_PAGE_LED)));
+                             |(1<<PANEL_PAGE_LED)|(1<<PANEL_PAGE_CPU)));
         lv_obj_update_layout(lv_screen_active());
         assert(!lv_obj_has_flag(lv_obj_get_child(band_now,PANEL_PAGE_SESSION),LV_OBJ_FLAG_HIDDEN));
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_SESSION))==0);
@@ -1598,9 +1620,10 @@ int main(void)
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CLOCK))==480);
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==2*480);
         assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_LED))==3*480);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CPU))==4*480);
         assert(strcmp(panel_ui_where(),"the session")==0);
         lv_obj_scroll_to_x(band_now,PANEL_PAGES*480,LV_ANIM_OFF);
-        assert(strcmp(panel_ui_where(),"the LED bar")==0);
+        assert(strcmp(panel_ui_where(),"the CPU")==0);
         // A stored number that hides every page hides none.
         stored.page_hidden=0xFFFFFFFFu;
         panel_ui_create(action,setting,sound,&stored);
@@ -2033,6 +2056,182 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
+    // The page of the CPU: a button for each profile, the one of the PC lit,
+    // and what runs under them. A tap sends the profile at once. The page
+    // keeps the choice lit until the status shows it, and takes it back
+    // when the PC refuses it or no answer shows it in time.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_ui_cpu_use(cpu_change);
+        cpu_changes=0;
+        panel_state_t t=base();
+        t.cpu_known=t.cpu_here=true;
+        strcpy(t.cpu_profile,"balanced");
+        t.cpu_offers=(uint8_t)((1u<<PANEL_CPU_PROFILES)-1);
+        strcpy(t.cpu_governor,"powersave");strcpy(t.cpu_epp,"balance_performance");
+        strcpy(t.cpu_driver,"amd-pstate-epp");
+        panel_ui_update(&t);
+        lv_obj_t *page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_CPU);
+        lv_obj_update_layout(page);
+        lv_color_t dark=lv_obj_get_style_bg_color(cpu_button(page,PANEL_CPU_POWERSAVE),0);
+        // The profile of the PC lit, and only that one.
+        for(int p=0;p<PANEL_CPU_PROFILES;p++){
+            assert(cpu_lit_one(cpu_button(page,p),dark)==(p==PANEL_CPU_BALANCED));
+            assert(!lv_obj_has_state(cpu_button(page,p),LV_STATE_DISABLED));
+        }
+        assert(label(page,"powersave / balance_performance"));
+        assert(label(page,"Driver: amd-pstate-epp"));
+        assert(label(page,panel_text(TXT_CPU_RUNNING)));
+        // A tap sends at once and lights its button.
+        lv_obj_send_event(cpu_button(page,PANEL_CPU_PERFORMANCE),LV_EVENT_CLICKED,NULL);
+        assert(cpu_changes==1&&cpu_last==PANEL_CPU_PERFORMANCE);
+        assert(cpu_lit_one(cpu_button(page,PANEL_CPU_PERFORMANCE),dark));
+        assert(!cpu_lit_one(cpu_button(page,PANEL_CPU_BALANCED),dark));
+        assert(label(page,panel_text(TXT_CHANGE_APPLYING)));
+        // The answer, and a status from before it: still the choice.
+        t.cpu_replies++;t.cpu_code=200;
+        panel_ui_update(&t);
+        assert(cpu_lit_one(cpu_button(page,PANEL_CPU_PERFORMANCE),dark));
+        assert(label(page,panel_text(TXT_CHANGE_APPLYING)));
+        // The status that shows it ends it.
+        strcpy(t.cpu_profile,"performance");strcpy(t.cpu_governor,"performance");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(cpu_lit_one(cpu_button(page,PANEL_CPU_PERFORMANCE),dark));
+        assert(!label(page,panel_text(TXT_CHANGE_APPLYING)));
+        assert(label(page,"performance / balance_performance"));
+        // The profile the PC has already is no change.
+        lv_obj_send_event(cpu_button(page,PANEL_CPU_PERFORMANCE),LV_EVENT_CLICKED,NULL);
+        assert(cpu_changes==1);
+        // A refusal takes the choice back, and says why, for each code.
+        static const struct{int code;panel_text_id_t why;}refusals[]={
+            {403,TXT_CHANGE_NO_RULE},{409,TXT_CHANGE_BUSY},{501,TXT_CPU_NO_MODULE},
+            {502,TXT_CHANGE_REFUSED},{0,TXT_CHANGE_REFUSED}};
+        for(unsigned i=0;i<sizeof refusals/sizeof *refusals;i++){
+            lv_obj_send_event(cpu_button(page,PANEL_CPU_POWERSAVE),LV_EVENT_CLICKED,NULL);
+            assert(cpu_last==PANEL_CPU_POWERSAVE);
+            t.cpu_replies++;t.cpu_code=refusals[i].code;
+            panel_ui_update(&t);
+            assert(cpu_lit_one(cpu_button(page,PANEL_CPU_PERFORMANCE),dark));
+            assert(!cpu_lit_one(cpu_button(page,PANEL_CPU_POWERSAVE),dark));
+            assert(label(page,panel_text(refusals[i].why)));
+        }
+        // A new choice takes the reason of the last refusal away, so the
+        // reason does not come back once the PC shows the new choice.
+        lv_obj_send_event(cpu_button(page,PANEL_CPU_BALANCED),LV_EVENT_CLICKED,NULL);
+        strcpy(t.cpu_profile,"balanced");t.answers++;
+        panel_ui_update(&t);
+        assert(cpu_lit_one(cpu_button(page,PANEL_CPU_BALANCED),dark));
+        assert(!label(page,panel_text(TXT_CHANGE_REFUSED))&&!label(page,panel_text(TXT_CHANGE_APPLYING)));
+        strcpy(t.cpu_profile,"performance");t.answers++;
+        panel_ui_update(&t);
+        // The reason of a refusal stays for some seconds, and then goes.
+        lv_obj_send_event(cpu_button(page,PANEL_CPU_POWERSAVE),LV_EVENT_CLICKED,NULL);
+        t.cpu_replies++;t.cpu_code=409;
+        panel_ui_update(&t);
+        assert(label(page,panel_text(TXT_CHANGE_BUSY)));
+        lv_tick_inc(9000);
+        t.answers++;
+        panel_ui_update(&t);
+        assert(!label(page,panel_text(TXT_CHANGE_BUSY)));
+        // A choice that no status shows in time goes back too.
+        unsigned before=cpu_changes;
+        lv_obj_send_event(cpu_button(page,PANEL_CPU_STEAMOS),LV_EVENT_CLICKED,NULL);
+        assert(cpu_changes==before+1&&cpu_last==PANEL_CPU_STEAMOS);
+        assert(cpu_lit_one(cpu_button(page,PANEL_CPU_STEAMOS),dark));
+        lv_tick_inc(21000);
+        t.answers++;
+        panel_ui_update(&t);
+        assert(!cpu_lit_one(cpu_button(page,PANEL_CPU_STEAMOS),dark));
+        assert(cpu_lit_one(cpu_button(page,PANEL_CPU_PERFORMANCE),dark));
+        // A setting of the control panel that no profile is: nothing lit,
+        // and a line that says so.
+        strcpy(t.cpu_profile,"custom");strcpy(t.cpu_governor,"powersave");
+        strcpy(t.cpu_epp,"balance_power");t.answers++;
+        panel_ui_update(&t);
+        for(int p=0;p<PANEL_CPU_PROFILES;p++)assert(!cpu_lit_one(cpu_button(page,p),dark));
+        assert(label(page,panel_text(TXT_CPU_CUSTOM)));
+        // A driver with no preference: no power saving profile to press, and
+        // the governor alone under it.
+        strcpy(t.cpu_profile,"balanced");strcpy(t.cpu_governor,"schedutil");t.cpu_epp[0]=0;
+        t.cpu_offers=(uint8_t)((1u<<PANEL_CPU_BALANCED)|(1u<<PANEL_CPU_PERFORMANCE)|(1u<<PANEL_CPU_STEAMOS));
+        t.answers++;
+        panel_ui_update(&t);
+        assert(lv_obj_has_state(cpu_button(page,PANEL_CPU_POWERSAVE),LV_STATE_DISABLED));
+        assert(!lv_obj_has_state(cpu_button(page,PANEL_CPU_BALANCED),LV_STATE_DISABLED));
+        assert(label(page,"schedutil"));
+        before=cpu_changes;
+        lv_obj_send_event(cpu_button(page,PANEL_CPU_POWERSAVE),LV_EVENT_CLICKED,NULL);
+        assert(cpu_changes==before);
+        // A PC with no power module, and a service older than this
+        // firmware: no button to press, and the reason.
+        t.cpu_here=false;t.answers++;
+        panel_ui_update(&t);
+        assert(label(page,panel_text(TXT_CPU_NONE))&&label(page,"--"));
+        assert(!label(page,"Driver: amd-pstate-epp"));
+        for(int p=0;p<PANEL_CPU_PROFILES;p++){
+            assert(lv_obj_has_state(cpu_button(page,p),LV_STATE_DISABLED));
+            assert(!cpu_lit_one(cpu_button(page,p),dark));
+        }
+        lv_obj_send_event(cpu_button(page,PANEL_CPU_PERFORMANCE),LV_EVENT_CLICKED,NULL);
+        assert(cpu_changes==before);
+        t.cpu_known=false;t.answers++;
+        panel_ui_update(&t);
+        assert(label(page,panel_text(TXT_PC_TOO_OLD))&&!label(page,panel_text(TXT_CPU_NONE)));
+        // A PC that does not answer: no button, no reason.
+        t.cpu_known=t.cpu_here=true;t.online=false;
+        panel_ui_update(&t);
+        assert(label(page,"--")&&!label(page,"Driver: amd-pstate-epp"));
+        assert(!label(page,panel_text(TXT_CPU_NONE))&&!label(page,panel_text(TXT_PC_TOO_OLD)));
+        for(int p=0;p<PANEL_CPU_PROFILES;p++)
+            assert(lv_obj_has_state(cpu_button(page,p),LV_STATE_DISABLED));
+        lv_obj_send_event(cpu_button(page,PANEL_CPU_PERFORMANCE),LV_EVENT_CLICKED,NULL);
+        assert(cpu_changes==before);
+        // A new screen, as after a change of the language, starts with no
+        // choice of its own: the status of the PC says what is lit.
+        t.online=true;t.answers++;
+        panel_ui_update(&t);
+        lv_obj_send_event(cpu_button(page,PANEL_CPU_PERFORMANCE),LV_EVENT_CLICKED,NULL);
+        assert(cpu_changes==before+1&&label(page,panel_text(TXT_CHANGE_APPLYING)));
+        panel_ui_create(action,setting,sound,&english);
+        panel_ui_update(&t);
+        page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_CPU);
+        assert(cpu_lit_one(cpu_button(page,PANEL_CPU_BALANCED),dark));
+        assert(!cpu_lit_one(cpu_button(page,PANEL_CPU_PERFORMANCE),dark));
+        assert(!label(page,panel_text(TXT_CHANGE_APPLYING)));
+        lv_refr_now(screen);
+        assert(complaints==0);
+        // Each name whole in its button, and each line whole in its card, in
+        // both languages.
+        for(int language=0;language<2;language++){
+            panel_settings_t in_it=english;in_it.language=language?PANEL_GERMAN:PANEL_ENGLISH;
+            panel_ui_create(action,setting,sound,&in_it);
+            page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_CPU);
+            lv_obj_update_layout(page);
+            for(int p=0;p<PANEL_CPU_PROFILES;p++){
+                lv_obj_t *button=cpu_button(page,p),*caption=lv_obj_get_child(button,0);
+                lv_point_t size;
+                lv_text_get_size(&size,lv_label_get_text(caption),lv_obj_get_style_text_font(button,0),
+                                 0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+                assert(size.x<lv_obj_get_width(button)-8);
+                assert(lv_obj_get_height(caption)<=lv_font_get_line_height(lv_obj_get_style_text_font(button,0)));
+            }
+            static const panel_text_id_t lines[]={TXT_CHANGE_APPLYING,TXT_CHANGE_NO_RULE,TXT_CHANGE_BUSY,
+                TXT_CPU_NO_MODULE,TXT_CHANGE_REFUSED,TXT_CPU_CUSTOM,TXT_CPU_NONE,TXT_PC_TOO_OLD};
+            for(unsigned i=0;i<sizeof lines/sizeof *lines;i++){
+                lv_point_t size;
+                lv_text_get_size(&size,panel_text(lines[i]),&panel_font_12,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+                assert(size.x<=428);
+            }
+            lv_point_t size;
+            lv_text_get_size(&size,"performance / balance_performance",&panel_font_18,0,0,LV_COORD_MAX,
+                             LV_TEXT_FLAG_NONE);
+            assert(size.x<=428);
+        }
+        panel_ui_create(action,setting,sound,&english);
+    }
+
     // The page of the LED bar: the effect of the PC on the desktop and in
     // the rainbow entry of Steam in Game Mode, with an arrow on each side.
     // A tap shows the next effect at once, and the change goes to main.c
@@ -2059,7 +2258,7 @@ int main(void)
         assert(label(game,panel_text(TXT_LED_GAME_WHAT)));
         // Three taps: each shows its effect at once, and none goes yet.
         led_tap(page,PANEL_LED_DESKTOP,LV_SYMBOL_RIGHT);
-        assert(label(desktop,"Ooze")&&label(desktop,panel_text(TXT_LED_APPLYING)));
+        assert(label(desktop,"Ooze")&&label(desktop,panel_text(TXT_CHANGE_APPLYING)));
         led_tap(page,PANEL_LED_DESKTOP,LV_SYMBOL_RIGHT);
         led_wait(1000);
         led_tap(page,PANEL_LED_DESKTOP,LV_SYMBOL_RIGHT);
@@ -2072,11 +2271,11 @@ int main(void)
         // the page keeps the choice until a status shows it.
         t.led_replies++;t.led_code=200;
         panel_ui_update(&t);
-        assert(label(desktop,"CPU and GPU load")&&label(desktop,panel_text(TXT_LED_APPLYING)));
+        assert(label(desktop,"CPU and GPU load")&&label(desktop,panel_text(TXT_CHANGE_APPLYING)));
         strcpy(t.led_effect[PANEL_LED_DESKTOP],"load");
         t.answers++;
         panel_ui_update(&t);
-        assert(label(desktop,"CPU and GPU load")&&!label(desktop,panel_text(TXT_LED_APPLYING)));
+        assert(label(desktop,"CPU and GPU load")&&!label(desktop,panel_text(TXT_CHANGE_APPLYING)));
         // An effect in the desktop colour says where the colour comes from.
         strcpy(t.led_effect[PANEL_LED_DESKTOP],"breath");
         t.answers++;
@@ -2093,10 +2292,10 @@ int main(void)
         assert(led_changes==2&&strcmp(led_last[PANEL_LED_GAME],"ooze")==0&&!led_last[PANEL_LED_DESKTOP][0]);
         t.led_replies++;t.led_code=403;
         panel_ui_update(&t);
-        assert(label(game,"Fire")&&label(game,panel_text(TXT_LED_NO_RULE)));
+        assert(label(game,"Fire")&&label(game,panel_text(TXT_CHANGE_NO_RULE)));
         // Each code of a refusal has its own reason.
         static const struct{int code;panel_text_id_t why;}refusals[]={
-            {409,TXT_LED_BUSY},{501,TXT_LED_NO_MODULE},{502,TXT_LED_REFUSED},{0,TXT_LED_REFUSED}};
+            {409,TXT_CHANGE_BUSY},{501,TXT_LED_NO_MODULE},{502,TXT_CHANGE_REFUSED},{0,TXT_CHANGE_REFUSED}};
         for(unsigned i=0;i<sizeof refusals/sizeof *refusals;i++){
             led_tap(page,PANEL_LED_GAME,LV_SYMBOL_RIGHT);
             led_wait(1600);
@@ -2117,7 +2316,7 @@ int main(void)
         lv_tick_inc(21000);
         t.answers++;
         panel_ui_update(&t);
-        assert(label(desktop,"Breathing")&&!label(desktop,panel_text(TXT_LED_APPLYING)));
+        assert(label(desktop,"Breathing")&&!label(desktop,panel_text(TXT_CHANGE_APPLYING)));
         // In Game Mode its card says so.
         t.game_mode=true;
         panel_ui_update(&t);
@@ -2140,7 +2339,7 @@ int main(void)
         // an LED bar at all, and the page says what to do about that.
         t.led_known=false;t.answers++;
         panel_ui_update(&t);
-        assert(label(desktop,panel_text(TXT_LED_OLD_SERVICE))&&!label(desktop,panel_text(TXT_LED_NONE)));
+        assert(label(desktop,panel_text(TXT_PC_TOO_OLD))&&!label(desktop,panel_text(TXT_LED_NONE)));
         assert(lv_obj_has_state(button_with(desktop,LV_SYMBOL_RIGHT),LV_STATE_DISABLED));
         t.led_known=true;
         // A PC that does not answer: a dash, and nothing to press.
@@ -2180,8 +2379,8 @@ int main(void)
                     lv_obj_get_coords(button_with(card,LV_SYMBOL_RIGHT),&right);
                     assert(at.x1>left.x2&&at.x2<right.x1);
                 }
-            static const panel_text_id_t notes[]={TXT_LED_GAME_WHAT,TXT_LED_COLOUR_WHAT,TXT_LED_APPLYING,
-                TXT_LED_NONE,TXT_LED_OLD_SERVICE,TXT_LED_NO_RULE,TXT_LED_BUSY,TXT_LED_NO_MODULE,TXT_LED_REFUSED,
+            static const panel_text_id_t notes[]={TXT_LED_GAME_WHAT,TXT_LED_COLOUR_WHAT,TXT_CHANGE_APPLYING,
+                TXT_LED_NONE,TXT_PC_TOO_OLD,TXT_CHANGE_NO_RULE,TXT_CHANGE_BUSY,TXT_LED_NO_MODULE,TXT_CHANGE_REFUSED,
                 TXT_LED_DESKTOP,TXT_LED_GAME};
             for(unsigned i=0;i<sizeof notes/sizeof *notes;i++){
                 lv_point_t size;
@@ -2194,7 +2393,7 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
-    puts("OK: six pages that snap, in an order somebody can change, any of them "
+    puts("OK: seven pages that snap, in an order somebody can change, any of them "
          "but the last one hidden with an eye, the "
          "session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
@@ -2206,7 +2405,8 @@ int main(void)
          "page of the PC that scrolls, and a choice of sensor for each tile "
          "of the temperatures, and the page of the panel with its update, "
          "its power chip in detail and its frames in movement, and the page "
-         "of the card with its history and its Cooling Boost, and the page "
-         "of the LED bar with the effect of each mode of the PC.");
+         "of the card with its history and its Cooling Boost, the page of "
+         "the LED bar with the effect of each mode of the PC, and the page "
+         "of the energy profile of its CPU.");
     return 0;
 }

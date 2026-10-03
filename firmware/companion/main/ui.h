@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "panel_cpu.h"
 #include "panel_history.h"
 #include "panel_led.h"
 #include "panel_pages.h"
@@ -12,7 +13,7 @@
 
 /* The band of pages that scrolls sideways: the controls, the session and
  * the drives, the game that runs, the clock with the timer, the card with
- * its history, and the LED bar of the PC. PANEL_PAGES and their order are panel_pages.h's:
+ * its history, the LED bar of the PC, and the energy profile of its CPU. PANEL_PAGES and their order are panel_pages.h's:
  * somebody can put them in another order, and the first is the page the
  * panel starts on. */
 
@@ -219,6 +220,17 @@ typedef struct {
     char led_effect[PANEL_LED_MODES][PANEL_LED_KEY];
     uint32_t led_replies;
     int led_code;
+    /* The CPU of the PC, for its page, the same way. cpu_profile is the
+     * key of the profile of its settings, "custom" for a setting of the
+     * control panel that no profile is, and cpu_offers has a bit for each
+     * profile of panel_cpu.h that the PC offers. The governor, the
+     * preference and the driver are what runs on the PC. See panel_cpu.h. */
+    bool cpu_known, cpu_here;
+    char cpu_profile[PANEL_CPU_KEY];
+    uint8_t cpu_offers;
+    char cpu_governor[24], cpu_epp[24], cpu_driver[24];
+    uint32_t cpu_replies;
+    int cpu_code;
     /* The frames in movement are not in here. They change at each frame
      * of a movement, and a state that changes makes panel_ui_update do
      * all of its work again: in a scroll, at every tick. The page of the
@@ -260,6 +272,11 @@ void panel_ui_create(panel_action_cb_t callback, panel_setting_cb_t setting_cb, 
 typedef void (*panel_led_cb_t)(const char *const effect[PANEL_LED_MODES]);
 /* Where those changes go. Set once; the page sends nothing without it. */
 void panel_ui_led_use(panel_led_cb_t callback);
+/* A profile from the page of the CPU, as panel_cpu.h counts them. main.c
+ * sends it to the PC, and the answer comes back in cpu_replies and
+ * cpu_code. */
+typedef void (*panel_cpu_cb_t)(int profile);
+void panel_ui_cpu_use(panel_cpu_cb_t callback);
 void panel_ui_settings_open(void);
 /* The page of the controllers, which a tap on the head opens. */
 void panel_ui_pads_open(void);

@@ -242,6 +242,27 @@ int main(int argc,char **argv)
             panel_ui_update(&s);
         }
     }
+    /* The seventh page. "energy" is the board's machine on the balanced
+     * profile, "energy-custom" a setting of the control panel that no
+     * profile is, "energy-passive" a driver with no preference, and
+     * "energy-none" a PC with no power module. */
+    if(argc>2&&strncmp(argv[2],"energy",6)==0){
+        bool passive=strcmp(argv[2],"energy-passive")==0,custom=strcmp(argv[2],"energy-custom")==0;
+        s.cpu_known=true;
+        s.cpu_here=strcmp(argv[2],"energy-none")!=0;
+        snprintf(s.cpu_profile,sizeof s.cpu_profile,"%s",custom?"custom":"balanced");
+        s.cpu_offers=passive?(uint8_t)((1u<<PANEL_CPU_BALANCED)|(1u<<PANEL_CPU_PERFORMANCE)|(1u<<PANEL_CPU_STEAMOS))
+                            :(uint8_t)((1u<<PANEL_CPU_PROFILES)-1);
+        snprintf(s.cpu_governor,sizeof s.cpu_governor,"%s",passive?"schedutil":"powersave");
+        snprintf(s.cpu_epp,sizeof s.cpu_epp,"%s",passive?"":custom?"balance_power":"balance_performance");
+        snprintf(s.cpu_driver,sizeof s.cpu_driver,"%s",passive?"amd-pstate":"amd-pstate-epp");
+        panel_ui_update(&s);
+        lv_obj_t *band=band_in(lv_screen_active());
+        if(band){
+            lv_obj_update_layout(band);
+            lv_obj_scroll_to_view(lv_obj_get_child(band,PANEL_PAGE_CPU),LV_ANIM_OFF);
+        }
+    }
     if(argc>2&&strcmp(argv[2],"pads")==0)panel_ui_pads_open();
     if(argc>2&&strncmp(argv[2],"self",4)==0){count_frames();panel_ui_self_open();}
     if(argc>2&&strstr(argv[2],"-menu")){

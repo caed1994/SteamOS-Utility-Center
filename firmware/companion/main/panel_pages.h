@@ -37,6 +37,7 @@ typedef enum {
     PANEL_PAGE_CLOCK,
     PANEL_PAGE_CARD,
     PANEL_PAGE_LED,
+    PANEL_PAGE_CPU,
     PANEL_PAGES
 } panel_page_t;
 

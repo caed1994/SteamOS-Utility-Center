@@ -143,7 +143,7 @@ class RequestTest(unittest.TestCase):
         """The service answers once the LED service runs again with the
         new file."""
         main = code("main.c")
-        self.assertGreater(number("PANEL_LED_WAIT_MS", main),
+        self.assertGreater(number("PANEL_CHANGE_WAIT_MS", main),
                            number("PANEL_ASK_MS", main))
 
     def test_both_builds_carry_the_file(self):

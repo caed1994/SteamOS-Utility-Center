@@ -37,7 +37,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIRMWARE = os.path.join(REPO, "firmware", "companion", "main")
 HARNESS = os.path.join(REPO, "tests", "c", "panel-pages-harness.c")
 
-PAGES = 6
+PAGES = 7
 DEFAULT = list(range(PAGES))
 
 
@@ -94,7 +94,7 @@ class OrderTest(unittest.TestCase):
     def order(self, value):
         return [int(page) for page in self.ask("order %x" % value)[0].split()]
 
-    def test_the_firmware_has_six_pages_and_room_for_eight(self):
+    def test_the_firmware_has_seven_pages_and_room_for_eight(self):
         self.assertEqual(self.ask("size"), ["%d 8" % PAGES])
 
     def test_nobody_chose_an_order(self):
@@ -110,20 +110,25 @@ class OrderTest(unittest.TestCase):
             self.assertEqual([int(page) for page in answer.split()], list(one))
 
     def test_the_places_nobody_holds_are_0xf(self):
-        self.assertEqual(self.ask("pack 3 0 1 2 4 5"), ["ff542103"])
+        self.assertEqual(self.ask("pack 3 0 1 2 4 5 6"), ["f6542103"])
 
     def test_a_page_that_comes_twice_counts_once(self):
-        self.assertEqual(self.order(stored(3, 3, 1, 3)), [3, 1, 0, 2, 4, 5])
+        self.assertEqual(self.order(stored(3, 3, 1, 3)), [3, 1, 0, 2, 4, 5, 6])
 
     def test_a_page_this_firmware_does_not_have_is_left_out(self):
-        self.assertEqual(self.order(stored(7, 2, 0xE, 6, 4)), [2, 4, 0, 1, 3, 5])
+        self.assertEqual(self.order(stored(7, 2, 0xE, 6, 4)), [2, 6, 4, 0, 1, 3, 5])
 
     def test_a_page_a_later_update_adds_comes_last(self):
-        # The order of a firmware with four pages, and the card and the LED
-        # bar are new.
-        self.assertEqual(self.order(stored(3, 0, 2, 1)), [3, 0, 2, 1, 4, 5])
-        # The order of a firmware with five pages, and the LED bar is new.
-        self.assertEqual(self.order(stored(4, 3, 0, 2, 1)), [4, 3, 0, 2, 1, 5])
+        # The order of a firmware with four pages, and the card, the LED bar
+        # and the CPU are new.
+        self.assertEqual(self.order(stored(3, 0, 2, 1)), [3, 0, 2, 1, 4, 5, 6])
+        # The order of a firmware with five pages, and the LED bar and the
+        # CPU are new.
+        self.assertEqual(self.order(stored(4, 3, 0, 2, 1)),
+                         [4, 3, 0, 2, 1, 5, 6])
+        # The order of a firmware with six pages, and the CPU is new.
+        self.assertEqual(self.order(stored(5, 4, 3, 0, 2, 1)),
+                         [5, 4, 3, 0, 2, 1, 6])
 
     def test_a_number_nobody_wrote_still_gives_each_page_once(self):
         draw = random.Random(1994)
@@ -135,14 +140,14 @@ class OrderTest(unittest.TestCase):
                              "0x%08x" % value)
 
     def test_a_move_swaps_a_page_with_its_neighbour(self):
-        self.assertEqual(self.ask("move ffffffff 0 1"), ["1 1 0 2 3 4 5"])
-        self.assertEqual(self.ask("move ffffffff 5 -1"), ["1 0 1 2 3 5 4"])
-        self.assertEqual(self.ask("move ffffffff 2 -1"), ["1 0 2 1 3 4 5"])
+        self.assertEqual(self.ask("move ffffffff 0 1"), ["1 1 0 2 3 4 5 6"])
+        self.assertEqual(self.ask("move ffffffff 6 -1"), ["1 0 1 2 3 4 6 5"])
+        self.assertEqual(self.ask("move ffffffff 2 -1"), ["1 0 2 1 3 4 5 6"])
 
     def test_nothing_moves_past_an_end_or_further_than_one_place(self):
-        for place, step in ((0, -1), (5, 1), (1, 2), (2, -2), (-1, 1), (6, -1), (2, 0)):
+        for place, step in ((0, -1), (6, 1), (1, 2), (2, -2), (-1, 1), (7, -1), (2, 0)):
             self.assertEqual(self.ask("move ffffffff %d %d" % (place, step)),
-                             ["0 0 1 2 3 4 5"], (place, step))
+                             ["0 0 1 2 3 4 5 6"], (place, step))
 
     # The hidden pages: a bit for each page, and one page at the least
     # shown.
@@ -150,26 +155,26 @@ class OrderTest(unittest.TestCase):
     def test_the_hidden_pages_of_a_stored_number(self):
         self.assertEqual(self.ask("hidden 0", "hidden 5", "hidden f"), ["0", "5", "f"])
         # A bit of a page that this firmware does not have is left out.
-        self.assertEqual(self.ask("hidden ffffffc2"), ["2"])
+        self.assertEqual(self.ask("hidden ffffff82"), ["2"])
         # A number that hides every page hides none.
-        self.assertEqual(self.ask("hidden 3f", "hidden ffffffff"), ["0", "0"])
+        self.assertEqual(self.ask("hidden 7f", "hidden ffffffff"), ["0", "0"])
 
     def test_a_page_is_hidden_and_shown_again(self):
         self.assertEqual(self.ask("toggle 0 1", "toggle 2 1", "toggle 3 4"),
                          ["1 2", "1 0", "1 13"])
 
     def test_the_last_page_that_is_shown_stays(self):
-        self.assertEqual(self.ask("toggle 1f 5", "toggle 37 3"), ["0 1f", "0 37"])
+        self.assertEqual(self.ask("toggle 3f 6", "toggle 77 3"), ["0 3f", "0 77"])
         # Another page shown again, and then this one can go.
-        self.assertEqual(self.ask("toggle 1f 0", "toggle 1e 5"), ["1 1e", "1 3e"])
+        self.assertEqual(self.ask("toggle 3f 0", "toggle 3e 6"), ["1 3e", "1 7e"])
 
     def test_a_page_that_this_firmware_does_not_have_does_not_toggle(self):
-        self.assertEqual(self.ask("toggle 0 6", "toggle 0 -1", "toggle 0 31"), ["0 0"] * 3)
+        self.assertEqual(self.ask("toggle 0 7", "toggle 0 -1", "toggle 0 31"), ["0 0"] * 3)
 
     def test_the_count_of_the_pages_that_are_shown(self):
         self.assertEqual(self.ask("shown 0", "shown 1", "shown 5", "shown 15", "shown f",
-                                  "shown 1f"),
-                         ["6", "5", "4", "3", "2", "1"])
+                                  "shown 1f", "shown 3f"),
+                         ["7", "6", "5", "4", "3", "2", "1"])
 
     def test_the_band_holds_the_shown_pages_in_their_order(self):
         draw = random.Random(2610)
@@ -190,12 +195,12 @@ class OrderTest(unittest.TestCase):
                              [shown[min(max(place, 0), len(shown) - 1)] for place in wanted])
         # A page that this firmware does not have has no place.
         value = stored(*DEFAULT)
-        self.assertEqual(self.ask("band %x 0 6" % value, "band %x 0 -1" % value), ["-1", "-1"])
+        self.assertEqual(self.ask("band %x 0 7" % value, "band %x 0 -1" % value), ["-1", "-1"])
 
     def test_the_place_of_a_page(self):
         value = stored(3, 0, 4, 1, 2)
         self.assertEqual(self.ask(*["place %x %d" % (value, page) for page in DEFAULT]),
-                         ["1", "3", "4", "0", "2", "5"])
+                         ["1", "3", "4", "0", "2", "5", "6"])
 
 
 class StorageTest(unittest.TestCase):

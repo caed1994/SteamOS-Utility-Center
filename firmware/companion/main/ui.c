@@ -157,7 +157,7 @@ static lv_obj_t *band_pages[PANEL_PAGES];
 static lv_obj_t *arrange_screen,*arrange_names[PANEL_PAGES],*arrange_starts[PANEL_PAGES];
 static lv_obj_t *arrange_eyes[PANEL_PAGES],*arrange_up[PANEL_PAGES],*arrange_down[PANEL_PAGES];
 static const panel_text_id_t page_names[PANEL_PAGES]={TXT_PAGE_CONTROLS,TXT_PAGE_SESSION,
-    TXT_PLAYING,TXT_PAGE_CLOCK,TXT_PAGE_CARD,TXT_PAGE_LED};
+    TXT_PLAYING,TXT_PAGE_CLOCK,TXT_PAGE_CARD,TXT_PAGE_LED,TXT_PAGE_CPU};
 static void arrange_forget(void);
 /* The menu that chooses the sensor of a tile, and which tile it is for. */
 static lv_obj_t *sensor_layer;
@@ -430,15 +430,22 @@ static void settings_close(lv_event_t *e)
  * name, and the longest, "Graphics card and history", takes 206 in it and
  * 232 in the 18 point font.
  *
- * Six rows on the screen, with no scroll: 60 high, 8 apart, the last one 8
- * over the bottom edge. They were 70 high when there were five pages, and
- * the page of the LED bar made a sixth. ARRANGE_NAME_Y and ARRANGE_START_Y
- * are the name of the start page and the line under it that says so. */
+ * Every row on the screen, with no scroll: the room under the title, 8 over
+ * the bottom edge, shared by the pages, with a gap of ARRANGE_GAP between
+ * two rows. Seven pages give rows of 52, and eight would give 44, the
+ * height of the buttons. The name of the start page and the line under it
+ * that says so stand in the middle of the row together. See arrange_name_y. */
 #define ARRANGE_TOP 72
-#define ARRANGE_STEP 68
-#define ARRANGE_HEIGHT 60
-#define ARRANGE_NAME_Y 9
-#define ARRANGE_START_Y 33
+#define ARRANGE_GAP 6
+#define ARRANGE_STEP ((480-8-ARRANGE_TOP+ARRANGE_GAP)/PANEL_PAGES)
+#define ARRANGE_HEIGHT (ARRANGE_STEP-ARRANGE_GAP)
+_Static_assert(ARRANGE_HEIGHT>=44,"a row of the order has no room for its buttons");
+/* The name of the start page, with the line that says so 2 under it. */
+static int32_t arrange_name_y(void)
+{
+    return (ARRANGE_HEIGHT-lv_font_get_line_height(&panel_font_16)-2
+            -lv_font_get_line_height(&panel_font_12))/2;
+}
 static void arrange_drop(void)
 {
     arrange_screen=NULL;
@@ -493,7 +500,7 @@ static void arrange_show(void)
         lv_obj_set_style_text_color(arrange_names[place],lv_color_hex(hidden?MUTED:TEXT),0);
         /* The start page has a second line, and the others have their name
          * in the middle of the row. */
-        lv_obj_set_y(arrange_names[place],place==start?ARRANGE_NAME_Y:
+        lv_obj_set_y(arrange_names[place],place==start?arrange_name_y():
                      (ARRANGE_HEIGHT-lv_font_get_line_height(&panel_font_16))/2);
         if(place==start)lv_obj_remove_flag(arrange_starts[place],LV_OBJ_FLAG_HIDDEN);
         else lv_obj_add_flag(arrange_starts[place],LV_OBJ_FLAG_HIDDEN);
@@ -544,9 +551,11 @@ void panel_ui_arrange_open(void)
         char number[4];
         snprintf(number,sizeof number,"%d",place+1);
         text_at(row,number,16,(ARRANGE_HEIGHT-lv_font_get_line_height(&panel_font_24))/2,24,&panel_font_24,BLUE);
-        arrange_names[place]=text_at(row,"",52,ARRANGE_NAME_Y,212,&panel_font_16,TEXT);
+        arrange_names[place]=text_at(row,"",52,arrange_name_y(),212,&panel_font_16,TEXT);
         lv_obj_set_height(arrange_names[place],lv_font_get_line_height(&panel_font_16));
-        arrange_starts[place]=text_at(row,panel_text(TXT_PAGES_START),52,ARRANGE_START_Y,212,&panel_font_12,MUTED);
+        arrange_starts[place]=text_at(row,panel_text(TXT_PAGES_START),52,
+                                      arrange_name_y()+lv_font_get_line_height(&panel_font_16)+2,
+                                      212,&panel_font_12,MUTED);
         int32_t button_y=(ARRANGE_HEIGHT-44)/2;
         arrange_eyes[place]=button(row,LV_SYMBOL_EYE_OPEN,270,button_y,48,44,arrange_eye,place);
         arrange_up[place]=button(row,LV_SYMBOL_UP,324,button_y,48,44,arrange_move,place*2);
@@ -1500,7 +1509,7 @@ const char *panel_ui_where(void)
      * somebody can change. See band_page. */
     static const char *const pages[PANEL_PAGES]={"the controls","the session",
                                                  "the game","the clock","the card",
-                                                 "the LED bar"};
+                                                 "the LED bar","the CPU"};
     return pages[band_page()];
 }
 
@@ -1546,14 +1555,15 @@ static lv_timer_t *led_timer;
 /* The count of the answers to changes that the page has seen. */
 static uint32_t led_replies_seen;
 void panel_ui_led_use(panel_led_cb_t callback){led_send=callback;}
-/* What the code of an answer means to somebody at the page. */
-static panel_text_id_t led_refusal(int code)
+/* What the code of an answer to a change means to somebody at a page:
+ * the page of the LED bar or of the CPU, which name their own module. */
+static panel_text_id_t change_refusal(int code,panel_text_id_t no_module)
 {
     switch(code){
-    case 403:return TXT_LED_NO_RULE;
-    case 409:return TXT_LED_BUSY;
-    case 501:return TXT_LED_NO_MODULE;
-    default:return TXT_LED_REFUSED;
+    case 403:return TXT_CHANGE_NO_RULE;
+    case 409:return TXT_CHANGE_BUSY;
+    case 501:return no_module;
+    default:return TXT_CHANGE_REFUSED;
     }
 }
 static void led_show(const panel_state_t *s)
@@ -1567,7 +1577,7 @@ static void led_show(const panel_state_t *s)
             led_card_t *c=&led_cards[m];
             if(c->wanted<0||!c->sent)continue;
             c->wanted=-1;c->sent=false;
-            c->refused=true;c->refusal=led_refusal(s->led_code);c->refused_at=lv_tick_get();
+            c->refused=true;c->refusal=change_refusal(s->led_code,TXT_LED_NO_MODULE);c->refused_at=lv_tick_get();
         }
     }
     bool usable=s->online&&s->led_here;
@@ -1592,14 +1602,14 @@ static void led_show(const panel_state_t *s)
             if(now)lv_obj_remove_flag(c->now,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(c->now,LV_OBJ_FLAG_HIDDEN);
         }
         const char *note="";
-        if(c->wanted>=0)note=panel_text(TXT_LED_APPLYING);
+        if(c->wanted>=0)note=panel_text(TXT_CHANGE_APPLYING);
         else if(c->refused)note=panel_text(c->refusal);
         else if(s->online&&!s->led_here){
             /* Once, on the first card: no LED module, or a service of the PC
              * that is older than this firmware and knows no page of this
              * kind. A firmware that comes before the update of the PC is
              * the usual way to get the second. */
-            if(m==PANEL_LED_DESKTOP)note=panel_text(s->led_known?TXT_LED_NONE:TXT_LED_OLD_SERVICE);
+            if(m==PANEL_LED_DESKTOP)note=panel_text(s->led_known?TXT_LED_NONE:TXT_PC_TOO_OLD);
         }
         else if(m==PANEL_LED_GAME)note=panel_text(TXT_LED_GAME_WHAT);
         else if(panel_led_coloured((panel_led_mode_t)m,index))note=panel_text(TXT_LED_COLOUR_WHAT);
@@ -1637,6 +1647,98 @@ static void led_step(lv_event_t *e)
     if(!led_timer)led_timer=lv_timer_create(led_due,LED_WAIT_MS,NULL);
     lv_timer_reset(led_timer);lv_timer_resume(led_timer);
     led_show(&last_state);
+}
+/* The page of the CPU: a button for each profile, and under them what runs.
+ *
+ * A tap sends the profile at once: one tap is one choice, and nothing here
+ * starts a service again. The button of the choice is lit until the status
+ * shows the profile, and the page goes back to the profile of the PC when
+ * the PC refuses it or no answer shows it in LED_SHOWN_MS, as the page of
+ * the LED bar does. A profile that the PC does not offer is grey: a driver
+ * with no preference has no power saving profile. See power.PROFILES. */
+static lv_obj_t *cpu_buttons[PANEL_CPU_PROFILES],*cpu_running,*cpu_driver_line,*cpu_note;
+/* What each button shows: -1 for nothing yet, 0 dark, 1 lit. */
+static int8_t cpu_lit[PANEL_CPU_PROFILES];
+static panel_cpu_cb_t cpu_send;
+/* The profile somebody chose and the PC does not show yet, or -1, sent at
+ * cpu_sent_at; and why the PC did not take the last one. */
+static int cpu_wanted=-1;
+static uint32_t cpu_sent_at,cpu_refused_at,cpu_replies_seen;
+static bool cpu_refused;
+static panel_text_id_t cpu_refusal;
+void panel_ui_cpu_use(panel_cpu_cb_t callback){cpu_send=callback;}
+static void cpu_show(const panel_state_t *s)
+{
+    if(!cpu_note)return;
+    if(s->cpu_replies!=cpu_replies_seen){
+        cpu_replies_seen=s->cpu_replies;
+        if(s->cpu_code!=200&&cpu_wanted>=0){
+            cpu_wanted=-1;
+            cpu_refused=true;cpu_refusal=change_refusal(s->cpu_code,TXT_CPU_NO_MODULE);
+            cpu_refused_at=lv_tick_get();
+        }
+    }
+    int current=panel_cpu_find(s->cpu_profile);
+    /* Shown by the PC, or not shown in time: the choice is over. */
+    if(cpu_wanted>=0&&(cpu_wanted==current||lv_tick_elaps(cpu_sent_at)>LED_SHOWN_MS))cpu_wanted=-1;
+    if(cpu_refused&&lv_tick_elaps(cpu_refused_at)>LED_REFUSAL_MS)cpu_refused=false;
+    bool usable=s->online&&s->cpu_here;
+    int selected=!usable?-1:cpu_wanted>=0?cpu_wanted:current;
+    for(int p=0;p<PANEL_CPU_PROFILES;p++){
+        enable(cpu_buttons[p],usable&&((s->cpu_offers>>p)&1));
+        int8_t lit=p==selected;
+        if(lit==cpu_lit[p])continue;
+        cpu_lit[p]=lit;
+        lv_obj_set_style_bg_color(cpu_buttons[p],lv_color_hex(lit?BLUE:0x1B2B3C),0);
+        lv_obj_set_style_text_color(cpu_buttons[p],lv_color_hex(lit?BG:TEXT),0);
+    }
+    char running[56];
+    if(usable&&s->cpu_governor[0])
+        snprintf(running,sizeof running,s->cpu_epp[0]?"%s / %s":"%s%s",s->cpu_governor,s->cpu_epp);
+    else snprintf(running,sizeof running,"--");
+    set_text(cpu_running,running);
+    char driver[48]="";
+    if(usable&&s->cpu_driver[0])snprintf(driver,sizeof driver,panel_text(TXT_CPU_DRIVER),s->cpu_driver);
+    set_text(cpu_driver_line,driver);
+    const char *note="";
+    if(cpu_wanted>=0)note=panel_text(TXT_CHANGE_APPLYING);
+    else if(cpu_refused)note=panel_text(cpu_refusal);
+    else if(s->online&&!s->cpu_here)note=panel_text(s->cpu_known?TXT_CPU_NONE:TXT_PC_TOO_OLD);
+    else if(usable&&current<0&&s->cpu_profile[0])note=panel_text(TXT_CPU_CUSTOM);
+    set_text(cpu_note,note);
+}
+static void cpu_clicked(lv_event_t *e)
+{
+    int profile=(int)(intptr_t)lv_event_get_user_data(e);
+    if(!last_state_valid||!last_state.online||!last_state.cpu_here
+       ||!((last_state.cpu_offers>>profile)&1))return;
+    feedback();
+    cpu_refused=false;
+    /* The profile the PC has already is no change. */
+    if(cpu_wanted<0&&profile==panel_cpu_find(last_state.cpu_profile)){cpu_show(&last_state);return;}
+    cpu_wanted=profile;cpu_sent_at=lv_tick_get();
+    if(cpu_send)cpu_send(profile);
+    cpu_show(&last_state);
+}
+static void cpu_page(lv_obj_t *page)
+{
+    lv_obj_t *card=panel(page,10,0,460,170,CARD,true);
+    icon(card,&icon_cpu,14,14,MUTED);
+    text_at(card,panel_text(TXT_CPU_TITLE),52,16,380,&panel_font_14,MUTED);
+    line(card,14,44,432,1);
+    /* The three from the least power to the most, side by side, and the way
+     * back to SteamOS under them across the card. */
+    for(int p=0;p<PANEL_CPU_STEAMOS;p++)
+        cpu_buttons[p]=button(card,panel_text(panel_cpu_name(p)),14+p*146,56,138,56,cpu_clicked,p);
+    cpu_buttons[PANEL_CPU_STEAMOS]=button(card,panel_text(TXT_CPU_STEAMOS),14,120,430,40,
+                                          cpu_clicked,PANEL_CPU_STEAMOS);
+    lv_obj_set_style_text_font(cpu_buttons[PANEL_CPU_STEAMOS],&panel_font_14,0);
+    for(int p=0;p<PANEL_CPU_PROFILES;p++){cpu_lit[p]=-1;enable(cpu_buttons[p],false);}
+    lv_obj_t *now=panel(page,10,180,460,120,CARD,true);
+    text_at(now,panel_text(TXT_CPU_RUNNING),16,12,300,&panel_font_14,MUTED);
+    cpu_running=text_at(now,"--",16,34,428,&panel_font_18,TEXT);
+    cpu_driver_line=text_at(now,"",16,62,428,&panel_font_12,MUTED);
+    cpu_note=text_at(now,"",16,88,428,&panel_font_12,MUTED);
 }
 /* One card of the page, "y" down the page. */
 static void led_card(lv_obj_t *page,panel_led_mode_t m,int y)
@@ -1814,6 +1916,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * that the old screen made goes with it. */
     for(int m=0;m<PANEL_LED_MODES;m++)led_cards[m]=(led_card_t){.wanted=-1};
     if(led_timer)lv_timer_pause(led_timer);
+    for(int p=0;p<PANEL_CPU_PROFILES;p++){cpu_buttons[p]=NULL;cpu_lit[p]=-1;}
+    cpu_running=NULL;cpu_driver_line=NULL;cpu_note=NULL;cpu_wanted=-1;cpu_refused=false;
     playing_name=NULL;achievement_count=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
     clock_digits=NULL;clock_date=NULL;timer_value=NULL;timer_minus=NULL;timer_plus=NULL;
     timer_go=NULL;timer_go_label=NULL;timer_reset=NULL;alarm_layer=NULL;
@@ -1866,7 +1970,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
         lv_obj_add_flag(pad_values[1],LV_OBJ_FLAG_HIDDEN);
     }
     line(s,0,57,480,1);
-    /* The middle band, which scrolls sideways. Six pages of one screen
+    /* The middle band, which scrolls sideways. Seven pages of one screen
      * each, and the head above it and the sensors below it stay where they
      * are: those are the numbers somebody looks at without touching
      * anything, and a page that can carry them away is a page that hides
@@ -2127,6 +2231,9 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * desktop and one for Game Mode. See led_show. */
     led_card(page[PANEL_PAGE_LED],PANEL_LED_DESKTOP,0);
     led_card(page[PANEL_PAGE_LED],PANEL_LED_GAME,154);
+    /* The seventh page: the energy profile of the CPU of the PC. See
+     * cpu_show. */
+    cpu_page(page[PANEL_PAGE_CPU]);
     /* The temperatures and the power of the card, in one card across the
      * screen: three fields of the same width, the processor, the card and
      * its power, with a short line between each two. Two tiles stood
@@ -2288,6 +2395,7 @@ void panel_ui_update(const panel_state_t *s)
     pads_head(s);
     pads_show(s);
     led_show(s);
+    cpu_show(s);
     pc_show(s);
     self_show(s);
     update_layer_show(s);
