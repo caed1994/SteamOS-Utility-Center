@@ -517,6 +517,24 @@ static void action_send(panel_action_t action)
     }
 }
 
+/* The change of the page of the LED bar that waits for the network task:
+ * the key of each mode, and empty for a mode that keeps its effect. Under
+ * the lock. A second change before the task takes the first adds to it, so
+ * a change of each mode in quick turn goes as one. */
+static char led_wanted[PANEL_LED_MODES][PANEL_LED_KEY];
+static bool led_due;
+
+/* From the LVGL task. See panel_ui_led_use. */
+static void led_change(const char *const effect[PANEL_LED_MODES])
+{
+    xSemaphoreTake(lock,portMAX_DELAY);
+    for (int mode=0; mode<PANEL_LED_MODES; mode++)
+        if (effect[mode])
+            snprintf(led_wanted[mode],sizeof(led_wanted[mode]),"%s",effect[mode]);
+    led_due=true;
+    xSemaphoreGive(lock);
+}
+
 static bool connected(void)
 {
     xSemaphoreTake(lock,portMAX_DELAY); bool result=state.wifi && !state.setup; xSemaphoreGive(lock);
@@ -581,28 +599,33 @@ static esp_err_t collect_data(esp_http_client_event_t *event)
 // answering. The network task alone writes and reads it.
 static esp_err_t last_http_error;
 
+// How long a request waits for its answer. A change of the LED bar waits
+// longer: the service answers it once the LED service has its new file
+// and runs again, which takes a second or two.
+#define PANEL_ASK_MS 4000
+#define PANEL_LED_WAIT_MS 15000
+#define PANEL_LED_PATH "/v1/led"
+
 // One attempt. The token itself never goes on the wire: what goes is a
 // signature over the method, the path and the body, with the nonce that the
 // service last gave out. See panel_auth.h.
-static int attempt(const char *path, const char *action, response_t *out)
+//
+// A body makes it a POST, and no body a GET.
+static int attempt(const char *path, const char *body, int wait_ms, response_t *out)
 {
-    char url[224], body[96], auth[PANEL_AUTH_HEX];
-    const char *payload="";
+    char url[224], auth[PANEL_AUTH_HEX];
+    const char *payload=body ? body : "";
     memset(out,0,sizeof(*out));
     snprintf(url,sizeof(url),"%s%s",config.server,path);
-    if (action) {
-        snprintf(body,sizeof(body),"{\"action\":\"%s\"}",action);
-        payload=body;
-    }
-    esp_http_client_config_t cfg={.url=url,.timeout_ms=4000,.event_handler=collect_data,.user_data=out,.disable_auto_redirect=true};
+    esp_http_client_config_t cfg={.url=url,.timeout_ms=wait_ms,.event_handler=collect_data,.user_data=out,.disable_auto_redirect=true};
     esp_http_client_handle_t client=esp_http_client_init(&cfg);
     if (!client) return 0;
-    if (panel_auth_sign(config.token,action ? "POST" : "GET",path,panel_nonce,
+    if (panel_auth_sign(config.token,body ? "POST" : "GET",path,panel_nonce,
                         payload,strlen(payload),auth)) {
         esp_http_client_set_header(client,PANEL_NONCE_HEADER,panel_nonce);
         esp_http_client_set_header(client,PANEL_AUTH_HEADER,auth);
     }
-    if (action) {
+    if (body) {
         esp_http_client_set_method(client,HTTP_METHOD_POST);
         esp_http_client_set_header(client,"Content-Type","application/json");
         esp_http_client_set_post_field(client,payload,strlen(payload));
@@ -720,19 +743,21 @@ static void offer_read(const cJSON *firmware)
     snprintf(state.update.offered,sizeof state.update.offered,"%s",now);
     xSemaphoreGive(lock);
 }
-static int request(const char *path, const char *action)
+// A request, and the status out of the answer to a GET. A body makes it a
+// POST, whose answer is its code alone.
+static int request(const char *path, const char *body, int wait_ms)
 {
     /* 8 KB at every poll, which the internal memory gave and took back
      * every few seconds. See panel_psram.h. */
     response_t *out=panel_psram_calloc(1,sizeof(*out));
     if (!out) return 0;
-    int code=attempt(path,action,out);
+    int code=attempt(path,body,wait_ms,out);
     // 401 is the nonce, not the secret: it was spent, or the service
     // restarted and forgot it. The answer carried a fresh one, so one more
     // attempt is the whole recovery. A rejected request ran nothing, so
     // sending an action again is safe.
-    if (code==401) code=attempt(path,action,out);
-    if (code!=200 || action) { free(out); return code; }
+    if (code==401) code=attempt(path,body,wait_ms,out);
+    if (code!=200 || body) { free(out); return code; }
     cJSON *root=cJSON_Parse(out->data);
     int answer_ms=(int)(out->took_us/1000);
     free(out);
@@ -776,6 +801,11 @@ static int request(const char *path, const char *action)
     cJSON *session=cJSON_GetObjectItemCaseSensitive(root,"session");
     cJSON *playing=cJSON_GetObjectItemCaseSensitive(root,"playing");
     cJSON *drives=cJSON_GetObjectItemCaseSensitive(root,"drives");
+    /* The LED bar, for its page: an object where the PC has the LED
+     * module, null where it has none, and nothing at all from a service
+     * older than this firmware. The page says which of the last two it
+     * is. */
+    cJSON *led=cJSON_GetObjectItemCaseSensitive(root,"led");
     xSemaphoreTake(lock,portMAX_DELAY);
     memcpy(state.pads,pads,sizeof state.pads);
     state.pad_count=pad_count;
@@ -841,10 +871,26 @@ static int request(const char *path, const char *action)
             if(into->free>into->total)into->free=into->total;
         }
     }
+    state.led_known=led!=NULL;
+    state.led_here=cJSON_IsObject(led);
+    for(int mode=0;mode<PANEL_LED_MODES;mode++){
+        cJSON *effect=cJSON_GetObjectItemCaseSensitive(led,panel_led_mode_name((panel_led_mode_t)mode));
+        snprintf(state.led_effect[mode],sizeof state.led_effect[mode],"%s",
+                 cJSON_IsString(effect)?effect->valuestring:"");
+    }
     xSemaphoreGive(lock);
     learn_wake_address(cJSON_GetObjectItemCaseSensitive(root,"wake"));
     cJSON_Delete(root);
     return 200;
+}
+
+/* A change of the LED bar, sent to the PC. Answers the HTTP code, and
+ * nought for nothing to send. */
+static int led_request(const char keys[PANEL_LED_MODES][PANEL_LED_KEY])
+{
+    char body[96];
+    if (!panel_led_body(body,sizeof(body),keys)) return 0;
+    return request(PANEL_LED_PATH,body,PANEL_LED_WAIT_MS);
 }
 
 /* What a disconnect number means, in words.
@@ -1234,7 +1280,9 @@ static void network_task(void *arg)
             }
             xSemaphoreTake(lock,portMAX_DELAY); bool online=state.online; xSemaphoreGive(lock);
             if (online && connected() && action>=0 && action<PANEL_SETUP) {
-                int code=request("/v1/action",names[action]);
+                char body[64];
+                snprintf(body,sizeof(body),"{\"action\":\"%s\"}",names[action]);
+                int code=request("/v1/action",body,PANEL_ASK_MS);
                 xSemaphoreTake(lock,portMAX_DELAY);
                 snprintf(state.message,sizeof(state.message),"%s",code==200 ? panel_text(TXT_SENT) : code==401 ? panel_text(TXT_CHECK_TOKEN) : panel_text(TXT_NOT_CONFIRMED));
                 xSemaphoreGive(lock);
@@ -1242,10 +1290,33 @@ static void network_task(void *arg)
                 last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
             }
         }
+        /* A change of the page of the LED bar. The page takes back a
+         * change that did not go out, so one with no network to go over
+         * gets an answer of nought. The poll comes at once after it, so
+         * the page shows the effect the PC really has. */
+        xSemaphoreTake(lock,portMAX_DELAY);
+        bool led_now=led_due;
+        char led_keys[PANEL_LED_MODES][PANEL_LED_KEY];
+        memcpy(led_keys,led_wanted,sizeof(led_keys));
+        memset(led_wanted,0,sizeof(led_wanted));
+        led_due=false;
+        bool led_online=state.online;
+        xSemaphoreGive(lock);
+        if (led_now) {
+            int code=led_online && connected() ? led_request(led_keys) : 0;
+            ESP_LOGI("panel_led","desktop=%s game=%s: %d",
+                     led_keys[PANEL_LED_DESKTOP][0]?led_keys[PANEL_LED_DESKTOP]:"-",
+                     led_keys[PANEL_LED_GAME][0]?led_keys[PANEL_LED_GAME]:"-",code);
+            xSemaphoreTake(lock,portMAX_DELAY);
+            state.led_code=code;
+            state.led_replies++;
+            xSemaphoreGive(lock);
+            last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
+        }
         if (!atomic_load(&radio_resting) &&
             xTaskGetTickCount()-last_poll>=pdMS_TO_TICKS(3000)) {
             last_poll=xTaskGetTickCount();
-            int code=connected() ? request("/v1/status",NULL) : 0;
+            int code=connected() ? request("/v1/status",NULL,PANEL_ASK_MS) : 0;
             /* A firmware on trial is kept once the PC answered it: it
              * starts, draws, joins the network and talks to the service.
              * Until then a restart goes back to the firmware before it.
@@ -1424,6 +1495,7 @@ void app_main(void)
     panel_ui_history_use(history);
     bsp_display_lock(0);
     panel_ui_create(action_send,setting_set,sound_send,&settings);
+    panel_ui_led_use(led_change);
     lv_timer_create(ui_tick,200,NULL);
     ui_tick(NULL);
     /* Over the finished screen, not in front of building it. Everything

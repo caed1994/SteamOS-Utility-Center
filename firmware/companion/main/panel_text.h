@@ -53,6 +53,7 @@
     X(TXT_PAGE_SESSION,    "Session and drives",    "Sitzung und Datenträger") \
     X(TXT_PAGE_CLOCK,      "Clock and timer",       "Uhr und Timer") \
     X(TXT_PAGE_CARD,       "Graphics card and history", "Grafikkarte und Verlauf") \
+    X(TXT_PAGE_LED,        "LED bar",               "LED-Leiste") \
     X(TXT_LIFT_WAKE_WHAT,  "Only when it went off by itself, not after the button", \
                            "Nur wenn es von selbst ausging, nicht nach dem Knopf") \
     X(TXT_MINUTES,         "min",                   "Min") \
@@ -253,7 +254,38 @@
     X(TXT_GPU_CLOCK,       "GPU clock",             "GPU-Takt") \
     X(TXT_HISTORY,         "History",               "Verlauf") \
     X(TXT_HISTORY_EMPTY,   "No readings yet",       "Noch keine Werte") \
-    X(TXT_HISTORY_NOW,     "now",                   "jetzt")
+    X(TXT_HISTORY_NOW,     "now",                   "jetzt") \
+    X(TXT_LED_DESKTOP,     "LED bar on the desktop", "LED-Leiste im Desktop-Modus") \
+    X(TXT_LED_GAME,        "LED bar in Game Mode",  "LED-Leiste im Spielmodus") \
+    X(TXT_LED_NOW,         "Now",                   "Aktiv") \
+    X(TXT_LED_GAME_WHAT,   "Shows when the LED menu of Steam is on Rainbow", \
+                           "Wirkt, wenn in Steam Regenbogen gewählt ist") \
+    X(TXT_LED_COLOUR_WHAT, "In the desktop colour of the control panel", \
+                           "In der Desktop-Farbe aus dem Kontrollpanel") \
+    X(TXT_LED_APPLYING,    "Applying ...",          "Wird übernommen ...") \
+    X(TXT_LED_NONE,        "No LED bar on this PC", "Keine LED-Leiste an diesem PC") \
+    X(TXT_LED_OLD_SERVICE, "Update the PC to use this page", \
+                           "PC aktualisieren, um diese Seite zu nutzen") \
+    X(TXT_LED_NO_RULE,     "Not permitted: run install.sh on the PC again", \
+                           "Nicht erlaubt: install.sh am PC neu ausführen") \
+    X(TXT_LED_BUSY,        "The PC is still busy. Try again.", \
+                           "Der PC ist noch beschäftigt. Bitte erneut.") \
+    X(TXT_LED_NO_MODULE,   "The LED module is not installed", \
+                           "Das LED-Modul ist nicht installiert") \
+    X(TXT_LED_REFUSED,     "The PC did not take the change", \
+                           "Der PC hat die Änderung nicht übernommen") \
+    X(TXT_LED_UNKNOWN,     "--",                    "--") \
+    X(TXT_LED_STEAM,       "Leave it to Steam",     "Steam überlassen") \
+    X(TXT_LED_OFF,         "Off",                   "Aus") \
+    X(TXT_LED_COLOR,       "One colour",            "Eine Farbe") \
+    X(TXT_LED_BREATH,      "Breathing",             "Atmen") \
+    X(TXT_LED_PATROL,      "Patrol",                "Lauflicht") \
+    X(TXT_LED_RAINBOW,     "Rainbow",               "Regenbogen") \
+    X(TXT_LED_FIRE,        "Fire",                  "Feuer") \
+    X(TXT_LED_AURORA,      "Aurora",                "Polarlicht") \
+    X(TXT_LED_OOZE,        "Ooze",                  "Schleim") \
+    X(TXT_LED_TEMPERATURE, "Temperature",           "Temperatur") \
+    X(TXT_LED_LOAD,        "CPU and GPU load",      "CPU- und GPU-Last")
 
 typedef enum {
 #define PANEL_TEXT_AS_ENUM(name, english, german) name,

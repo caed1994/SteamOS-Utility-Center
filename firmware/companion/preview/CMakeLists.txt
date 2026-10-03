@@ -32,7 +32,7 @@ add_subdirectory(../managed_components/lvgl__lvgl lvgl)
 set(PANEL_UI_SOURCES ../main/ui.c ../main/icons.c ../main/panel_text.c
                      ../main/panel_ui_sleep.c ../main/panel_count_font.c
                      ../main/panel_clock_font.c ../main/panel_timer.c
-                     ../main/panel_history.c ../main/panel_pages.c ../main/panel_frames.c
+                     ../main/panel_history.c ../main/panel_pages.c ../main/panel_frames.c ../main/panel_led.c
                      ../main/panel_font_12.c ../main/panel_font_14.c
                      ../main/panel_font_16.c ../main/panel_font_18.c
                      ../main/panel_font_20.c ../main/panel_font_24.c

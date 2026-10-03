@@ -142,7 +142,7 @@ static lv_obj_t *band_pages[PANEL_PAGES];
 static lv_obj_t *arrange_screen,*arrange_names[PANEL_PAGES],*arrange_starts[PANEL_PAGES];
 static lv_obj_t *arrange_eyes[PANEL_PAGES],*arrange_up[PANEL_PAGES],*arrange_down[PANEL_PAGES];
 static const panel_text_id_t page_names[PANEL_PAGES]={TXT_PAGE_CONTROLS,TXT_PAGE_SESSION,
-    TXT_PLAYING,TXT_PAGE_CLOCK,TXT_PAGE_CARD};
+    TXT_PLAYING,TXT_PAGE_CLOCK,TXT_PAGE_CARD,TXT_PAGE_LED};
 static void arrange_forget(void);
 /* The menu that chooses the sensor of a tile, and which tile it is for. */
 static lv_obj_t *sensor_layer;
@@ -413,10 +413,17 @@ static void settings_close(lv_event_t *e)
  *
  * The names are in the 16 point font. Three buttons leave 212 points for a
  * name, and the longest, "Graphics card and history", takes 206 in it and
- * 232 in the 18 point font. */
-#define ARRANGE_TOP 78
-#define ARRANGE_STEP 78
-#define ARRANGE_HEIGHT 70
+ * 232 in the 18 point font.
+ *
+ * Six rows on the screen, with no scroll: 60 high, 8 apart, the last one 8
+ * over the bottom edge. They were 70 high when there were five pages, and
+ * the page of the LED bar made a sixth. ARRANGE_NAME_Y and ARRANGE_START_Y
+ * are the name of the start page and the line under it that says so. */
+#define ARRANGE_TOP 72
+#define ARRANGE_STEP 68
+#define ARRANGE_HEIGHT 60
+#define ARRANGE_NAME_Y 9
+#define ARRANGE_START_Y 33
 static void arrange_drop(void)
 {
     arrange_screen=NULL;
@@ -471,7 +478,7 @@ static void arrange_show(void)
         lv_obj_set_style_text_color(arrange_names[place],lv_color_hex(hidden?MUTED:TEXT),0);
         /* The start page has a second line, and the others have their name
          * in the middle of the row. */
-        lv_obj_set_y(arrange_names[place],place==start?14:
+        lv_obj_set_y(arrange_names[place],place==start?ARRANGE_NAME_Y:
                      (ARRANGE_HEIGHT-lv_font_get_line_height(&panel_font_16))/2);
         if(place==start)lv_obj_remove_flag(arrange_starts[place],LV_OBJ_FLAG_HIDDEN);
         else lv_obj_add_flag(arrange_starts[place],LV_OBJ_FLAG_HIDDEN);
@@ -521,13 +528,14 @@ void panel_ui_arrange_open(void)
         lv_obj_remove_flag(row,LV_OBJ_FLAG_CLICKABLE);
         char number[4];
         snprintf(number,sizeof number,"%d",place+1);
-        text_at(row,number,16,20,24,&panel_font_24,BLUE);
-        arrange_names[place]=text_at(row,"",52,14,212,&panel_font_16,TEXT);
+        text_at(row,number,16,(ARRANGE_HEIGHT-lv_font_get_line_height(&panel_font_24))/2,24,&panel_font_24,BLUE);
+        arrange_names[place]=text_at(row,"",52,ARRANGE_NAME_Y,212,&panel_font_16,TEXT);
         lv_obj_set_height(arrange_names[place],lv_font_get_line_height(&panel_font_16));
-        arrange_starts[place]=text_at(row,panel_text(TXT_PAGES_START),52,40,212,&panel_font_12,MUTED);
-        arrange_eyes[place]=button(row,LV_SYMBOL_EYE_OPEN,270,13,48,44,arrange_eye,place);
-        arrange_up[place]=button(row,LV_SYMBOL_UP,324,13,48,44,arrange_move,place*2);
-        arrange_down[place]=button(row,LV_SYMBOL_DOWN,378,13,48,44,arrange_move,place*2+1);
+        arrange_starts[place]=text_at(row,panel_text(TXT_PAGES_START),52,ARRANGE_START_Y,212,&panel_font_12,MUTED);
+        int32_t button_y=(ARRANGE_HEIGHT-44)/2;
+        arrange_eyes[place]=button(row,LV_SYMBOL_EYE_OPEN,270,button_y,48,44,arrange_eye,place);
+        arrange_up[place]=button(row,LV_SYMBOL_UP,324,button_y,48,44,arrange_move,place*2);
+        arrange_down[place]=button(row,LV_SYMBOL_DOWN,378,button_y,48,44,arrange_move,place*2+1);
     }
     arrange_show();
 }
@@ -1442,7 +1450,8 @@ const char *panel_ui_where(void)
     /* The name is the one of the page and not of its place, which
      * somebody can change. See band_page. */
     static const char *const pages[PANEL_PAGES]={"the controls","the session",
-                                                 "the game","the clock","the card"};
+                                                 "the game","the clock","the card",
+                                                 "the LED bar"};
     return pages[band_page()];
 }
 
@@ -1456,6 +1465,151 @@ static void enable(lv_obj_t *o,bool on)
 {
     if(!o)return;
     if(on)lv_obj_remove_state(o,LV_STATE_DISABLED);else lv_obj_add_state(o,LV_STATE_DISABLED);
+}
+/* The page of the LED bar: a card for each mode of the PC, with its
+ * effect between two arrows.
+ *
+ * A tap shows the next effect at once, and the change goes to the PC
+ * LED_WAIT_MS after the last tap. Each change starts the LED service of
+ * the PC again, and somebody who steps through four effects to reach the
+ * fifth means the fifth. The page shows the choice until the PC shows it
+ * back. It goes back to the effect of the PC when the PC refuses the
+ * change, and when no answer shows the change in LED_SHOWN_MS. */
+#define LED_WAIT_MS 1500
+#define LED_SHOWN_MS 20000
+/* How long the reason for a refusal stays under the effect. */
+#define LED_REFUSAL_MS 8000
+typedef struct {
+    lv_obj_t *now,*back,*next,*name,*note;
+    /* The place of the effect somebody chose and the PC does not show
+     * yet, or -1. sent: it went to main.c, at sent_at. */
+    int wanted;
+    bool sent;
+    uint32_t sent_at;
+    /* Why the PC did not take the last change, since refused_at. */
+    bool refused;
+    panel_text_id_t refusal;
+    uint32_t refused_at;
+} led_card_t;
+static led_card_t led_cards[PANEL_LED_MODES];
+static panel_led_cb_t led_send;
+static lv_timer_t *led_timer;
+/* The count of the answers to changes that the page has seen. */
+static uint32_t led_replies_seen;
+void panel_ui_led_use(panel_led_cb_t callback){led_send=callback;}
+/* What the code of an answer means to somebody at the page. */
+static panel_text_id_t led_refusal(int code)
+{
+    switch(code){
+    case 403:return TXT_LED_NO_RULE;
+    case 409:return TXT_LED_BUSY;
+    case 501:return TXT_LED_NO_MODULE;
+    default:return TXT_LED_REFUSED;
+    }
+}
+static void led_show(const panel_state_t *s)
+{
+    if(!led_cards[PANEL_LED_DESKTOP].name)return;
+    /* An answer to a change: a refusal takes back each choice that went
+     * with it. A choice made after it went is not in it, and stays. */
+    if(s->led_replies!=led_replies_seen){
+        led_replies_seen=s->led_replies;
+        for(int m=0;m<PANEL_LED_MODES&&s->led_code!=200;m++){
+            led_card_t *c=&led_cards[m];
+            if(c->wanted<0||!c->sent)continue;
+            c->wanted=-1;c->sent=false;
+            c->refused=true;c->refusal=led_refusal(s->led_code);c->refused_at=lv_tick_get();
+        }
+    }
+    bool usable=s->online&&s->led_here;
+    for(int m=0;m<PANEL_LED_MODES;m++){
+        led_card_t *c=&led_cards[m];
+        const char *chosen=panel_led_key((panel_led_mode_t)m,c->wanted);
+        /* Shown by the PC, or not shown in time: the choice is over. */
+        if(c->sent&&(!chosen||strcmp(s->led_effect[m],chosen)==0
+                     ||lv_tick_elaps(c->sent_at)>LED_SHOWN_MS)){c->wanted=-1;c->sent=false;}
+        if(c->refused&&lv_tick_elaps(c->refused_at)>LED_REFUSAL_MS)c->refused=false;
+        int index=c->wanted>=0?c->wanted:panel_led_find((panel_led_mode_t)m,s->led_effect[m]);
+        /* A key of a later service has no name here, and shows as it is. */
+        set_text(c->name,!usable?panel_text(TXT_LED_UNKNOWN)
+                 :index>=0?panel_text(panel_led_name((panel_led_mode_t)m,index))
+                 :s->led_effect[m][0]?s->led_effect[m]:panel_text(TXT_LED_UNKNOWN));
+        enable(c->back,usable);enable(c->next,usable);
+        /* The card of the mode the PC is in. A flag set or taken again
+         * draws the label again, at each answer of the PC, so only a
+         * change goes to LVGL. */
+        bool now=s->online&&(m==PANEL_LED_GAME)==s->game_mode;
+        if(now==lv_obj_has_flag(c->now,LV_OBJ_FLAG_HIDDEN)){
+            if(now)lv_obj_remove_flag(c->now,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(c->now,LV_OBJ_FLAG_HIDDEN);
+        }
+        const char *note="";
+        if(c->wanted>=0)note=panel_text(TXT_LED_APPLYING);
+        else if(c->refused)note=panel_text(c->refusal);
+        else if(s->online&&!s->led_here){
+            /* Once, on the first card: no LED module, or a service of the PC
+             * that is older than this firmware and knows no page of this
+             * kind. A firmware that comes before the update of the PC is
+             * the usual way to get the second. */
+            if(m==PANEL_LED_DESKTOP)note=panel_text(s->led_known?TXT_LED_NONE:TXT_LED_OLD_SERVICE);
+        }
+        else if(m==PANEL_LED_GAME)note=panel_text(TXT_LED_GAME_WHAT);
+        else if(panel_led_coloured((panel_led_mode_t)m,index))note=panel_text(TXT_LED_COLOUR_WHAT);
+        set_text(c->note,note);
+    }
+}
+/* LED_WAIT_MS after the last tap: each choice that is new goes to main.c
+ * in one change. A choice of the effect the PC has already is no change. */
+static void led_due(lv_timer_t *timer)
+{
+    lv_timer_pause(timer);
+    const char *effect[PANEL_LED_MODES]={NULL};
+    bool any=false;
+    for(int m=0;m<PANEL_LED_MODES;m++){
+        led_card_t *c=&led_cards[m];
+        if(c->wanted<0||c->sent)continue;
+        const char *chosen=panel_led_key((panel_led_mode_t)m,c->wanted);
+        if(!chosen||(last_state_valid&&strcmp(last_state.led_effect[m],chosen)==0)){c->wanted=-1;continue;}
+        effect[m]=chosen;
+        c->sent=true;c->sent_at=lv_tick_get();any=true;
+    }
+    if(any&&led_send)led_send(effect);
+    if(last_state_valid)led_show(&last_state);
+}
+static void led_step(lv_event_t *e)
+{
+    int data=(int)(intptr_t)lv_event_get_user_data(e);
+    panel_led_mode_t m=(panel_led_mode_t)(data/2);
+    if(!last_state_valid||!last_state.online||!last_state.led_here)return;
+    feedback();
+    led_card_t *c=&led_cards[m];
+    int from=c->wanted>=0?c->wanted:panel_led_find(m,last_state.led_effect[m]);
+    c->wanted=panel_led_step(m,from,data%2?1:-1);
+    c->sent=false;c->refused=false;
+    if(!led_timer)led_timer=lv_timer_create(led_due,LED_WAIT_MS,NULL);
+    lv_timer_reset(led_timer);lv_timer_resume(led_timer);
+    led_show(&last_state);
+}
+/* One card of the page, "y" down the page. */
+static void led_card(lv_obj_t *page,panel_led_mode_t m,int y)
+{
+    led_card_t *c=&led_cards[m];
+    lv_obj_t *card=panel(page,10,y,460,146,CARD,true);
+    icon(card,m==PANEL_LED_GAME?&icon_gamepad_2:&icon_monitor,14,14,MUTED);
+    text_at(card,panel_text(m==PANEL_LED_GAME?TXT_LED_GAME:TXT_LED_DESKTOP),52,16,290,&panel_font_14,MUTED);
+    c->now=text_at(card,panel_text(TXT_LED_NOW),346,16,100,&panel_font_14,BLUE);
+    lv_obj_set_style_text_align(c->now,LV_TEXT_ALIGN_RIGHT,0);
+    lv_obj_add_flag(c->now,LV_OBJ_FLAG_HIDDEN);
+    line(card,14,44,432,1);
+    c->back=button(card,LV_SYMBOL_LEFT,14,56,72,56,led_step,m*2);
+    c->next=button(card,LV_SYMBOL_RIGHT,372,56,72,56,led_step,m*2+1);
+    lv_obj_set_style_text_font(c->back,&panel_font_24,0);
+    lv_obj_set_style_text_font(c->next,&panel_font_24,0);
+    enable(c->back,false);enable(c->next,false);
+    c->name=text_at(card,panel_text(TXT_LED_UNKNOWN),94,56+(56-lv_font_get_line_height(&panel_font_24))/2,
+                    270,&panel_font_24,TEXT);
+    center_text(c->name);
+    c->note=text_at(card,"",14,120,430,&panel_font_12,MUTED);
+    center_text(c->note);
 }
 /* What the timer shows: what is left in minutes and seconds, a second
  * rounded up, so a timer of five minutes starts at 05:00 and reaches 00:00
@@ -1607,6 +1761,10 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     band=NULL;mode_now=NULL;mode_button=NULL;mode_caption=NULL;
     for(int i=0;i<PANEL_PAGES;i++)band_pages[i]=NULL;
     arrange_drop();
+    /* The cards of the LED bar, and a choice that waits to go: a change
+     * that the old screen made goes with it. */
+    for(int m=0;m<PANEL_LED_MODES;m++)led_cards[m]=(led_card_t){.wanted=-1};
+    if(led_timer)lv_timer_pause(led_timer);
     playing_name=NULL;achievement_count=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
     clock_digits=NULL;clock_date=NULL;timer_value=NULL;timer_minus=NULL;timer_plus=NULL;
     timer_go=NULL;timer_go_label=NULL;timer_reset=NULL;alarm_layer=NULL;
@@ -1658,7 +1816,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
         lv_obj_add_flag(pad_values[1],LV_OBJ_FLAG_HIDDEN);
     }
     line(s,0,57,480,1);
-    /* The middle band, which scrolls sideways. Five pages of one screen
+    /* The middle band, which scrolls sideways. Six pages of one screen
      * each, and the head above it and the sensors below it stay where they
      * are: those are the numbers somebody looks at without touching
      * anything, and a page that can carry them away is a page that hides
@@ -1891,6 +2049,10 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     center_text(history_empty);
     history_stale=true;
     history_show();
+    /* The sixth page: the effect of the LED bar of the PC, a card for the
+     * desktop and one for Game Mode. See led_show. */
+    led_card(page[PANEL_PAGE_LED],PANEL_LED_DESKTOP,0);
+    led_card(page[PANEL_PAGE_LED],PANEL_LED_GAME,154);
     /* The temperatures and the power of the card, in one card across the
      * screen: three fields of the same width, the processor, the card and
      * its power, with a short line between each two. Two tiles stood
@@ -2051,6 +2213,7 @@ void panel_ui_update(const panel_state_t *s)
     lv_obj_set_style_bg_color(dot,lv_color_hex(s->online?0x70C256:0x60758A),0);
     pads_head(s);
     pads_show(s);
+    led_show(s);
     pc_show(s);
     self_show(s);
     update_layer_show(s);

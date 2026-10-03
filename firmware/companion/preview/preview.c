@@ -48,9 +48,14 @@ static void count_frames(void)
     }
 }
 
+/* The clock of LVGL here, which a mode moves on by hand. */
+static uint32_t preview_ms;
+static uint32_t preview_tick(void){return preview_ms;}
+
 int main(int argc,char **argv)
 {
     lv_init();
+    lv_tick_set_cb(preview_tick);
     lv_display_t *d=lv_display_create(480,480);
     lv_display_set_color_format(d,LV_COLOR_FORMAT_XRGB8888);
     lv_display_set_buffers(d,pixels,NULL,sizeof(pixels),LV_DISPLAY_RENDER_MODE_FULL);
@@ -204,6 +209,35 @@ int main(int argc,char **argv)
             snprintf(caption,sizeof caption,"60 %s",panel_text(TXT_MINUTES));
             lv_obj_t *sixty=find_label(lv_screen_active(),caption);
             if(sixty)lv_obj_send_event(lv_obj_get_parent(sixty),LV_EVENT_CLICKED,NULL);
+        }
+    }
+    /* The sixth page. "led" is the board's machine on the desktop,
+     * "led-colour" an effect in the desktop colour, "led-none" a PC with no
+     * LED module, "led-applying" a tap that waits to go, and "led-refused"
+     * a change the PC refused for want of the sudo rule. */
+    if(argc>2&&strncmp(argv[2],"led",3)==0){
+        s.led_known=true;
+        s.led_here=strcmp(argv[2],"led-none")!=0;
+        snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"%s",
+                 strcmp(argv[2],"led-colour")==0?"breath":"aurora");
+        snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"fire");
+        panel_ui_update(&s);
+        lv_obj_t *band=band_in(lv_screen_active());
+        if(band){
+            lv_obj_update_layout(band);
+            lv_obj_scroll_to_view(lv_obj_get_child(band,PANEL_PAGE_LED),LV_ANIM_OFF);
+        }
+        bool applying=strcmp(argv[2],"led-applying")==0,refused=strcmp(argv[2],"led-refused")==0;
+        if(applying||refused){
+            lv_obj_t *next=find_label(lv_screen_active(),LV_SYMBOL_RIGHT);
+            if(next)lv_obj_send_event(lv_obj_get_parent(next),LV_EVENT_CLICKED,NULL);
+        }
+        if(refused){
+            /* The wait after the tap, and then the answer of the PC. */
+            preview_ms+=2000;
+            lv_timer_handler();
+            s.led_replies=1;s.led_code=403;
+            panel_ui_update(&s);
         }
     }
     if(argc>2&&strcmp(argv[2],"pads")==0)panel_ui_pads_open();

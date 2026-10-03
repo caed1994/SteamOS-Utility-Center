@@ -27,13 +27,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// The pages, in the order the firmware builds them, and how many.
+// The pages, in the order the firmware builds them, and how many. A new
+// page goes at the end: a stored order names each page by this number, and
+// a page that took the number of another would take its place too.
 typedef enum {
     PANEL_PAGE_CONTROLS,
     PANEL_PAGE_SESSION,
     PANEL_PAGE_PLAYING,
     PANEL_PAGE_CLOCK,
     PANEL_PAGE_CARD,
+    PANEL_PAGE_LED,
     PANEL_PAGES
 } panel_page_t;
 

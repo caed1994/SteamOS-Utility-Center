@@ -381,7 +381,7 @@ class AnswerTest(unittest.TestCase):
         self.assertRegex(attempt, r"err==ESP_OK \|\| status==401 \? status : 0")
 
     def test_the_401_is_tried_again_with_the_fresh_nonce(self):
-        self.assertIn("if (code==401) code=attempt(path,action,out);",
+        self.assertIn("if (code==401) code=attempt(path,body,wait_ms,out);",
                       self.body("static int request("))
 
     def test_the_client_is_quiet_and_the_panel_says_it_instead(self):
