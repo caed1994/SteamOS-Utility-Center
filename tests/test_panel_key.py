@@ -190,6 +190,38 @@ class PanelKeyTest(unittest.TestCase):
         self.assertFalse(self.pressed(0xFF & ~key, key))
         self.assertTrue(self.pressed(0xFF, key))
 
+    def home(self, *presses):
+        """(lowest, highest) events for those presses of the home key."""
+        command = [self.program, "home", str(self.poll)]
+        for start, length in presses:
+            command += [str(start), str(length)]
+        done = subprocess.run(command, capture_output=True, text=True,
+                              timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        low, high = done.stdout.split()
+        return int(low), int(high)
+
+    def home_pressed(self, level):
+        done = subprocess.run([self.program, "home-level", str(level)],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.strip() == "1"
+
+    def test_the_home_key_is_low_while_pressed(self):
+        """BOOT takes GPIO0 to ground, and R4 pulls it up. No transistor,
+        so the other way round from the standby key."""
+        self.assertTrue(self.home_pressed(0))
+        self.assertFalse(self.home_pressed(1))
+
+    def test_one_press_of_the_home_key_is_one_event(self):
+        self.assertEqual(self.home((5000, 120)), (1, 1))
+        self.assertEqual(self.home((5000, 100), (5250, 100)), (2, 2))
+
+    def test_the_home_key_held_at_the_start_is_no_press(self):
+        """A hand on BOOT at the start is no request for the start page."""
+        self.assertEqual(self.home((0, 500)), (0, 0))
+        self.assertEqual(self.home((0, 500), (3000, 120)), (1, 1))
+
 
 class KeyTaskTest(unittest.TestCase):
     """How the key is read, out of panel_power.c. No compiler needed."""
@@ -221,6 +253,37 @@ class KeyTaskTest(unittest.TestCase):
     def test_each_press_that_counts_is_in_the_log(self):
         """So the next log from the board shows each press and its length."""
         self.assertIn("PWRKEY short press of about", self.source())
+        self.assertIn("Home key short press of about", self.source())
+
+    def test_the_home_key_is_boot_on_gpio0(self):
+        text = self.source()
+        self.assertIn("#define HOME_PIN GPIO_NUM_0", text)
+        self.assertIn(
+            "panel_key_sample(&home,panel_key_home_pressed(gpio_get_level(HOME_PIN)),now)",
+            text)
+
+    def test_the_home_key_does_not_wait_for_the_bus(self):
+        """GPIO0 is a register of the chip. It is read before the expander,
+        and the loop keeps its rate while the expander does not answer."""
+        text = self.source()
+        loop = text[text.index("static void key_task"):text.index("esp_err_t panel_power_init")]
+        self.assertLess(loop.index("gpio_get_level(HOME_PIN)"),
+                        loop.index("esp_io_expander_get_level"))
+        self.assertNotIn("vTaskDelay(", loop.replace("vTaskDelayUntil(", ""))
+        self.assertIn("PWRKEY_RETRY_MS", loop)
+
+    def test_the_home_key_goes_to_the_start_page(self):
+        """The rules of the standby key first: a timer that rings, and an
+        update. A standby of the button stays as it is."""
+        with open(os.path.join(FIRMWARE, "main.c")) as handle:
+            text = handle.read()
+        block = text[text.index("if(panel_power_take_home()){"):]
+        block = block[:block.index("panel_ui_home()")]
+        order = [block.index(step) for step in (
+            "panel_ui_timer_stop()", "atomic_load(&updating)",
+            "atomic_load(&asleep_by_hand)", "display_sleeping(false,false)",
+            "lv_display_trigger_activity(NULL)")]
+        self.assertEqual(order, sorted(order))
 
     def test_it_reports_the_period_it_really_kept(self):
         """So a press that still does nothing comes with the number that

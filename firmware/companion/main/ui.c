@@ -550,6 +550,25 @@ static void arrange_eye(lv_event_t *e)
     arrange_show();
 }
 static void arrange_close(lv_event_t *e){(void)e;feedback();arrange_forget();}
+static void sensor_close(void);
+static void pads_forget(void);
+static void pc_forget(void);
+static void self_forget(void);
+static void look_close(void);
+bool panel_ui_home(void)
+{
+    if(!band||setup_screen||update_layer)return false;
+    /* No answer to the question, which is what Cancel sends: nothing. */
+    if(overlay){lv_obj_delete(overlay);overlay=NULL;}
+    sensor_close();look_close();settings_forget();pads_forget();pc_forget();
+    /* Only when it is open: self_drop starts the counts of the frames and
+     * of the touches again, and a press of the key is no visit of that
+     * page. */
+    if(self_screen)self_forget();
+    /* The start page is the first place of the band. See band_arrange. */
+    lv_obj_scroll_to_x(band,0,LV_ANIM_ON);
+    return true;
+}
 void panel_ui_arrange_open(void)
 {
     if(arrange_screen||!settings_screen)return;

@@ -299,6 +299,11 @@ void panel_ui_pc_open(void);
 void panel_ui_self_open(void);
 /* The order of the pages, which a button in the settings opens. */
 void panel_ui_arrange_open(void);
+/* The home key: the start page, from wherever the panel is. Everything
+ * over the band closes the way its own button closes it, and a question
+ * closes as Cancel closes it. false, and nothing changes, during the setup
+ * and during an update that writes, which end on their own. */
+bool panel_ui_home(void);
 /* The history of the page of the card, which main.c keeps in PSRAM. Set
  * once and before the first tick; the screen draws no curve without it. */
 void panel_ui_history_use(panel_history_t *history);

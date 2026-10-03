@@ -21,3 +21,4 @@ bool panel_key_sample(panel_key_t *key,bool pressed,uint32_t now)
     return short_press;
 }
 bool panel_key_pressed(uint32_t levels,uint32_t pin){return (levels&pin)!=0;}
+bool panel_key_home_pressed(int level){return level==0;}

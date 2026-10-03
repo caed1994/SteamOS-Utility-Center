@@ -7,6 +7,11 @@
 esp_err_t panel_power_init(void);
 bool panel_power_take_toggle(void);
 
+/* Whether the home key was pressed since this was last asked, and it
+ * clears that. Two presses between two asks are one: both ask for the
+ * same start page. */
+bool panel_power_take_home(void);
+
 /* The longest one turn of the key loop took since this was last asked, in
  * milliseconds, and it clears the mark. The shortest press the panel can
  * see is about twice this, so a number far above PWRKEY_PERIOD_MS means a

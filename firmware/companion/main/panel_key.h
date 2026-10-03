@@ -53,3 +53,11 @@ void panel_key_reset(panel_key_t *key);
  * board. tests/test_panel_key.py drives the machine with the level the
  * schematic gives, both ways round, and holds it. */
 bool panel_key_pressed(uint32_t levels, uint32_t pin);
+
+/* Whether the home key is down, out of the level of its pin.
+ *
+ * Low while pressed, the other way round from the standby key. BOOT (Key1)
+ * takes GPIO0 straight to ground, and R4, 10k, pulls the pin up to 3.3 V,
+ * with C14, 100 nF, across the key. No transistor between the key and the
+ * pin. */
+bool panel_key_home_pressed(int level);

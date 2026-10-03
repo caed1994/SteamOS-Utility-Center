@@ -16,6 +16,7 @@
 #include <string.h>
 #include "lvgl.h"
 #include "ui.h"
+#include "panel_taps.h"
 static unsigned actions, settings, sounds;
 static panel_setting_t last_key;
 static int last_value;
@@ -157,6 +158,90 @@ static void walk(panel_language_t language)
     click(panel_text(TXT_BACK));
     assert(!label(lv_screen_active(),panel_text(TXT_SETUP)));
 }
+// The band is the one object on the screen that scrolls sideways.
+static lv_obj_t *find_band(lv_obj_t *root)
+{
+    if(lv_obj_get_scroll_dir(root)==LV_DIR_HOR&&lv_obj_get_child_count(root)==PANEL_PAGES)return root;
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++){lv_obj_t *f=find_band(lv_obj_get_child(root,i));if(f)return f;}
+    return NULL;
+}
+// The animations to their end. Nothing here draws, so this moves the
+// clock and the animations and not the display.
+static void settle(void){for(int i=0;i<100;i++){lv_tick_inc(10);lv_anim_refr_now();}}
+static bool at(const char *where){return strcmp(panel_ui_where(),where)==0;}
+// The home key, the lower key on the side of the panel: the start page
+// from wherever the panel is, with all that stands over the band closed.
+// The setup and an update that writes stay: those end on their own.
+static void home_key(void)
+{
+    panel_settings_t initial={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+    panel_ui_create(action,setting,sound,&initial);
+    panel_state_t offline={.volume=-1,.cpu_temp=-1,.gpu_temp=-1,.gpu_watts=-1};
+    panel_ui_update(&offline);
+    lv_obj_t *band=find_band(lv_screen_active());assert(band);
+    char start[32];snprintf(start,sizeof start,"%s",panel_ui_where());
+    // From the third page, under the order of the pages, which stands on
+    // the settings.
+    lv_obj_scroll_to_x(band,2*480,LV_ANIM_OFF);
+    assert(!at(start));
+    panel_ui_settings_open();panel_ui_arrange_open();
+    assert(at("the order of the pages"));
+    assert(panel_ui_home());
+    assert(!label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
+    assert(!label(lv_screen_active(),panel_text(TXT_PAGES_TITLE)));
+    settle();
+    assert(lv_obj_get_scroll_x(band)==0 && at(start));
+    // A question closes with no answer: nothing goes to the PC.
+    actions=0;
+    panel_ui_confirm(PANEL_REBOOT);assert(at("a question"));
+    assert(panel_ui_home() && at(start) && actions==0);
+    // The pages that a tap on the head and on the battery open.
+    panel_ui_pc_open();assert(at("the PC"));
+    assert(panel_ui_home() && at(start));
+    panel_ui_pads_open();assert(at("the controllers"));
+    assert(panel_ui_home() && at(start));
+    panel_ui_self_open();assert(at("the panel"));
+    assert(panel_ui_home() && at(start));
+    // The choice of a sensor, which a tap on a tile of the foot opens, and
+    // the colour of the LED bar, which its button on the fifth page opens.
+    panel_state_t online={.online=true,.wifi=true,.volume=30,
+                          .cpu_temp=49,.gpu_temp=45,.gpu_watts=60};
+    static const panel_sensor_t cpus[]={{"k10temp/Tctl","Tctl",49}};
+    memcpy(online.cpu_sensors,cpus,sizeof cpus);online.cpu_sensor_count=1;
+    online.led_known=online.led_here=online.led_look=true;
+    strcpy(online.led_effect[PANEL_LED_DESKTOP],"breath");
+    strcpy(online.led_effect[PANEL_LED_GAME],"fire");
+    strcpy(online.led_colour,"#ff0000");online.led_brightness=128;
+    panel_ui_update(&online);
+    lv_obj_t *tile=label(lv_screen_active(),"49 °C");assert(tile);
+    lv_obj_send_event(lv_obj_get_parent(tile),LV_EVENT_CLICKED,NULL);
+    assert(at("a choice of sensor"));
+    assert(panel_ui_home() && at(start));
+    char red[48];
+    snprintf(red,sizeof red,"%s • %d %%",panel_text(TXT_COLOUR_RED),50);
+    lv_obj_t *look=label(lv_screen_active(),red);assert(look);
+    lv_obj_send_event(lv_obj_get_parent(look),LV_EVENT_CLICKED,NULL);
+    assert(at("the colour of the LED bar"));
+    assert(panel_ui_home() && at(start));
+    // Already there: nothing to close, and the band stays. The counts of
+    // the page of the panel stay too: a press of the key is no visit of
+    // that page.
+    panel_taps.presses=3;
+    assert(panel_ui_home());settle();
+    assert(lv_obj_get_scroll_x(band)==0 && at(start) && panel_taps.presses==3);
+    // An update that writes stays over everything until the restart.
+    panel_state_t writing=offline;
+    writing.update.phase=PANEL_UPDATE_RUNNING;writing.update.percent=40;
+    panel_ui_update(&writing);assert(at("an update"));
+    lv_obj_scroll_to_x(band,480,LV_ANIM_OFF);
+    assert(!panel_ui_home() && at("an update"));
+    settle();assert(lv_obj_get_scroll_x(band)==480);
+    panel_ui_update(&offline);assert(!at("an update"));
+    // And the setup ends with the setup.
+    panel_state_t setup=offline;setup.setup=true;
+    panel_ui_update(&setup);assert(at("the setup"));
+    assert(!panel_ui_home() && at("the setup"));
+}
 // The walks above ask panel_text for the word and then look for that same
 // word on the screen. So a table that answers with one language whatever it
 // is asked passes every one of them: the screen and the check are wrong
@@ -189,7 +274,9 @@ int main(void)
     assert(!label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
     open_settings();
     assert(label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
+    home_key();
     puts("OK: Offline navigation in each language, the language button, local "
-         "callbacks, values retained, PC actions isolated, setup confirmation.");
+         "callbacks, values retained, PC actions isolated, setup confirmation, "
+         "the home key.");
     return 0;
 }

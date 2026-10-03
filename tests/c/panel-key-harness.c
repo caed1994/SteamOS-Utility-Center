@@ -20,6 +20,15 @@
 //   panel-key level <levels> <pin>
 //
 // panel_key_pressed for those two, both in hex. Prints 1 or 0.
+//
+//   panel-key home <poll period ms> <start ms> <length ms> ...
+//
+// The same as pin, for the home key: GPIO0 is low while the key is
+// pressed and high at rest, read with panel_key_home_pressed.
+//
+//   panel-key home-level <level>
+//
+// panel_key_home_pressed for that level of GPIO0. Prints 1 or 0.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,13 +76,33 @@ static int press_pin(const uint32_t *start, const uint32_t *length, int count,
     return events;
 }
 
+static int press_home(const uint32_t *start, const uint32_t *length, int count,
+                      uint32_t phase, uint32_t period)
+{
+    panel_key_t key;
+    panel_key_reset(&key);
+    uint32_t end = 0;
+    for (int i = 0; i < count; i++)
+        if (start[i] + length[i] > end) end = start[i] + length[i];
+    int events = 0;
+    for (uint32_t at = phase; at < end + 3000; at += period) {
+        int level = 1;
+        for (int i = 0; i < count; i++)
+            if (at >= start[i] && at < start[i] + length[i]) level = 0;
+        if (panel_key_sample(&key, panel_key_home_pressed(level), at)) events++;
+    }
+    return events;
+}
+
 static int usage(const char *name)
 {
     fprintf(stderr,
             "usage: %s <poll period ms> <hold ms>\n"
             "       %s pin <poll period ms> <high|low> <start ms> <length ms> ...\n"
-            "       %s level <levels> <pin>\n",
-            name, name, name);
+            "       %s level <levels> <pin>\n"
+            "       %s home <poll period ms> <start ms> <length ms> ...\n"
+            "       %s home-level <level>\n",
+            name, name, name, name, name);
     return 2;
 }
 
@@ -83,6 +112,28 @@ int main(int argc, char **argv)
         uint32_t levels = (uint32_t)strtoul(argv[2], NULL, 16);
         uint32_t pin = (uint32_t)strtoul(argv[3], NULL, 16);
         printf("%d\n", panel_key_pressed(levels, pin) ? 1 : 0);
+        return 0;
+    }
+    if (argc == 3 && strcmp(argv[1], "home-level") == 0) {
+        printf("%d\n", panel_key_home_pressed(atoi(argv[2])) ? 1 : 0);
+        return 0;
+    }
+    if (argc >= 5 && strcmp(argv[1], "home") == 0) {
+        uint32_t period = (uint32_t)strtoul(argv[2], NULL, 10);
+        if (period == 0 || (argc - 3) % 2 != 0 || (argc - 3) / 2 > MOST_PRESSES) return usage(argv[0]);
+        uint32_t start[MOST_PRESSES], length[MOST_PRESSES];
+        int count = (argc - 3) / 2;
+        for (int i = 0; i < count; i++) {
+            start[i] = (uint32_t)strtoul(argv[3 + 2 * i], NULL, 10);
+            length[i] = (uint32_t)strtoul(argv[4 + 2 * i], NULL, 10);
+        }
+        int lowest = -1, highest = -1;
+        for (uint32_t phase = 0; phase < period; phase++) {
+            int n = press_home(start, length, count, phase, period);
+            if (lowest < 0 || n < lowest) lowest = n;
+            if (n > highest) highest = n;
+        }
+        printf("%d %d\n", lowest, highest);
         return 0;
     }
     if (argc >= 6 && strcmp(argv[1], "pin") == 0) {

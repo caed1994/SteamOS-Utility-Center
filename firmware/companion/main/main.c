@@ -386,6 +386,27 @@ static void ui_tick(lv_timer_t *timer)
             ESP_LOGI("panel_power","The button waits for the update");
         }else display_sleeping(!atomic_load(&display_asleep),true);
     }
+    if(panel_power_take_home()){
+        /* The home key goes to the start page, and it keeps the two rules
+         * of the standby key: it quiets a timer that rings and does
+         * nothing else then, and it waits for an update. A display that
+         * went dark on its own comes back for it, as it does for a touch.
+         * One that the standby key switched off stays off, as it does for
+         * a touch too: that one comes back with the standby key alone. */
+        if(panel_ui_timer_stop()){
+            alarm_woke=false;
+            ESP_LOGI("panel_timer","Stopped by the home key");
+        }else if(atomic_load(&updating)){
+            ESP_LOGI("panel_power","The home key waits for the update");
+        }else if(atomic_load(&display_asleep) && atomic_load(&asleep_by_hand)){
+            ESP_LOGI("panel_power","The home key leaves the standby of the button");
+        }else{
+            display_sleeping(false,false);
+            /* A press of the key is a touch to the time to the sleep. */
+            lv_display_trigger_activity(NULL);
+            if(panel_ui_home())ESP_LOGI("panel_power","The home key: the start page");
+        }
+    }
     if(atomic_load(&display_asleep)){
         /* A touch brings back a display that went down on its own, and
          * leaves one that the button switched off where it is. A lift does
