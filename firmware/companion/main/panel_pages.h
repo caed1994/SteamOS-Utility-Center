@@ -14,6 +14,12 @@
 // comes at the end, in the order of the firmware. So an update that adds
 // a page keeps the order somebody chose, and puts the new page last.
 //
+// A page can also be hidden. Then it keeps its place in the order and is
+// not in the band: the pages that are shown stand next to each other, in
+// the order, and the first of them is the start page. The hidden pages are
+// stored as a number of their own, a bit for each page, bit 0 for
+// PANEL_PAGE_CONTROLS. One page at the least is always shown.
+//
 // No ESP-IDF and no LVGL in here, so tests/test_panel_pages_order.py
 // builds this file on the machine that runs the tests and asks it.
 #pragma once
@@ -50,3 +56,24 @@ bool panel_pages_move(uint8_t order[PANEL_PAGES], int place, int step);
 
 // The place of a page.
 int panel_pages_place(const uint8_t order[PANEL_PAGES], int page);
+
+// The hidden pages out of a stored number. A bit of a page this firmware
+// does not have is left out, and a number that hides every page hides
+// none.
+uint32_t panel_pages_hidden(uint32_t stored);
+
+// The page hidden, or shown again if it was hidden. false, and nothing
+// changes, for the last page that is shown or a page this firmware does
+// not have.
+bool panel_pages_toggle(uint32_t *hidden, int page);
+
+// The pages that are shown.
+int panel_pages_shown(uint32_t hidden);
+
+// The place of a page in the band, among the pages that are shown, or -1
+// for a page that is hidden.
+int panel_pages_band_place(const uint8_t order[PANEL_PAGES], uint32_t hidden, int page);
+
+// The page at that place in the band. A place before the first is the
+// first, and a place past the last is the last.
+int panel_pages_band_page(const uint8_t order[PANEL_PAGES], uint32_t hidden, int place);

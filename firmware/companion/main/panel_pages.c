@@ -46,3 +46,51 @@ int panel_pages_place(const uint8_t order[PANEL_PAGES], int page)
         if (order[place] == page) return place;
     return -1;
 }
+
+/* A bit for each page this firmware has. */
+#define ALL_PAGES ((1u << PANEL_PAGES) - 1)
+
+uint32_t panel_pages_hidden(uint32_t stored)
+{
+    uint32_t hidden = stored & ALL_PAGES;
+    return hidden == ALL_PAGES ? 0 : hidden;
+}
+
+bool panel_pages_toggle(uint32_t *hidden, int page)
+{
+    if (page < 0 || page >= PANEL_PAGES) return false;
+    uint32_t next = *hidden ^ (1u << page);
+    if ((next & ALL_PAGES) == ALL_PAGES) return false;
+    *hidden = next;
+    return true;
+}
+
+int panel_pages_shown(uint32_t hidden)
+{
+    int shown = 0;
+    for (int page = 0; page < PANEL_PAGES; page++)
+        if (!(hidden & (1u << page))) shown++;
+    return shown;
+}
+
+int panel_pages_band_place(const uint8_t order[PANEL_PAGES], uint32_t hidden, int page)
+{
+    if (page < 0 || page >= PANEL_PAGES || (hidden & (1u << page))) return -1;
+    int place = 0;
+    for (int i = 0; i < PANEL_PAGES; i++) {
+        if (order[i] == page) return place;
+        if (!(hidden & (1u << order[i]))) place++;
+    }
+    return -1;
+}
+
+int panel_pages_band_page(const uint8_t order[PANEL_PAGES], uint32_t hidden, int place)
+{
+    int last = order[0];
+    for (int i = 0; i < PANEL_PAGES; i++) {
+        if (hidden & (1u << order[i])) continue;
+        last = order[i];
+        if (place-- <= 0) break;
+    }
+    return last;
+}

@@ -7,8 +7,13 @@ Asked for: a list in the settings of the panel with a button up and a
 button down on each page. The top one is the start page. The order is
 stored as one number with room for eight pages. A stored number that is
 not valid gives the order of the firmware, and a page that a later
-firmware adds comes last. No page is hidden, and a wake does not jump to
-the start page.
+firmware adds comes last. A wake does not jump to the start page.
+
+Asked for later: an eye beside the arrows that hides a page, with a stroke
+through the eye on a hidden page. A hidden page keeps its place in the
+order. The band holds only the pages that are shown, and the first of
+them is the start page. One page at the least stays shown. The hidden
+pages are stored as a number of their own, a bit for each page.
 
 firmware/companion/main/panel_pages.c reads and writes that number, and
 the harness in tests/c/panel-pages-harness.c asks it here. The rules
@@ -136,6 +141,53 @@ class OrderTest(unittest.TestCase):
             self.assertEqual(self.ask("move ffffffff %d %d" % (place, step)),
                              ["0 0 1 2 3 4"], (place, step))
 
+    # The hidden pages: a bit for each page, and one page at the least
+    # shown.
+
+    def test_the_hidden_pages_of_a_stored_number(self):
+        self.assertEqual(self.ask("hidden 0", "hidden 5", "hidden f"), ["0", "5", "f"])
+        # A bit of a page that this firmware does not have is left out.
+        self.assertEqual(self.ask("hidden ffffffe2"), ["2"])
+        # A number that hides every page hides none.
+        self.assertEqual(self.ask("hidden 1f", "hidden ffffffff"), ["0", "0"])
+
+    def test_a_page_is_hidden_and_shown_again(self):
+        self.assertEqual(self.ask("toggle 0 1", "toggle 2 1", "toggle 3 4"),
+                         ["1 2", "1 0", "1 13"])
+
+    def test_the_last_page_that_is_shown_stays(self):
+        self.assertEqual(self.ask("toggle f 4", "toggle 17 3"), ["0 f", "0 17"])
+        # Another page shown again, and then this one can go.
+        self.assertEqual(self.ask("toggle f 0", "toggle e 4"), ["1 e", "1 1e"])
+
+    def test_a_page_that_this_firmware_does_not_have_does_not_toggle(self):
+        self.assertEqual(self.ask("toggle 0 5", "toggle 0 -1", "toggle 0 31"), ["0 0"] * 3)
+
+    def test_the_count_of_the_pages_that_are_shown(self):
+        self.assertEqual(self.ask("shown 0", "shown 1", "shown 5", "shown 15", "shown f"),
+                         ["5", "4", "3", "2", "1"])
+
+    def test_the_band_holds_the_shown_pages_in_their_order(self):
+        draw = random.Random(2610)
+        for _ in range(300):
+            order = DEFAULT[:]
+            draw.shuffle(order)
+            hidden = draw.randrange(0, (1 << PAGES) - 1)
+            value = stored(*order)
+            shown = [page for page in order if not hidden >> page & 1]
+            places = self.ask(*["band %x %x %d" % (value, hidden, page) for page in DEFAULT])
+            self.assertEqual([int(place) for place in places],
+                             [shown.index(page) if page in shown else -1 for page in DEFAULT])
+            # A place before the first is the first, and one past the last
+            # is the last.
+            wanted = range(-2, PAGES + 2)
+            pages = self.ask(*["at %x %x %d" % (value, hidden, place) for place in wanted])
+            self.assertEqual([int(page) for page in pages],
+                             [shown[min(max(place, 0), len(shown) - 1)] for place in wanted])
+        # A page that this firmware does not have has no place.
+        value = stored(*DEFAULT)
+        self.assertEqual(self.ask("band %x 0 5" % value, "band %x 0 -1" % value), ["-1", "-1"])
+
     def test_the_place_of_a_page(self):
         value = stored(3, 0, 4, 1, 2)
         self.assertEqual(self.ask(*["place %x %d" % (value, page) for page in DEFAULT]),
@@ -159,7 +211,34 @@ class StorageTest(unittest.TestCase):
     def test_the_band_stands_in_the_stored_order(self):
         ui = code("ui.c")
         self.assertIn("panel_pages_order(local.page_order,page_order)", ui)
-        self.assertRegex(ui, r"panel_pages_place\(page_order,i\)\*480")
+        self.assertIn("page_hidden=panel_pages_hidden(local.page_hidden)", ui)
+        arrange = re.search(r"static void band_arrange\(int showing\)\s*\{(.*?)\n\}", ui, re.S)
+        self.assertIsNotNone(arrange)
+        self.assertIn("int place=panel_pages_band_place(page_order,page_hidden,i);", arrange.group(1))
+        self.assertIn("lv_obj_add_flag(band_pages[i],LV_OBJ_FLAG_HIDDEN)", arrange.group(1))
+        self.assertIn("lv_obj_set_x(band_pages[i],place*480)", arrange.group(1))
+        # The band starts on the first page that is shown.
+        self.assertIn("band_arrange(panel_pages_band_page(page_order,page_hidden,0));", ui)
+
+    def test_a_panel_without_hidden_pages_shows_every_page(self):
+        main = code("main.c")
+        self.assertIn(".page_hidden=0", main)
+        self.assertIn('nvs_get_u32(h,"page_hidden",&key)', main)
+
+    def test_the_hidden_pages_are_stored_as_one_wide_number(self):
+        main = code("main.c")
+        self.assertIn('key==PANEL_PAGE_HIDDEN?"page_hidden"', main)
+        wide = re.search(r"bool wide=([^;]*);", main)
+        self.assertIsNotNone(wide)
+        self.assertIn("key==PANEL_PAGE_HIDDEN", wide.group(1))
+
+    def test_an_eye_is_saved_at_once(self):
+        ui = code("ui.c")
+        eye = re.search(r"static void arrange_eye\(lv_event_t \*e\)\s*\{(.*?)\n\}", ui, re.S)
+        self.assertIsNotNone(eye)
+        self.assertIn("if(!panel_pages_toggle(&page_hidden,page_order[place]))return;", eye.group(1))
+        self.assertIn("local.page_hidden=page_hidden;", eye.group(1))
+        self.assertIn("save_setting(PANEL_PAGE_HIDDEN,(int)local.page_hidden,true)", eye.group(1))
 
     def test_a_move_is_saved_at_once(self):
         ui = code("ui.c")

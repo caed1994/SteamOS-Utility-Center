@@ -44,8 +44,8 @@
     X(TXT_SLEEP_NEVER,     "Never",                 "Nie") \
     X(TXT_LIFT_WAKE,       "Wake when lifted",      "Beim Anheben einschalten") \
     X(TXT_PAGES,           "Pages",                 "Seiten") \
-    X(TXT_PAGES_WHAT,      "The top one is the start page.", \
-                           "Die oberste ist die Startseite.") \
+    X(TXT_PAGES_WHAT,      "The top page shown is the start page. The eye hides a page.", \
+                           "Die oberste sichtbare ist die Startseite. Das Auge blendet Seiten aus.") \
     X(TXT_PAGES_ARRANGE,   "Arrange",               "Anordnen") \
     X(TXT_PAGES_TITLE,     "Arrange pages",         "Seiten anordnen") \
     X(TXT_PAGES_START,     "Start page",            "Startseite") \

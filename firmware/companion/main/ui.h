@@ -206,7 +206,7 @@ typedef void (*panel_action_cb_t)(panel_action_t action);
 typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
                PANEL_LANGUAGE, PANEL_SLEEP_AFTER,
                PANEL_CPU_SENSOR, PANEL_GPU_SENSOR, PANEL_LIFT_WAKE,
-               PANEL_PAGE_ORDER } panel_setting_t;
+               PANEL_PAGE_ORDER, PANEL_PAGE_HIDDEN } panel_setting_t;
 /* sleep_after counts minutes, and nought means the display stays on. The
  * stored value is the count and not a place in the list of choices, so a
  * later firmware that offers other choices still reads what somebody
@@ -221,11 +221,12 @@ typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
  * after the set time, as a touch does. See panel_motion.c.
  *
  * page_order: the order of the pages of the band, as panel_pages.h
- * stores it. */
+ * stores it. page_hidden: the pages that are not in the band, a bit for
+ * each page, as panel_pages.h stores them. */
 typedef struct { int brightness, sound_volume; bool touch_tones;
                  panel_language_t language; int sleep_after;
                  uint32_t cpu_sensor, gpu_sensor; bool lift_wake;
-                 uint32_t page_order; }
+                 uint32_t page_order, page_hidden; }
     panel_settings_t;
 typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);

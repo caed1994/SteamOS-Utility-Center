@@ -123,7 +123,9 @@ static panel_settings_t settings_load(void)
                                /* Asked for, so on until somebody switches
                                 * it off. It acts only after the timeout. */
                                .lift_wake=true,
-                               .page_order=PANEL_PAGES_UNSET};
+                               .page_order=PANEL_PAGES_UNSET,
+                               /* Every page in the band. */
+                               .page_hidden=0};
     nvs_handle_t h;
     if(nvs_open("panel_ui",NVS_READONLY,&h)==ESP_OK){
         uint8_t value;
@@ -147,6 +149,9 @@ static panel_settings_t settings_load(void)
         /* The order of the pages. Whatever it holds is read with care:
          * see panel_pages_order. */
         if(nvs_get_u32(h,"page_order",&key)==ESP_OK)settings.page_order=key;
+        /* The hidden pages, read with the same care: see
+         * panel_pages_hidden. */
+        if(nvs_get_u32(h,"page_hidden",&key)==ESP_OK)settings.page_hidden=key;
         nvs_close(h);
     }
     // Here, and not where the screen is built. The setup portal opens
@@ -164,8 +169,10 @@ static void setting_set(panel_setting_t key,int value,bool save)
                      key==PANEL_CPU_SENSOR?"cpu_sensor":
                      key==PANEL_GPU_SENSOR?"gpu_sensor":
                      key==PANEL_LIFT_WAKE?"lift_wake":
-                     key==PANEL_PAGE_ORDER?"page_order":"touch_tones";
-    bool wide=key==PANEL_CPU_SENSOR||key==PANEL_GPU_SENSOR||key==PANEL_PAGE_ORDER;
+                     key==PANEL_PAGE_ORDER?"page_order":
+                     key==PANEL_PAGE_HIDDEN?"page_hidden":"touch_tones";
+    bool wide=key==PANEL_CPU_SENSOR||key==PANEL_GPU_SENSOR||key==PANEL_PAGE_ORDER||
+              key==PANEL_PAGE_HIDDEN;
     esp_err_t result=ESP_OK;
     if(key==PANEL_BRIGHTNESS){
         if(!atomic_load(&display_asleep))result=bsp_display_brightness_set(value);

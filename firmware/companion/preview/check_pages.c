@@ -65,6 +65,15 @@ static bool name_fits(lv_obj_t *name)
     }
     return true;
 }
+// The button in a row whose caption is that text, or NULL.
+static lv_obj_t *button_with(lv_obj_t *row,const char *caption)
+{
+    for(unsigned i=0;i<lv_obj_get_child_count(row);i++){
+        lv_obj_t *c=lv_obj_get_child(row,i);
+        if(lv_obj_check_type(c,&lv_button_class)&&label(c,caption))return c;
+    }
+    return NULL;
+}
 // The end of a frame, which this display takes and does nothing with. The
 // pixels stay in the buffer that main hands LVGL, so a rule can read them.
 static void flushed(lv_display_t *d,const lv_area_t *a,uint8_t *p)
@@ -1357,6 +1366,158 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
+    // A page can be hidden: an eye on each row beside the arrows, and the
+    // eye with a stroke through it on a hidden page. The band holds only
+    // the pages that are shown, the first of them is the start page, and
+    // the last page that is shown cannot go.
+    {
+        static const panel_text_id_t names[PANEL_PAGES]={TXT_PAGE_CONTROLS,TXT_PAGE_SESSION,
+            TXT_PLAYING,TXT_PAGE_CLOCK,TXT_PAGE_CARD};
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        lv_obj_t *band_now=find_band(lv_screen_active());
+        lv_obj_update_layout(lv_screen_active());
+        // On the session, away from the start page.
+        lv_obj_scroll_to_x(band_now,480,LV_ANIM_OFF);
+        assert(strcmp(panel_ui_where(),"the session")==0);
+        panel_ui_settings_open();
+        panel_ui_arrange_open();
+        lv_obj_t *screen_now=lv_obj_get_parent(label(lv_screen_active(),panel_text(TXT_PAGES_TITLE)));
+        lv_obj_update_layout(screen_now);
+        lv_refr_now(screen);
+        // Each row has an open eye left of its arrows, and its name whole
+        // and left of the eye.
+        for(int page=0;page<PANEL_PAGES;page++){
+            lv_obj_t *name=label(screen_now,panel_text(names[page]));
+            lv_obj_t *row=lv_obj_get_parent(name);
+            lv_obj_t *eye=button_with(row,LV_SYMBOL_EYE_OPEN),*up=button_with(row,LV_SYMBOL_UP);
+            assert(eye&&up&&button_with(row,LV_SYMBOL_DOWN));
+            assert(!button_with(row,LV_SYMBOL_EYE_CLOSE));
+            assert(lv_obj_get_x(eye)+lv_obj_get_width(eye)<=lv_obj_get_x(up));
+            assert(!lv_obj_has_state(eye,LV_STATE_DISABLED));
+            assert(name_fits(name));
+        }
+        lv_obj_t *start=label(screen_now,panel_text(TXT_PAGES_START));
+        lv_color_t grey=lv_obj_get_style_text_color(start,0);
+        // The eye of the session: saved at once, the eye with a stroke,
+        // the name in grey, and the page out of the band. The pages after
+        // it move up a place, and the band, whose page went, goes to the
+        // start page.
+        lv_obj_t *session=label(screen_now,panel_text(TXT_PAGE_SESSION));
+        lv_obj_t *session_row=lv_obj_get_parent(session);
+        saved_count=0;
+        lv_obj_send_event(button_with(session_row,LV_SYMBOL_EYE_OPEN),LV_EVENT_CLICKED,NULL);
+        assert(saved_count==1&&saved_key==PANEL_PAGE_HIDDEN&&saved_value==1<<PANEL_PAGE_SESSION);
+        assert(button_with(session_row,LV_SYMBOL_EYE_CLOSE)&&!button_with(session_row,LV_SYMBOL_EYE_OPEN));
+        assert(lv_color_eq(lv_obj_get_style_text_color(session,0),grey));
+        assert(!lv_color_eq(lv_obj_get_style_text_color(label(screen_now,panel_text(TXT_PAGE_CLOCK)),0),grey));
+        assert(lv_obj_has_flag(lv_obj_get_child(band_now,PANEL_PAGE_SESSION),LV_OBJ_FLAG_HIDDEN));
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CONTROLS))==0);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_PLAYING))==480);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CLOCK))==2*480);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==3*480);
+        assert(lv_obj_get_scroll_x(band_now)==0);
+        // The band ends at the last page that is shown.
+        lv_obj_scroll_to_x(band_now,PANEL_PAGES*480,LV_ANIM_OFF);
+        assert(lv_obj_get_scroll_x(band_now)==3*480);
+        // A move keeps the band on the page it shows, at its new place.
+        lv_obj_t *card_row=lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CARD)));
+        lv_obj_send_event(button_with(card_row,LV_SYMBOL_UP),LV_EVENT_CLICKED,NULL);
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==2*480);
+        assert(lv_obj_get_scroll_x(band_now)==2*480);
+        lv_obj_send_event(button_with(lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CARD))),
+                                      LV_SYMBOL_DOWN),LV_EVENT_CLICKED,NULL);
+        // The controls hidden as well: the start page is the first page
+        // that is shown, the game, and its row has the line that says so.
+        lv_obj_t *controls_row=lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CONTROLS)));
+        lv_obj_send_event(button_with(controls_row,LV_SYMBOL_EYE_OPEN),LV_EVENT_CLICKED,NULL);
+        assert(saved_value==((1<<PANEL_PAGE_SESSION)|(1<<PANEL_PAGE_CONTROLS)));
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_PLAYING))==0);
+        start=label(screen_now,panel_text(TXT_PAGES_START));
+        assert(lv_obj_get_parent(start)==lv_obj_get_parent(label(screen_now,panel_text(TXT_PLAYING))));
+        unsigned starts=0;
+        for(int page=0;page<PANEL_PAGES;page++){
+            lv_obj_t *row=lv_obj_get_parent(label(screen_now,panel_text(names[page])));
+            for(unsigned i=0;i<lv_obj_get_child_count(row);i++){
+                lv_obj_t *c=lv_obj_get_child(row,i);
+                if(lv_obj_check_type(c,&lv_label_class)&&!lv_obj_has_flag(c,LV_OBJ_FLAG_HIDDEN)&&
+                   strcmp(lv_label_get_text(c),panel_text(TXT_PAGES_START))==0)starts++;
+            }
+        }
+        assert(starts==1);
+        // A hidden page still moves: it keeps its place in the order.
+        lv_obj_send_event(button_with(controls_row,LV_SYMBOL_DOWN),LV_EVENT_CLICKED,NULL);
+        assert(saved_key==PANEL_PAGE_ORDER);
+        lv_obj_send_event(button_with(lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CONTROLS))),
+                                      LV_SYMBOL_UP),LV_EVENT_CLICKED,NULL);
+        // All but the card hidden: the card is the start page and the only
+        // page of the band, and its eye does nothing.
+        lv_obj_send_event(button_with(lv_obj_get_parent(label(screen_now,panel_text(TXT_PLAYING))),
+                                      LV_SYMBOL_EYE_OPEN),LV_EVENT_CLICKED,NULL);
+        lv_obj_send_event(button_with(lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CLOCK))),
+                                      LV_SYMBOL_EYE_OPEN),LV_EVENT_CLICKED,NULL);
+        card_row=lv_obj_get_parent(label(screen_now,panel_text(TXT_PAGE_CARD)));
+        lv_obj_t *last_eye=button_with(card_row,LV_SYMBOL_EYE_OPEN);
+        assert(last_eye&&lv_obj_has_state(last_eye,LV_STATE_DISABLED));
+        int before=saved_count;
+        lv_obj_send_event(last_eye,LV_EVENT_CLICKED,NULL);
+        assert(saved_count==before);
+        assert(!lv_obj_has_flag(lv_obj_get_child(band_now,PANEL_PAGE_CARD),LV_OBJ_FLAG_HIDDEN));
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==0);
+        lv_obj_scroll_to_x(band_now,PANEL_PAGES*480,LV_ANIM_OFF);
+        assert(lv_obj_get_scroll_x(band_now)==0);
+        // The session shown again, at its place, and the card's eye works
+        // again.
+        lv_obj_send_event(button_with(session_row,LV_SYMBOL_EYE_CLOSE),LV_EVENT_CLICKED,NULL);
+        assert(saved_value==((1<<PANEL_PAGE_CONTROLS)|(1<<PANEL_PAGE_PLAYING)|(1<<PANEL_PAGE_CLOCK)));
+        lv_obj_update_layout(lv_screen_active());
+        assert(!lv_obj_has_flag(lv_obj_get_child(band_now,PANEL_PAGE_SESSION),LV_OBJ_FLAG_HIDDEN));
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_SESSION))==0);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==480);
+        assert(!lv_obj_has_state(button_with(card_row,LV_SYMBOL_EYE_OPEN),LV_STATE_DISABLED));
+        lv_refr_now(screen);
+        // A panel that starts with hidden pages builds the band without
+        // them, and starts on the first page that is shown.
+        panel_settings_t stored=english;
+        stored.page_hidden=(1u<<PANEL_PAGE_CONTROLS)|(1u<<PANEL_PAGE_PLAYING);
+        panel_ui_create(action,setting,sound,&stored);
+        band_now=find_band(lv_screen_active());
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_has_flag(lv_obj_get_child(band_now,PANEL_PAGE_CONTROLS),LV_OBJ_FLAG_HIDDEN));
+        assert(lv_obj_has_flag(lv_obj_get_child(band_now,PANEL_PAGE_PLAYING),LV_OBJ_FLAG_HIDDEN));
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_SESSION))==0);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CLOCK))==480);
+        assert(lv_obj_get_x(lv_obj_get_child(band_now,PANEL_PAGE_CARD))==2*480);
+        assert(strcmp(panel_ui_where(),"the session")==0);
+        lv_obj_scroll_to_x(band_now,PANEL_PAGES*480,LV_ANIM_OFF);
+        assert(strcmp(panel_ui_where(),"the card")==0);
+        // A stored number that hides every page hides none.
+        stored.page_hidden=0xFFFFFFFFu;
+        panel_ui_create(action,setting,sound,&stored);
+        band_now=find_band(lv_screen_active());
+        for(int page=0;page<PANEL_PAGES;page++)
+            assert(!lv_obj_has_flag(lv_obj_get_child(band_now,page),LV_OBJ_FLAG_HIDDEN));
+        // In German, the same eyes, and each name whole.
+        panel_settings_t german=stored;german.language=PANEL_GERMAN;
+        german.page_hidden=1u<<PANEL_PAGE_CARD;
+        panel_ui_create(action,setting,sound,&german);
+        panel_ui_settings_open();
+        panel_ui_arrange_open();
+        screen_now=lv_obj_get_parent(label(lv_screen_active(),"Seiten anordnen"));
+        lv_obj_update_layout(screen_now);
+        lv_refr_now(screen);
+        lv_obj_t *card=label(screen_now,"Grafikkarte und Verlauf");
+        assert(card&&name_fits(card)&&button_with(lv_obj_get_parent(card),LV_SYMBOL_EYE_CLOSE));
+        lv_obj_t *drives=label(screen_now,"Sitzung und Datenträger");
+        assert(drives&&name_fits(drives)&&button_with(lv_obj_get_parent(drives),LV_SYMBOL_EYE_OPEN));
+        assert(complaints==0);
+        panel_ui_create(action,setting,sound,&english);
+    }
+
     // The frames in movement, on the page of the panel: five rows and the
     // line that says what they are, each whole. The page reads the count
     // itself as it opens, and not the state: a state that changes at every
@@ -1685,7 +1846,8 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
-    puts("OK: five pages that snap, in an order somebody can change, the "
+    puts("OK: five pages that snap, in an order somebody can change, any of them "
+         "but the last one hidden with an eye, the "
          "session and its target button, the "
          "drives with their bars, every one of them offline, every one of "
          "them drawn with nothing for LVGL to complain about, the battery of "

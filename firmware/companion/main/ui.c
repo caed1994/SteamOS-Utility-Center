@@ -130,15 +130,17 @@ static lv_obj_t *update_card,*update_offered,*update_note,*update_button;
 /* The screen over everything while an update writes, which nothing closes:
  * the panel restarts at its end, or the page says why it did not. */
 static lv_obj_t *update_layer,*update_title,*update_bar,*update_percent,*update_hint;
-/* The order of the pages of the band: the page at each place, and the
- * pages themselves, which stand at their place in the band. See
- * panel_pages.h. */
+/* The order of the pages of the band: the page at each place, the pages
+ * that are hidden, and the pages themselves, which stand at their place in
+ * the band. See panel_pages.h. */
 static uint8_t page_order[PANEL_PAGES];
+static uint32_t page_hidden;
 static lv_obj_t *band_pages[PANEL_PAGES];
 /* The screen that puts them in order: a row for each place, with the name
- * of the page there and a button up and one down. */
+ * of the page there, a button that hides or shows it, and a button up and
+ * one down. */
 static lv_obj_t *arrange_screen,*arrange_names[PANEL_PAGES],*arrange_starts[PANEL_PAGES];
-static lv_obj_t *arrange_up[PANEL_PAGES],*arrange_down[PANEL_PAGES];
+static lv_obj_t *arrange_eyes[PANEL_PAGES],*arrange_up[PANEL_PAGES],*arrange_down[PANEL_PAGES];
 static const panel_text_id_t page_names[PANEL_PAGES]={TXT_PAGE_CONTROLS,TXT_PAGE_SESSION,
     TXT_PLAYING,TXT_PAGE_CLOCK,TXT_PAGE_CARD};
 static void arrange_forget(void);
@@ -395,13 +397,23 @@ static void settings_close(lv_event_t *e)
 {
     (void)e;feedback();settings_forget();
 }
-/* The screen that puts the pages in order.
+/* The screen that puts the pages in order, and hides the ones nobody uses.
  *
- * A row for each place, the start page first, with the name of the page
- * there and two buttons: one up and one down. A press moves the page one
- * place and the page there to the place it left, saves the order, and
- * moves the pages of the band at once. The top row has no way up and the
- * bottom row no way down. */
+ * A row for each place, with the name of the page there and three buttons:
+ * an eye, one up and one down. Up or down moves the page one place and the
+ * page there to the place it left, saves the order, and moves the pages of
+ * the band at once. The top row has no way up and the bottom row no way
+ * down.
+ *
+ * The eye hides the page or shows it again, and saves that at once. A
+ * hidden page has the eye with a stroke through it and its name in grey,
+ * and it keeps its place in the order. The band holds only the pages that
+ * are shown, and the first of them is the start page. The last page that
+ * is shown cannot go: its eye does nothing.
+ *
+ * The names are in the 16 point font. Three buttons leave 212 points for a
+ * name, and the longest, "Graphics card and history", takes 206 in it and
+ * 232 in the 18 point font. */
 #define ARRANGE_TOP 78
 #define ARRANGE_STEP 78
 #define ARRANGE_HEIGHT 70
@@ -409,7 +421,8 @@ static void arrange_drop(void)
 {
     arrange_screen=NULL;
     for(int i=0;i<PANEL_PAGES;i++){
-        arrange_names[i]=NULL;arrange_starts[i]=NULL;arrange_up[i]=NULL;arrange_down[i]=NULL;
+        arrange_names[i]=NULL;arrange_starts[i]=NULL;arrange_eyes[i]=NULL;
+        arrange_up[i]=NULL;arrange_down[i]=NULL;
     }
 }
 static void arrange_forget(void)
@@ -417,23 +430,55 @@ static void arrange_forget(void)
     if(arrange_screen)lv_obj_delete(arrange_screen);
     arrange_drop();
 }
-/* Each page of the band at its place now. */
-static void band_arrange(void)
+/* The page the band shows now, read from where the band stands: a swipe
+ * that did not carry far enough left it on the page it was on. The start
+ * page while there is no band. */
+static int band_page(void)
 {
-    for(int i=0;i<PANEL_PAGES;i++)
-        if(band_pages[i])lv_obj_set_x(band_pages[i],panel_pages_place(page_order,i)*480);
+    int32_t place=band?(lv_obj_get_scroll_x(band)+240)/480:0;
+    return panel_pages_band_page(page_order,page_hidden,place);
+}
+/* Each page of the band at its place now: the pages that are shown next to
+ * each other in the order, and the hidden ones out of the band. A hidden
+ * object is not drawn, not touched, and not a place the band snaps to.
+ *
+ * The band stays on the page it showed, which is at another place after a
+ * move, or goes to the start page when that page was hidden. */
+static void band_arrange(int showing)
+{
+    for(int i=0;i<PANEL_PAGES;i++){
+        if(!band_pages[i])continue;
+        int place=panel_pages_band_place(page_order,page_hidden,i);
+        if(place<0){lv_obj_add_flag(band_pages[i],LV_OBJ_FLAG_HIDDEN);continue;}
+        lv_obj_remove_flag(band_pages[i],LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_x(band_pages[i],place*480);
+    }
+    if(!band)return;
+    /* lv_obj_scroll_to_x brings the layout up to date before it bounds
+     * the scroll, so the new places count. */
+    int place=panel_pages_band_place(page_order,page_hidden,showing);
+    lv_obj_scroll_to_x(band,(place<0?0:place)*480,LV_ANIM_OFF);
 }
 static void arrange_show(void)
 {
     if(!arrange_screen)return;
+    int start=panel_pages_place(page_order,panel_pages_band_page(page_order,page_hidden,0));
+    bool last=panel_pages_shown(page_hidden)==1;
     for(int place=0;place<PANEL_PAGES;place++){
-        lv_label_set_text(arrange_names[place],panel_text(page_names[page_order[place]]));
+        int page=page_order[place];
+        bool hidden=(page_hidden>>page)&1;
+        lv_label_set_text(arrange_names[place],panel_text(page_names[page]));
+        lv_obj_set_style_text_color(arrange_names[place],lv_color_hex(hidden?MUTED:TEXT),0);
         /* The start page has a second line, and the others have their name
          * in the middle of the row. */
-        lv_obj_set_y(arrange_names[place],place==0?14:
-                     (ARRANGE_HEIGHT-lv_font_get_line_height(&panel_font_18))/2);
-        if(place==0)lv_obj_remove_flag(arrange_starts[place],LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_y(arrange_names[place],place==start?14:
+                     (ARRANGE_HEIGHT-lv_font_get_line_height(&panel_font_16))/2);
+        if(place==start)lv_obj_remove_flag(arrange_starts[place],LV_OBJ_FLAG_HIDDEN);
         else lv_obj_add_flag(arrange_starts[place],LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(lv_obj_get_child(arrange_eyes[place],0),
+                          hidden?LV_SYMBOL_EYE_CLOSE:LV_SYMBOL_EYE_OPEN);
+        if(!hidden&&last)lv_obj_add_state(arrange_eyes[place],LV_STATE_DISABLED);
+        else lv_obj_remove_state(arrange_eyes[place],LV_STATE_DISABLED);
         if(place==0)lv_obj_add_state(arrange_up[place],LV_STATE_DISABLED);
         else lv_obj_remove_state(arrange_up[place],LV_STATE_DISABLED);
         if(place==PANEL_PAGES-1)lv_obj_add_state(arrange_down[place],LV_STATE_DISABLED);
@@ -445,10 +490,22 @@ static void arrange_move(lv_event_t *e)
     int code=(int)(intptr_t)lv_event_get_user_data(e);
     int place=code/2,step=code%2?1:-1;
     feedback();
+    int showing=band_page();
     if(!panel_pages_move(page_order,place,step))return;
     local.page_order=panel_pages_pack(page_order);
     if(save_setting)save_setting(PANEL_PAGE_ORDER,(int)local.page_order,true);
-    band_arrange();
+    band_arrange(showing);
+    arrange_show();
+}
+static void arrange_eye(lv_event_t *e)
+{
+    int place=(int)(intptr_t)lv_event_get_user_data(e);
+    feedback();
+    int showing=band_page();
+    if(!panel_pages_toggle(&page_hidden,page_order[place]))return;
+    local.page_hidden=page_hidden;
+    if(save_setting)save_setting(PANEL_PAGE_HIDDEN,(int)local.page_hidden,true);
+    band_arrange(showing);
     arrange_show();
 }
 static void arrange_close(lv_event_t *e){(void)e;feedback();arrange_forget();}
@@ -465,11 +522,12 @@ void panel_ui_arrange_open(void)
         char number[4];
         snprintf(number,sizeof number,"%d",place+1);
         text_at(row,number,16,20,24,&panel_font_24,BLUE);
-        arrange_names[place]=text_at(row,"",52,14,236,&panel_font_18,TEXT);
-        lv_obj_set_height(arrange_names[place],lv_font_get_line_height(&panel_font_18));
-        arrange_starts[place]=text_at(row,panel_text(TXT_PAGES_START),52,40,236,&panel_font_12,MUTED);
-        arrange_up[place]=button(row,LV_SYMBOL_UP,296,13,60,44,arrange_move,place*2);
-        arrange_down[place]=button(row,LV_SYMBOL_DOWN,366,13,60,44,arrange_move,place*2+1);
+        arrange_names[place]=text_at(row,"",52,14,212,&panel_font_16,TEXT);
+        lv_obj_set_height(arrange_names[place],lv_font_get_line_height(&panel_font_16));
+        arrange_starts[place]=text_at(row,panel_text(TXT_PAGES_START),52,40,212,&panel_font_12,MUTED);
+        arrange_eyes[place]=button(row,LV_SYMBOL_EYE_OPEN,270,13,48,44,arrange_eye,place);
+        arrange_up[place]=button(row,LV_SYMBOL_UP,324,13,48,44,arrange_move,place*2);
+        arrange_down[place]=button(row,LV_SYMBOL_DOWN,378,13,48,44,arrange_move,place*2+1);
     }
     arrange_show();
 }
@@ -1348,15 +1406,11 @@ const char *panel_ui_where(void)
     if(update_layer)return "an update";
     if(self_screen)return "the panel";
     if(!band)return "no screen";
-    /* Read from where the band stands: a swipe that did not carry far
-     * enough left it on the page it was on. The name is the one of the
-     * page and not of its place, which somebody can change. */
+    /* The name is the one of the page and not of its place, which
+     * somebody can change. See band_page. */
     static const char *const pages[PANEL_PAGES]={"the controls","the session",
                                                  "the game","the clock","the card"};
-    int32_t place=(lv_obj_get_scroll_x(band)+240)/480;
-    if(place<0)place=0;
-    if(place>PANEL_PAGES-1)place=PANEL_PAGES-1;
-    return pages[page_order[place]];
+    return pages[band_page()];
 }
 
 /* A label set only when its text is new. LVGL draws a label again at each
@@ -1596,13 +1650,17 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * built in the order of the firmware and stand where their place is,
      * so the snap and the swipe follow the order and nothing else does. */
     panel_pages_order(local.page_order,page_order);
+    page_hidden=panel_pages_hidden(local.page_hidden);
     lv_obj_t *page[PANEL_PAGES];
     for(int i=0;i<PANEL_PAGES;i++){
-        page[i]=panel(band,panel_pages_place(page_order,i)*480,0,480,300,BG,false);
+        page[i]=panel(band,0,0,480,300,BG,false);
         lv_obj_set_style_bg_opa(page[i],LV_OPA_TRANSP,0);
         lv_obj_remove_flag(page[i],LV_OBJ_FLAG_CLICKABLE);
         band_pages[i]=page[i];
     }
+    /* Each at its place, and the hidden ones out of the band. The band
+     * starts on the start page, the first that is shown. */
+    band_arrange(panel_pages_band_page(page_order,page_hidden,0));
     /* No marks under the band for the page on the screen. There were
      * three, and its owner found them of no use and not good to look at.
      * check_pages holds the room between the band and the sensors empty. */
