@@ -712,9 +712,14 @@ class SleepClockTest(unittest.TestCase):
     """The pixel clock of the display, lower in a sleep.
 
     Read off the board: in a button sleep the CPU spent only about 55 % of
-    the time at the low speed. The screen shows black, and an interrupt on
-    the CPU still copies every frame into the bounce buffers. A lower pixel
-    clock is fewer frames to copy."""
+    the time at the low speed. An interrupt on the CPU still copies every
+    frame into the bounce buffers, and a lower pixel clock is fewer frames
+    to copy.
+
+    It cannot go as low as it once did. At 4 MHz the panel showed each line
+    twice, which a black cover hid and the clock on the cover did not. The
+    lowest clock this panel was seen to show right is the 12 MHz of the
+    startup animation."""
 
     def source(self):
         with open(os.path.join(FIRMWARE, "panel_display.c"),
@@ -736,12 +741,19 @@ class SleepClockTest(unittest.TestCase):
         # frame of 29 ms lands on two frames of 16.6 ms.
         self.assertEqual(self.number("PANEL_PCLK_BOOT_HZ"), 12000000)
         self.assertEqual(self.number("PANEL_PCLK_HZ"), 16000000)
-        self.assertLessEqual(self.number("PANEL_PCLK_SLEEP_HZ") * 2,
-                             self.number("PANEL_PCLK_BOOT_HZ"))
+        self.assertLess(self.number("PANEL_PCLK_SLEEP_HZ"),
+                        self.number("PANEL_PCLK_HZ"))
         self.assertIn("esp_lcd_rgb_panel_set_pclk(panel,PANEL_PCLK_BOOT_HZ)",
                       self.source())
         self.assertIn("static uint32_t pclk_awake=PANEL_PCLK_BOOT_HZ;", self.source())
         self.assertIn("panel_rgb=panel;", self.source())
+
+    def test_the_sleep_clock_is_one_the_panel_shows_right(self):
+        """4 MHz put the clock of the standby at twice its height, cut off
+        at the bottom of the screen. Nothing below 12 MHz was seen right."""
+        self.assertGreaterEqual(self.number("PANEL_PCLK_SLEEP_HZ"),
+                                self.number("PANEL_PCLK_BOOT_HZ"))
+        self.assertEqual(self.number("PANEL_PCLK_BOOT_HZ"), 12000000)
 
     def test_the_scroll_clock_comes_after_the_animation(self):
         over = re.search(r"void panel_display_boot_over\(void\)\s*\{(.*?)\n\}",

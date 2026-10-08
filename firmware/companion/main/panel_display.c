@@ -44,18 +44,36 @@ static bool is_asleep;
  * runs at 16 MHz. The scan-out takes a third more of PSRAM then, and the
  * card of the frames says what that costs the drawing.
  *
- * In a sleep the screen shows
- * the black cover and nothing else, and the board still scans it out at
- * the full rate: the bounce buffers are filled by an interrupt on the CPU,
- * which copies every frame out of PSRAM, and while it copies the clock of
- * the CPU runs at 240 MHz. Read off the board, the CPU spent only about
- * 55 % of a sleep at the low speed, at 12 MHz awake. 4 MHz is a third of
- * that clock and a quarter of 16 MHz, and so is the copying. The driver
- * takes a new pixel clock at the next VSYNC (lcd_rgb_panel_try_update_pclk),
- * so no change cuts a frame. */
+ * In a sleep the screen shows the cover and its clock, and the board
+ * still scans it out at the full rate: the bounce buffers are filled by
+ * an interrupt on the CPU, which copies every frame out of PSRAM, and
+ * while it copies the clock of the CPU runs at 240 MHz. Read off the
+ * board, the CPU spent only about 55 % of a sleep at the low speed, at
+ * 12 MHz awake.
+ *
+ * So the sleep ran at 4 MHz, a third of that copying. The panel does not
+ * show that clock right, and a black cover hid it until the cover had a
+ * clock on it. Read off the board from a photo: the time stood at about
+ * twice the height it was drawn at, cut off by the bottom edge, its
+ * colon twice as tall as it was wide, and the date was gone. Each line
+ * was on the screen twice, so the screen showed the top half of the
+ * frame at twice its height. A line at 4 MHz takes 130 us, four times
+ * the 32.5 us at 16 MHz, and the controller of the panel does not show
+ * lines that slow right. Where its limit is, its data sheet would say,
+ * and none was at hand. The wake set 16 MHz first, and the clock stood
+ * in its place for the moment before the page came back.
+ *
+ * 12 MHz is the lowest clock this panel was seen to show right: the
+ * startup animation plays at it, and it was the clock of an awake panel
+ * before 16. A line takes 43 us there. A sleep at 12 MHz copies three
+ * quarters of what an awake panel copies. Somebody who tries a lower one
+ * looks at the clock of the standby: the line period is what matters,
+ * and nothing on the board measures it. The driver takes a new pixel
+ * clock at the next VSYNC (lcd_rgb_panel_try_update_pclk), so no change
+ * cuts a frame. */
 #define PANEL_PCLK_BOOT_HZ   12000000
 #define PANEL_PCLK_HZ        16000000
-#define PANEL_PCLK_SLEEP_HZ   4000000
+#define PANEL_PCLK_SLEEP_HZ  12000000
 static esp_lcd_panel_handle_t panel_rgb;
 /* The clock of an awake panel: the one of the animation until it is over.
  * Read and written by the LVGL task alone. */
@@ -691,8 +709,8 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
          * late read. */
         panel_taps_break(&panel_taps);
         backlight_off();
-        /* After the cover is on the screen, so the slow frames are black
-         * ones. See PANEL_PCLK_SLEEP_HZ. */
+        /* After the cover is on the screen, so the slow frames show the
+         * cover. See PANEL_PCLK_SLEEP_HZ. */
         if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_SLEEP_HZ);
         ESP_LOGI("panel_display",
                  "Display asleep: backlight down to %d%%, which is as dark "

@@ -25,9 +25,12 @@
 //
 // The copies run at 80 MHz too, and they can still come late. The driver
 // counts the copies of each frame and starts the frame again at the next
-// VSYNC when one is missing (lcd_rgb_panel_try_restart_transmission). While
-// the display sleeps it shows black, and a black frame started again looks
-// the same. The clock is at full speed again before the display wakes.
+// VSYNC when one is missing (lcd_rgb_panel_try_restart_transmission). The
+// cover of a sleeping display carries a clock now, so a frame started again
+// would show on it, as a short jump of the clock; none has been seen yet. A
+// clock that stood at the wrong height in a sleep was the pixel clock and
+// not this: see PANEL_PCLK_SLEEP_HZ in panel_display.c. The clock is at
+// full speed again before the display wakes.
 //
 // How it works: esp_pm runs the CPU at the low speed when no lock asks for
 // more. One lock of ours asks for the full speed while the display is
