@@ -297,6 +297,54 @@ static void set_shown(lv_obj_t *o,bool shown)
     if(shown)lv_obj_remove_flag(o,LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);
 }
+/* The pages over the band slide in from the right when they open, and out
+ * to the right again when they close.
+ *
+ * Asked for: an animation for the pages of the settings, the controllers,
+ * the PC and the panel. The slide moves the page and changes no pixel of
+ * it, so a frame of it costs what a frame of the swipe of the band costs.
+ *
+ * For the rest of the screen a page opens and closes at once: its pointer
+ * is set when it opens and forgotten when it closes. Only the picture
+ * slides. main.c switches the slides on. The checks of the screen leave
+ * them off and get each page at once where it ends, and check_navigation
+ * switches them on to check the slides. */
+#define SLIDE_MS 200
+static bool slides;
+void panel_ui_slides(bool on){slides=on;}
+static void slide(lv_obj_t *page,int32_t from,int32_t to,lv_anim_path_cb_t path,bool then_delete)
+{
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a,page);
+    lv_anim_set_exec_cb(&a,(lv_anim_exec_xcb_t)lv_obj_set_x);
+    lv_anim_set_values(&a,from,to);
+    lv_anim_set_duration(&a,SLIDE_MS);
+    lv_anim_set_path_cb(&a,path);
+    if(then_delete)lv_anim_set_completed_cb(&a,lv_obj_delete_anim_completed_cb);
+    lv_anim_start(&a);
+}
+static void slide_in(lv_obj_t *page)
+{
+    if(slides&&page)slide(page,480,0,lv_anim_path_ease_out,false);
+}
+/* A page on its way out takes no press: everything on it is forgotten
+ * already, and a button on it would act on nothing. */
+static void inert(lv_obj_t *o)
+{
+    lv_obj_remove_flag(o,LV_OBJ_FLAG_CLICKABLE);
+    for(uint32_t i=0;i<lv_obj_get_child_count(o);i++)inert(lv_obj_get_child(o,i));
+}
+/* The page goes, and deletes itself at the end of its slide. A page that
+ * still slides in turns round where it is. */
+static void slide_out(lv_obj_t *page)
+{
+    if(!page)return;
+    if(!slides){lv_obj_delete(page);return;}
+    inert(page);
+    lv_anim_delete(page,NULL);
+    slide(page,lv_obj_get_style_x(page,LV_PART_MAIN),480,lv_anim_path_ease_in,true);
+}
 static lv_obj_t *panel(lv_obj_t *parent,int x,int y,int w,int h,uint32_t color,bool border)
 {
     lv_obj_t *o=lv_obj_create(parent);lv_obj_remove_style_all(o);
@@ -506,7 +554,7 @@ static void settings_forget(void)
 {
     /* The order of the pages stands on the settings, and goes with them. */
     arrange_forget();
-    if(settings_screen)lv_obj_delete(settings_screen);
+    slide_out(settings_screen);
     settings_drop();
 }
 static void language_clicked(lv_event_t *e)
@@ -604,7 +652,7 @@ static void arrange_drop(void)
 }
 static void arrange_forget(void)
 {
-    if(arrange_screen)lv_obj_delete(arrange_screen);
+    slide_out(arrange_screen);
     arrange_drop();
 }
 /* The page the band shows now, read from where the band stands: a swipe
@@ -710,6 +758,7 @@ void panel_ui_arrange_open(void)
 {
     if(arrange_screen||!settings_screen)return;
     arrange_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    slide_in(arrange_screen);
     button(arrange_screen,panel_text(TXT_BACK),12,8,112,44,arrange_close,0);
     text_at(arrange_screen,panel_text(TXT_PAGES_TITLE),136,20,320,&panel_font_20,TEXT);
     line(arrange_screen,0,62,480,1);
@@ -748,6 +797,7 @@ void panel_ui_settings_open(void)
     if(settings_screen)return;
     last_state_valid=false;
     settings_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    slide_in(settings_screen);
     button(settings_screen,panel_text(TXT_BACK),12,8,112,44,settings_close,0);
     text_at(settings_screen,panel_text(TXT_SETTINGS_TITLE),136,20,200,&panel_font_20,TEXT);
     // The name of the other language, written in that language. Somebody
@@ -950,7 +1000,7 @@ static void pads_drop(void)
 }
 static void pads_forget(void)
 {
-    if(pads_screen)lv_obj_delete(pads_screen);
+    slide_out(pads_screen);
     pads_drop();
 }
 static void pads_show(const panel_state_t *s)
@@ -987,6 +1037,7 @@ void panel_ui_pads_open(void)
 {
     if(pads_screen||pc_screen||self_screen||settings_screen||setup_screen)return;
     pads_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    slide_in(pads_screen);
     button(pads_screen,panel_text(TXT_BACK),12,8,112,44,pads_close,0);
     text_at(pads_screen,panel_text(TXT_CONTROLLERS),136,20,200,&panel_font_20,TEXT);
     line(pads_screen,0,62,480,1);
@@ -1038,7 +1089,7 @@ static void pc_drop(void)
 }
 static void pc_forget(void)
 {
-    if(pc_screen)lv_obj_delete(pc_screen);
+    slide_out(pc_screen);
     pc_drop();
 }
 static void pc_say(int row,const char *text)
@@ -1113,6 +1164,7 @@ void panel_ui_pc_open(void)
 {
     if(pc_screen||pads_screen||self_screen||settings_screen||setup_screen)return;
     pc_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    slide_in(pc_screen);
     button(pc_screen,panel_text(TXT_BACK),12,8,112,44,pc_close,0);
     text_at(pc_screen,panel_text(TXT_PC_DETAILS),136,20,320,&panel_font_20,TEXT);
     line(pc_screen,0,62,480,1);
@@ -1448,7 +1500,7 @@ static void self_drop(void)
 }
 static void self_forget(void)
 {
-    if(self_screen)lv_obj_delete(self_screen);
+    slide_out(self_screen);
     self_drop();
 }
 static void self_say(int row,const char *text)
@@ -1635,6 +1687,7 @@ void panel_ui_self_open(void)
     if(self_screen||pc_screen||pads_screen||settings_screen||setup_screen||sensor_layer||look_layer
        ||alarm_clock_layer)return;
     self_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    slide_in(self_screen);
     button(self_screen,panel_text(TXT_BACK),12,8,112,44,self_close,0);
     text_at(self_screen,panel_text(TXT_SELF_TITLE),136,20,320,&panel_font_20,TEXT);
     line(self_screen,0,62,480,1);

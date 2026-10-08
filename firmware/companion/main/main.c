@@ -1676,6 +1676,7 @@ void app_main(void)
     else ESP_LOGW("panel_history","No PSRAM for the history; the page shows no curves");
     panel_ui_history_use(history);
     bsp_display_lock(0);
+    panel_ui_slides(true);
     panel_ui_create(action_send,setting_set,sound_send,&settings);
     panel_ui_led_use(led_change);
     panel_ui_cpu_use(cpu_change);

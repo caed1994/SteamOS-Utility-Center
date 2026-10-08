@@ -291,6 +291,9 @@ typedef struct { int brightness, sound_volume; bool touch_tones;
 typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);
 void panel_ui_create(panel_action_cb_t callback, panel_setting_cb_t setting_cb, panel_sound_cb_t sound_cb, const panel_settings_t *settings);
+/* The pages over the band slide in and out when this is on. Off, which is
+ * how the checks of the screen run, each page opens and closes at once. */
+void panel_ui_slides(bool on);
 /* A change of the page of the LED bar: the new effects, colour and
  * brightness, as panel_led.h says. main.c sends it to the PC, and the
  * answer comes back in led_replies and led_code. */

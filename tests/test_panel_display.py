@@ -685,6 +685,55 @@ class TouchZoneTest(unittest.TestCase):
         self.assertIn("./preview-build/check_touch", workflow)
 
 
+class PageSlideTest(unittest.TestCase):
+    """The pages over the band slide in from the right and out again.
+
+    Asked for: an animation for the pages of the settings, the controllers,
+    the PC and the panel, when they open and when they close. Only the
+    picture slides: for the rest of the screen each page opens and closes
+    at once. check_navigation drives the slides; these hold that every page
+    has one and that the panel switches them on.
+    """
+
+    PAGES = ("settings_screen", "arrange_screen", "pads_screen", "pc_screen",
+             "self_screen")
+
+    def code(self, name):
+        with open(os.path.join(FIRMWARE, name), encoding="utf-8") as handle:
+            return without_comments(handle.read())
+
+    def test_each_page_slides_in_where_it_is_made(self):
+        code = self.code("ui.c")
+        for page in self.PAGES:
+            self.assertIn("%s=panel(lv_screen_active(),0,0,480,480,BG,false);\n"
+                          "    slide_in(%s);" % (page, page), code)
+
+    def test_each_page_slides_out_where_it_is_forgotten(self):
+        code = self.code("ui.c")
+        for page in self.PAGES:
+            self.assertIn("slide_out(%s);" % page, code)
+            self.assertNotIn("lv_obj_delete(%s)" % page, code)
+
+    def test_the_slide_is_short_and_the_page_deletes_itself(self):
+        code = self.code("ui.c")
+        slide_ms = re.search(r"#define SLIDE_MS (\d+)", code)
+        self.assertIsNotNone(slide_ms)
+        self.assertLessEqual(int(slide_ms.group(1)), 250)
+        self.assertIn("lv_obj_delete_anim_completed_cb", code)
+
+    def test_the_panel_switches_the_slides_on(self):
+        code = self.code("main.c")
+        self.assertLess(code.index("panel_ui_slides(true);"),
+                        code.index("panel_ui_create(action_send,"))
+
+    def test_the_check_drives_them(self):
+        with open(os.path.join(REPO, "firmware", "companion", "preview",
+                               "check_navigation.c"), encoding="utf-8") as handle:
+            check = without_comments(handle.read())
+        self.assertIn("panel_ui_slides(true);", check)
+        self.assertIn("slides();", check)
+
+
 class DrawingStackTest(unittest.TestCase):
     """The stack of the task that draws.
 
