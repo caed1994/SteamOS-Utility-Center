@@ -650,6 +650,41 @@ class SliderDragTest(unittest.TestCase):
         self.assertIn("assert(invalidations==0);", loop)
 
 
+class TouchZoneTest(unittest.TestCase):
+    """The place that takes each tap, 48 px each way.
+
+    Reported from the board: taps that did not land on some places. The hit
+    test of LVGL over every screen found zones of 28 to 46 px, most of them
+    the 44 of a button with no room past its edge. check_touch walks every
+    screen with that hit test and holds the size. These hold that the check
+    runs, and the rule that most of the buttons take their room from.
+    """
+
+    def read(self, *parts):
+        with open(os.path.join(REPO, *parts), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_every_button_takes_a_press_past_its_edge(self):
+        code = without_comments(self.read("firmware", "companion", "main", "ui.c"))
+        reach = re.search(r"#define BUTTON_REACH (\d+)", code)
+        self.assertIsNotNone(reach)
+        # 44 high, the height of most of them, and 48 with the room.
+        self.assertGreaterEqual(44 + 2 * int(reach.group(1)), 48)
+        button = re.search(r"static lv_obj_t \*button\(.*?\n\}", code, re.S).group(0)
+        self.assertIn("lv_obj_set_ext_click_area(b,BUTTON_REACH);", button)
+
+    def test_the_check_holds_48_and_runs_in_the_build(self):
+        check = self.read("firmware", "companion", "preview", "check_touch.c")
+        self.assertIn("#define ZONE 48", check)
+        self.assertIn("#define EDGE_ZONE 44", check)
+        self.assertIn("lv_indev_search_obj(", check)
+        cmake = self.read("firmware", "companion", "preview", "CMakeLists.txt")
+        self.assertIn("add_executable(check_touch check_touch.c ${PANEL_UI_SOURCES})", cmake)
+        with open(WORKFLOW, encoding="utf-8") as handle:
+            workflow = handle.read()
+        self.assertIn("./preview-build/check_touch", workflow)
+
+
 class DrawingStackTest(unittest.TestCase):
     """The stack of the task that draws.
 

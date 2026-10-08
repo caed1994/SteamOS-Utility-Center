@@ -153,7 +153,7 @@ jobs:
           cmake -S firmware/companion/preview -B preview-build \
                 -DCMAKE_BUILD_TYPE=Debug
           cmake --build preview-build --target check_power check_idle \
-                check_navigation check_boot check_wol check_pages \
+                check_navigation check_boot check_wol check_pages check_touch \
                 panel_preview -j"$(nproc)"
           ./preview-build/check_power
           # check_wol needs no LVGL. It is here because this is where the
@@ -165,6 +165,9 @@ jobs:
           # three seconds and a little more.
           ./preview-build/check_boot
           ./preview-build/check_pages
+          # check_touch walks every screen with the hit test of LVGL and
+          # holds the size of the place that takes each tap.
+          ./preview-build/check_touch
           # panel_preview draws the screen into a file. It answers nothing,
           # and building and running it is the point: it went stale twice
           # while nothing built it. tests/test_preview_checks.py holds that

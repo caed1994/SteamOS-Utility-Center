@@ -89,7 +89,7 @@ PC for its status over Wi-Fi and has no cable to the PC in normal use.
 | Upper key (PWR) | EXIO4 through a BSS138, high while pressed. A short press toggles the standby |
 | Lower key (BOOT) | GPIO0, low while pressed. A short press opens the start page |
 | Keys | one task, every 15 ms; settle 20 ms; short press 40 to 1000 ms (`panel_key.c`, `panel_power.c`) |
-| Touch | GT911, read by LVGL every 15 ms; its INT line (EXIO6) is not used |
+| Touch | GT911, read by LVGL every 15 ms; its INT line (EXIO6) is not used. Each place that takes a tap is 48 px each way, 44 at the edge of the screen (`BUTTON_REACH`, `check_touch`) |
 | Standby | a black cover with a clock (`panel_ui_sleep.c`), one draw a minute. The key standby turns Wi-Fi off |
 | Alarm clock | one alarm on the clock page (`panel_alarm.c`, NVS key `alarm`): weekdays or one time, snooze 5 min, rings 5 min. Both keys snooze, Off by touch only. The cover shows the next ring |
 | Settings | NVS namespace `panel`: Wi-Fi, server, token, page order, theme, accent, language and more |
@@ -124,7 +124,7 @@ Facts about LVGL that cost time:
 | One module | `python3.12 -m pytest -q tests/test_<name>.py` |
 | Full suite (about 3650 tests, 9 min) | `xvfb-run -a python3.12 -m pytest -q -p no:cacheprovider` |
 | Prose check, must report 0 | `python3 tools/ste-check.py --quiet` |
-| Screen checks | `cmake -S firmware/companion/preview -B <dir>`, then build and run `check_power check_idle check_navigation check_boot check_wol check_pages` |
+| Screen checks | `cmake -S firmware/companion/preview -B <dir>`, then build and run `check_power check_idle check_navigation check_boot check_wol check_pages check_touch` |
 | Draw a screen to a file | `<dir>/panel_preview out.ppm <mode> [de]` (modes in `preview.c`) |
 | LED client parser | `./tests/firmware/run.sh` (needs g++) |
 

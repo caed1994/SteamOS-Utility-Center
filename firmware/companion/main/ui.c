@@ -124,6 +124,10 @@ static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
 #define BOOST_TRACK_HEIGHT 20
 #define BOOST_KNOB_OFF 2
 #define BOOST_KNOB_ON (BOOST_TRACK_WIDTH-BOOST_TRACK_HEIGHT+2)
+/* The row is 30 high and stands 3 above the foot of its card, which stops
+ * a press below that. So the room past its edges is above it: 15 there
+ * and 3 below are 48. */
+#define BOOST_REACH 15
 #define CHART_X 52
 #define CHART_Y 66
 #define CHART_WIDTH 356
@@ -317,6 +321,13 @@ static lv_obj_t *knob_in(lv_obj_t *track,int x,int y,int size)
     lv_obj_remove_flag(o,LV_OBJ_FLAG_CLICKABLE);
     return o;
 }
+/* The room past its edge where a button still takes a press.
+ *
+ * A press needs 48 px each way, about 7 mm on this screen, to land without
+ * aim. Most buttons here are 44 px high, and 2 px on each side takes them
+ * to 48. Two buttons stand 4 px apart or more, so the rooms of two meet and
+ * do not overlap. tests/test_panel_display.py and check_touch hold this. */
+#define BUTTON_REACH 2
 static lv_obj_t *button(lv_obj_t *parent,const char *caption,int x,int y,int w,int h,lv_event_cb_t cb,intptr_t data)
 {
     lv_obj_t *b=lv_button_create(parent);lv_obj_set_pos(b,x,y);lv_obj_set_size(b,w,h);
@@ -326,6 +337,7 @@ static lv_obj_t *button(lv_obj_t *parent,const char *caption,int x,int y,int w,i
     lv_obj_set_style_shadow_width(b,0,0);lv_obj_set_style_pad_all(b,0,0);
     lv_obj_set_style_opa(b,LV_OPA_40,LV_STATE_DISABLED);
     if(caption[0]){lv_obj_t *l=lv_label_create(b);lv_label_set_text(l,caption);lv_obj_center(l);}
+    lv_obj_set_ext_click_area(b,BUTTON_REACH);
     lv_obj_add_event_cb(b,cb,LV_EVENT_CLICKED,(void *)data);return b;
 }
 static void confirmation(lv_event_t *e)
@@ -425,7 +437,7 @@ static lv_obj_t *slider_with(lv_obj_t *parent,int x,int y,int minimum,int maximu
     lv_obj_set_style_bg_color(slider,lv_color_hex(EDGE),LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider,lv_color_hex(ACCENT),LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider,lv_color_hex(palette.slider_knob),LV_PART_KNOB);
-    lv_obj_set_style_pad_all(slider,7,LV_PART_KNOB);lv_obj_set_ext_click_area(slider,18);
+    lv_obj_set_style_pad_all(slider,7,LV_PART_KNOB);lv_obj_set_ext_click_area(slider,20);
     lv_obj_add_event_cb(slider,cb,LV_EVENT_VALUE_CHANGED,(void *)data);
     lv_obj_add_event_cb(slider,cb,LV_EVENT_RELEASED,(void *)data);
     return slider;
@@ -443,7 +455,8 @@ static lv_obj_t *switch_at(lv_obj_t *parent,int x,int y,bool on,lv_event_cb_t cb
     lv_obj_set_style_bg_color(sw,lv_color_hex(KNOB),LV_PART_KNOB);
     lv_obj_set_style_border_width(sw,KNOB_RIM,LV_PART_KNOB);
     lv_obj_set_style_border_color(sw,lv_color_hex(KNOB_EDGE),LV_PART_KNOB);
-    lv_obj_set_ext_click_area(sw,8);
+    /* 30 high, and 9 on each side is 48. */
+    lv_obj_set_ext_click_area(sw,9);
     if(on)lv_obj_add_state(sw,LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw,cb,LV_EVENT_VALUE_CHANGED,NULL);
     return sw;
@@ -1404,6 +1417,9 @@ static lv_obj_t *sensor_field(lv_obj_t *card,int x,int w,lv_event_cb_t cb)
     lv_obj_t *f=lv_obj_create(card);lv_obj_remove_style_all(f);
     lv_obj_set_pos(f,x,0);lv_obj_set_size(f,w,46);
     lv_obj_remove_flag(f,LV_OBJ_FLAG_SCROLLABLE);
+    /* 46 inside the border of its card, and the border takes the press
+     * too: 48. */
+    lv_obj_set_ext_click_area(f,1);
     lv_obj_set_style_radius(f,5,0);
     lv_obj_set_style_bg_color(f,lv_color_hex(BUTTON),LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(f,LV_OPA_COVER,LV_STATE_PRESSED);
@@ -2189,6 +2205,7 @@ static void cpu_page(lv_obj_t *page)
     cpu_buttons[PANEL_CPU_STEAMOS]=button(card,panel_text(TXT_CPU_STEAMOS),14,120,430,40,
                                           cpu_clicked,PANEL_CPU_STEAMOS);
     lv_obj_set_style_text_font(cpu_buttons[PANEL_CPU_STEAMOS],&panel_font_14,0);
+    lv_obj_set_ext_click_area(cpu_buttons[PANEL_CPU_STEAMOS],4);
     for(int p=0;p<PANEL_CPU_PROFILES;p++){cpu_lit[p]=-1;enable(cpu_buttons[p],false);}
     lv_obj_t *now=panel(page,10,180,460,120,CARD,true);
     text_at(now,panel_text(TXT_CPU_RUNNING),16,12,300,&panel_font_14,MUTED);
@@ -2221,6 +2238,7 @@ static void led_card(lv_obj_t *page,panel_led_mode_t m,int y)
     /* Hidden until a scene that uses it. look_button_show sets what it holds,
      * and where. */
     look_button=button(card,"",14,108,430,36,look_clicked,0);
+    lv_obj_set_ext_click_area(look_button,6);
     lv_obj_add_flag(look_button,LV_OBJ_FLAG_HIDDEN);
     look_dot=panel(look_button,0,(36-2-LOOK_DOT)/2,LOOK_DOT,LOOK_DOT,TEXT,false);
     lv_obj_set_style_radius(look_dot,LV_RADIUS_CIRCLE,0);
@@ -2931,6 +2949,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_set_style_bg_opa(boost_field,LV_OPA_COVER,LV_STATE_PRESSED);
     lv_obj_set_style_opa(boost_field,LV_OPA_40,LV_STATE_DISABLED);
     lv_obj_add_event_cb(boost_field,boost_clicked,LV_EVENT_CLICKED,NULL);
+    lv_obj_set_ext_click_area(boost_field,BOOST_REACH);
     lv_obj_t *boost_name=text_at(boost_field,panel_text(TXT_GPU_BOOST),6,
                                  (BOOST_HEIGHT-lv_font_get_line_height(&panel_font_12))/2,
                                  gpu_room[2]-BOOST_TRACK_WIDTH-4,&panel_font_12,MUTED);
@@ -2943,11 +2962,20 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     boost_knob=knob_in(boost_track,BOOST_KNOB_OFF,2,BOOST_TRACK_HEIGHT-4);
     lv_obj_add_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *history_card=panel(page[4],10,106,460,194,CARD,true);
+    /* The three windows in the top right corner, over the legend. Each is
+     * 38 high and takes a press 5 past its edge: 48 each way. They stand
+     * twice that apart, so no press is between two and none is on both. */
+    enum{HISTORY_BUTTON_REACH=5,HISTORY_BUTTON_WIDTH=76,HISTORY_BUTTON_HEIGHT=38,HISTORY_BUTTON_Y=6,
+         HISTORY_BUTTON_X=460-14-HISTORY_WINDOWS*HISTORY_BUTTON_WIDTH-(HISTORY_WINDOWS-1)*2*HISTORY_BUTTON_REACH};
     text_at(history_card,panel_text(TXT_HISTORY),16,14,120,&panel_font_14,MUTED);
     for(int i=0;i<HISTORY_WINDOWS;i++){
         char caption[16];
         snprintf(caption,sizeof caption,"%d %s",history_windows[i],panel_text(TXT_MINUTES));
-        history_buttons[i]=button(history_card,caption,252+i*66,8,62,32,history_window_clicked,history_windows[i]);
+        history_buttons[i]=button(history_card,caption,
+                                  HISTORY_BUTTON_X+i*(HISTORY_BUTTON_WIDTH+2*HISTORY_BUTTON_REACH),
+                                  HISTORY_BUTTON_Y,HISTORY_BUTTON_WIDTH,HISTORY_BUTTON_HEIGHT,
+                                  history_window_clicked,history_windows[i]);
+        lv_obj_set_ext_click_area(history_buttons[i],HISTORY_BUTTON_REACH);
         lv_obj_set_style_text_font(history_buttons[i],&panel_font_14,0);
     }
     /* The legend, one dot and one name for each curve. */
@@ -3060,6 +3088,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_set_style_bg_opa(status,LV_OPA_40,LV_STATE_PRESSED);
     lv_obj_set_style_radius(status,6,0);
     lv_obj_add_event_cb(status,self_clicked,LV_EVENT_CLICKED,NULL);
+    lv_obj_set_ext_click_area(status,BUTTON_REACH);
     lv_obj_set_flex_flow(status,LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(status,LV_FLEX_ALIGN_END,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(status,10,0);

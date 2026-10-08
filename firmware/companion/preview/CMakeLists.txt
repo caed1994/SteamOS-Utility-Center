@@ -69,6 +69,12 @@ add_executable(check_pages check_pages.c ${PANEL_UI_SOURCES})
 target_include_directories(check_pages PRIVATE ../main)
 target_link_libraries(check_pages PRIVATE lvgl m)
 target_compile_options(check_pages PRIVATE -UNDEBUG)
+# check_touch walks every screen with the hit test of LVGL and holds the
+# size of the place that takes each tap. See check_touch.c.
+add_executable(check_touch check_touch.c ${PANEL_UI_SOURCES})
+target_include_directories(check_touch PRIVATE ../main)
+target_link_libraries(check_touch PRIVATE lvgl m)
+target_compile_options(check_touch PRIVATE -UNDEBUG)
 add_executable(check_boot check_boot.c ../main/panel_boot.c)
 target_include_directories(check_boot PRIVATE ../main)
 target_link_libraries(check_boot PRIVATE lvgl m)
