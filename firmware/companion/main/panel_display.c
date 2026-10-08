@@ -673,6 +673,11 @@ bool panel_display_touched(void)
            && count>0;
 }
 
+void panel_display_sleep_clock(const char *time,const char *date)
+{
+    if(panel_screen)panel_ui_sleep_clock(panel_screen,time,date);
+}
+
 esp_err_t panel_display_standby(bool sleep,int brightness)
 {
     if(!panel_screen || !panel_input)return ESP_ERR_INVALID_STATE;

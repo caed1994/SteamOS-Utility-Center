@@ -303,6 +303,29 @@ static void watch_stack(void)
     }
 }
 
+/* The clock on the black cover of a sleeping display: the time, and the
+ * day and the date under it.
+ *
+ * Asked at every tick of a sleep, five times a second, and it answers at
+ * once for a minute it has shown: one division and one comparison. A new
+ * minute, or a sleep that begins, writes the two lines, and only a line
+ * that changed is drawn. A clock that nobody has set shows nothing: the
+ * cover stays black, as before there was a clock. */
+static void standby_clock(bool now)
+{
+    static time_t shown=-1;
+    time_t minute=time(NULL)/60;
+    if(!now && minute==shown)return;
+    shown=minute;
+    struct tm at;
+    char hours[8]="",date[64]="";
+    if(panel_time_now(&at)){
+        snprintf(hours,sizeof hours,"%02d:%02d",at.tm_hour,at.tm_min);
+        panel_text_date(date,sizeof date,at.tm_wday,at.tm_mday,at.tm_mon+1);
+    }
+    panel_display_sleep_clock(hours,date);
+}
+
 /* Put the display down or bring it back, and remember why.
  *
  * One door for the button and for the timeout, so that the state, the
@@ -316,6 +339,8 @@ static void display_sleeping(bool sleep,bool by_hand)
      * frame is drawn at it. Low only once the display is down, and back
      * low when it did not come up. See panel_clock.c. */
     if(!sleep)panel_clock_low(false);
+    /* The clock is on the cover before the cover is drawn. */
+    if(sleep)standby_clock(true);
     esp_err_t err=panel_display_standby(sleep,display_brightness);
     if(err!=ESP_OK){
         ESP_LOGW("panel_power","Standby change failed: %s",esp_err_to_name(err));
@@ -431,6 +456,7 @@ static void ui_tick(lv_timer_t *timer)
      * PC is still asked. So a dark display copies the state once for each
      * step of it, and not at every tick. */
     bool due=history&&panel_history_due(history,now_ms);
+    if(atomic_load(&display_asleep))standby_clock(false);
     if(atomic_load(&display_asleep)&&!due)return;
     /* The frames in movement, counted in this task by the events of the
      * display, for the health line of the network task. See

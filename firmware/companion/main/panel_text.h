@@ -17,6 +17,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 
 // name, English, German
 #define PANEL_TEXTS(X) \
@@ -348,3 +349,9 @@ panel_language_t panel_text_language(void);
 // The name of a language, in that language. A person who cannot read the
 // current one still finds their own in the list.
 const char *panel_language_name(panel_language_t language);
+
+// The day and the date, as the clock page and the standby screen say them:
+// "Thursday, 8 October", "Donnerstag, 8. Oktober". The weekday counts from
+// Sunday at 0, as struct tm does, and the month from January at 1. Empty
+// for a weekday, a day or a month out of range. Always ends inside room.
+void panel_text_date(char *out, size_t room, int weekday, int day, int month);

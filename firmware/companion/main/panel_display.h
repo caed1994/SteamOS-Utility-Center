@@ -15,6 +15,11 @@ size_t panel_display_stack_bytes(void);
 /* Caller must hold the LVGL lock. Network and RGB timing continue running. */
 esp_err_t panel_display_standby(bool sleep, int brightness);
 
+/* The clock that the black cover of a sleeping panel shows: the time, and
+ * the day and the date under it. Empty texts for no clock. Same lock. See
+ * panel_ui_sleep_clock. */
+void panel_display_sleep_clock(const char *time, const char *date);
+
 /* Whether a finger is on the glass of a sleeping panel.
  *
  * false while the panel is awake, because LVGL reads the same controller

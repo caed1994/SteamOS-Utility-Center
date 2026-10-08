@@ -4,6 +4,7 @@
 #include <string.h>
 #include "lvgl.h"
 #include "ui.h"
+#include "panel_ui_sleep.h"
 #include "panel_frames.h"
 #include "panel_taps.h"
 static uint8_t pixels[480*480*4];
@@ -340,6 +341,17 @@ int main(int argc,char **argv)
         lv_obj_t *page=lv_obj_get_child(lv_screen_active(),-1);
         lv_obj_update_layout(page);
         lv_obj_scroll_to_y(page,LV_COORD_MAX,LV_ANIM_OFF);
+    }
+    /* "standby" is the black cover of a sleeping panel with its clock, as
+     * main.c writes it: the time, and the day and the date under it. */
+    if(argc>2&&strcmp(argv[2],"standby")==0){
+        lv_indev_t *input=lv_indev_create();
+        lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);
+        lv_indev_set_display(input,d);
+        char date[64];
+        panel_text_date(date,sizeof date,4,8,10);
+        panel_ui_sleep_clock(d,"21:47",date);
+        panel_ui_sleep(d,input,true);
     }
     lv_refr_now(d);
     FILE *f=fopen(argc>1?argv[1]:"preview.ppm","wb");if(!f)return 1;

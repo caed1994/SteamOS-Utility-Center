@@ -55,7 +55,8 @@ target_include_directories(check_idle PRIVATE ../main)
 target_link_libraries(check_idle PRIVATE lvgl m)
 target_compile_options(check_idle PRIVATE -UNDEBUG)
 add_executable(check_power check_power.c ../main/panel_key.c
-                           ../main/panel_ui_sleep.c)
+                           ../main/panel_ui_sleep.c ../main/panel_clock_font.c
+                           ../main/panel_font_24.c)
 target_include_directories(check_power PRIVATE ../main)
 target_link_libraries(check_power PRIVATE lvgl m)
 target_compile_options(check_power PRIVATE -UNDEBUG)

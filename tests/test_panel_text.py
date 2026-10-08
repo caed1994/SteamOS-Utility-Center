@@ -78,8 +78,9 @@ class PanelTextTest(unittest.TestCase):
         said = subprocess.run([program], capture_output=True, text=True,
                               timeout=10)
         assert said.returncode == 0, said.stderr
-        cls.rows = [line.split("\t", 2) for line in
-                    said.stdout.splitlines() if line.count("\t") >= 2]
+        cls.lines = said.stdout.splitlines()
+        cls.rows = [line.split("\t", 2) for line in cls.lines
+                    if line.count("\t") >= 2 and not line.startswith("date\t")]
 
     @classmethod
     def tearDownClass(cls):
@@ -139,6 +140,47 @@ class PanelTextTest(unittest.TestCase):
     def test_each_language_gives_its_own_name(self):
         names = {row[1]: row[2] for row in self.rows if row[0] == "name"}
         self.assertEqual(names, {"0": "English", "1": "Deutsch"})
+
+    def dates(self):
+        """(language, weekday, day, month, room) to what panel_text_date
+        wrote."""
+        found = {}
+        for line in self.lines:
+            parts = line.split("\t")
+            if parts[0] == "date":
+                key = tuple(int(part) for part in parts[1:6])
+                found[key] = parts[6] if len(parts) > 6 else ""
+        return found
+
+    def test_the_date_reads_as_the_clock_says_it(self):
+        """The clock page and the standby screen say it this way."""
+        dates = self.dates()
+        self.assertEqual(dates[(0, 4, 8, 10, 64)], "Thursday, 8 October")
+        self.assertEqual(dates[(1, 4, 8, 10, 64)], "Donnerstag, 8. Oktober")
+        self.assertEqual(dates[(1, 1, 3, 3, 64)], "Montag, 3. März")
+
+    def test_the_ends_of_each_range_are_dates(self):
+        """Sunday is 0 and January 1, as struct tm counts them."""
+        dates = self.dates()
+        self.assertEqual(dates[(0, 0, 1, 1, 64)], "Sunday, 1 January")
+        self.assertEqual(dates[(0, 6, 31, 12, 64)], "Saturday, 31 December")
+        self.assertEqual(dates[(1, 6, 31, 12, 64)], "Samstag, 31. Dezember")
+
+    def test_a_value_out_of_range_is_no_date(self):
+        """An empty line rather than the name next to the table."""
+        dates = self.dates()
+        for language in (0, 1):
+            for weekday, day, month in ((-1, 8, 10), (7, 8, 10), (4, 0, 10),
+                                        (4, 32, 10), (4, 8, 0), (4, 8, 13)):
+                with self.subTest(language=language, weekday=weekday,
+                                  day=day, month=month):
+                    self.assertEqual(
+                        dates[(language, weekday, day, month, 64)], "")
+
+    def test_the_date_ends_inside_its_room(self):
+        dates = self.dates()
+        self.assertEqual(dates[(0, 4, 8, 10, 9)], "Thursday")
+        self.assertEqual(dates[(0, 4, 8, 10, 1)], "")
 
     def test_the_two_languages_are_really_different(self):
         """Or the German column is the English one copied across."""

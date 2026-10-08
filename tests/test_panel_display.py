@@ -267,6 +267,90 @@ class SleepingScreenTest(unittest.TestCase):
             self.assertIn(one, cmake, one)
 
 
+class StandbyClockTest(unittest.TestCase):
+    """The clock on the black cover of a sleeping panel.
+
+    It has to cost a sleep almost nothing. A tick of a sleep asks for it
+    five times a second, and a minute it has shown is answered at once. A
+    new minute draws the line that changed and nothing else, and the
+    sleeping display takes no invalidation after that. check_power counts
+    the draws and the areas, and these hold the order of the calls.
+    """
+
+    def source(self, name):
+        with open(os.path.join(FIRMWARE, name)) as handle:
+            return without_comments(handle.read())
+
+    def function(self, text, head):
+        start = text.index(head)
+        return text[start:text.index("\n}", start)]
+
+    def test_a_minute_it_has_shown_costs_a_comparison(self):
+        body = self.function(self.source("main.c"),
+                             "static void standby_clock(")
+        self.assertIn("time(NULL)/60", body)
+        self.assertLess(body.index("minute==shown)return;"),
+                        body.index("panel_time_now("))
+
+    def test_the_clock_is_on_the_cover_before_the_cover_is_drawn(self):
+        body = self.function(self.source("main.c"),
+                             "static void display_sleeping(")
+        self.assertLess(body.index("if(sleep)standby_clock(true);"),
+                        body.index("panel_display_standby("))
+
+    def test_each_tick_of_a_sleep_asks_for_it(self):
+        body = self.function(self.source("main.c"), "static void ui_tick(")
+        ask = body.index("if(atomic_load(&display_asleep))standby_clock(false);")
+        self.assertLess(ask, body.index(
+            "if(atomic_load(&display_asleep)&&!due)return;"))
+
+    def test_the_same_text_draws_nothing(self):
+        body = self.function(self.source("panel_ui_sleep.c"),
+                             "void panel_ui_sleep_clock(")
+        same = body.index("strcmp(lv_label_get_text(cover_date), date) == 0) return;")
+        self.assertLess(same, body.index("lv_display_enable_invalidation"))
+
+    def test_a_sleeping_display_gets_its_invalidation_back(self):
+        """On for the change, and off again after the one draw."""
+        body = self.function(self.source("panel_ui_sleep.c"),
+                             "void panel_ui_sleep_clock(")
+        on = body.index("if (sleeping) lv_display_enable_invalidation(screen, true);")
+        draw = body.index("lv_refr_now(screen);")
+        off = body.index("lv_display_enable_invalidation(screen, false);")
+        self.assertLess(on, draw)
+        self.assertLess(draw, off)
+
+    def test_a_second_call_the_same_way_does_nothing(self):
+        """LVGL counts each switch of the invalidation, so a second wake
+        would leave the next sleep with it on."""
+        body = self.function(self.source("panel_ui_sleep.c"),
+                             "void panel_ui_sleep(")
+        self.assertLess(body.index("if(sleep==sleeping)return;"),
+                        body.index("lv_display_enable_invalidation"))
+
+    def test_it_holds_no_font_of_its_own(self):
+        """The font of the clock page and one of the band: nothing new in
+        flash."""
+        text = self.source("panel_ui_sleep.c")
+        self.assertIn("&panel_clock_font", text)
+        self.assertIn("&panel_font_24", text)
+        with open(os.path.join(REPO, "firmware", "companion", "preview",
+                               "CMakeLists.txt")) as handle:
+            cmake = handle.read()
+        start = cmake.index("add_executable(check_power")
+        target = cmake[start:cmake.index(")", start)]
+        for one in ("panel_ui_sleep.c", "panel_clock_font.c", "panel_font_24.c"):
+            self.assertIn(one, target)
+
+    def test_the_check_counts_what_it_draws(self):
+        with open(os.path.join(REPO, "firmware", "companion", "preview",
+                               "check_power.c")) as handle:
+            check = without_comments(handle.read())
+        self.assertIn("panel_ui_sleep_clock(screen,", check)
+        self.assertIn("LV_EVENT_INVALIDATE_AREA", check)
+        self.assertIn("LV_DISPLAY_RENDER_MODE_PARTIAL", check)
+
+
 class WhiteFlashTest(unittest.TestCase):
     """The flash of white the board showed before the startup animation.
 

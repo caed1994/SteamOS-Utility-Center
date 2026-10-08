@@ -7,8 +7,12 @@
 //
 // One line for each: language, id, and the text with its newlines written
 // out, because a text of several lines is still one line here.
+//
+// Then the day and the date of panel_text_date: "date", language, weekday,
+// day, month, room, and what it wrote. One line for each case below.
 
 #include <stdio.h>
+#include <string.h>
 
 #include "panel_text.h"
 
@@ -31,6 +35,25 @@ int main(void)
         for (int id = 0; id < TXT_COUNT; id++) {
             printf("%d\t%d\t", language, id);
             print_escaped(panel_text((panel_text_id_t)id));
+            putchar('\n');
+        }
+    }
+    // The day and the date, in each language: an ordinary one, the two
+    // ends of each range, each value just past them, and a room too small.
+    static const int dates[][4] = {
+        {4, 8, 10, 64}, {0, 1, 1, 64}, {6, 31, 12, 64}, {1, 3, 3, 64},
+        {-1, 8, 10, 64}, {7, 8, 10, 64}, {4, 0, 10, 64}, {4, 32, 10, 64},
+        {4, 8, 0, 64}, {4, 8, 13, 64}, {4, 8, 10, 9}, {4, 8, 10, 1},
+    };
+    for (int language = 0; language < PANEL_LANGUAGE_COUNT; language++) {
+        panel_text_set((panel_language_t)language);
+        for (size_t i = 0; i < sizeof dates / sizeof dates[0]; i++) {
+            char out[64];
+            memset(out, 'x', sizeof out);
+            panel_text_date(out, (size_t)dates[i][3], dates[i][0], dates[i][1], dates[i][2]);
+            printf("date\t%d\t%d\t%d\t%d\t%d\t", language, dates[i][0], dates[i][1],
+                   dates[i][2], dates[i][3]);
+            print_escaped(out);
             putchar('\n');
         }
     }

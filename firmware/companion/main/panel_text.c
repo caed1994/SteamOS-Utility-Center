@@ -3,6 +3,8 @@
 
 #include "panel_text.h"
 
+#include <stdio.h>
+
 #define PANEL_TEXT_AS_ENGLISH(name, english, german) english,
 #define PANEL_TEXT_AS_GERMAN(name, english, german) german,
 
@@ -48,4 +50,14 @@ const char *panel_language_name(panel_language_t language)
 {
     if (language < 0 || language >= PANEL_LANGUAGE_COUNT) return "";
     return NAMES[language];
+}
+
+void panel_text_date(char *out, size_t room, int weekday, int day, int month)
+{
+    if (!out || room == 0) return;
+    out[0] = 0;
+    if (weekday < 0 || weekday > 6 || day < 1 || day > 31 || month < 1 || month > 12) return;
+    snprintf(out, room, panel_text(TXT_DATE_FORMAT),
+             panel_text((panel_text_id_t)(TXT_SUNDAY + weekday)), day,
+             panel_text((panel_text_id_t)(TXT_JANUARY + month - 1)));
 }

@@ -2805,9 +2805,7 @@ void panel_ui_update(const panel_state_t *s)
         if(known)snprintf(text,sizeof text,"%02d:%02d",s->hour,s->minute);
         else snprintf(text,sizeof text,"--:--");
         set_text(clock_digits,text);
-        if(known)snprintf(text,sizeof text,panel_text(TXT_DATE_FORMAT),
-                          panel_text((panel_text_id_t)(TXT_SUNDAY+s->weekday)),s->day,
-                          panel_text((panel_text_id_t)(TXT_JANUARY+s->month-1)));
+        if(known)panel_text_date(text,sizeof text,s->weekday,s->day,s->month);
         else snprintf(text,sizeof text,"%s",panel_text(TXT_CLOCK_UNSET));
         set_text(clock_date,text);
     }
