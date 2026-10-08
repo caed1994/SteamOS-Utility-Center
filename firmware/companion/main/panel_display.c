@@ -65,15 +65,20 @@ static bool is_asleep;
  *
  * 12 MHz is the lowest clock this panel was seen to show right: the
  * startup animation plays at it, and it was the clock of an awake panel
- * before 16. A line takes 43 us there. A sleep at 12 MHz copies three
- * quarters of what an awake panel copies. Somebody who tries a lower one
- * looks at the clock of the standby: the line period is what matters,
- * and nothing on the board measures it. The driver takes a new pixel
- * clock at the next VSYNC (lcd_rgb_panel_try_update_pclk), so no change
- * cuts a frame. */
+ * before 16. A line takes 43 us there, and a sleep at 12 MHz copies three
+ * quarters of what an awake panel copies.
+ *
+ * 8 MHz is on trial: a line takes 65 us, half of what failed, and a sleep
+ * copies half of what an awake panel copies, at about 30 frames a second.
+ * The clock of the standby is the test: in the middle with the date under
+ * it is right, low on the screen and cut off is each line twice again.
+ * The answer goes here, and a clock that fails goes back to 12 MHz.
+ * Nothing on the board measures the line period, so a person looking is
+ * the measurement. The driver takes a new pixel clock at the next VSYNC
+ * (lcd_rgb_panel_try_update_pclk), so no change cuts a frame. */
 #define PANEL_PCLK_BOOT_HZ   12000000
 #define PANEL_PCLK_HZ        16000000
-#define PANEL_PCLK_SLEEP_HZ  12000000
+#define PANEL_PCLK_SLEEP_HZ   8000000
 static esp_lcd_panel_handle_t panel_rgb;
 /* The clock of an awake panel: the one of the animation until it is over.
  * Read and written by the LVGL task alone. */
