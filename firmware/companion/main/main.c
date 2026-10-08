@@ -125,7 +125,10 @@ static panel_settings_t settings_load(void)
                                .lift_wake=true,
                                .page_order=PANEL_PAGES_UNSET,
                                /* Every page in the band. */
-                               .page_hidden=0};
+                               .page_hidden=0,
+                               /* The colours the panel always had. */
+                               .theme=PANEL_THEME_DARK,
+                               .accent=PANEL_ACCENT_BLUE};
     nvs_handle_t h;
     if(nvs_open("panel_ui",NVS_READONLY,&h)==ESP_OK){
         uint8_t value;
@@ -153,6 +156,13 @@ static panel_settings_t settings_load(void)
         /* The hidden pages, read with the same care: see
          * panel_pages_hidden. */
         if(nvs_get_u32(h,"page_hidden",&key)==ESP_OK)settings.page_hidden=key;
+        /* The colours of the screen. A theme or an accent of a later
+         * firmware is one this firmware does not have, and reads as the
+         * colours of a panel with nothing stored. */
+        if(nvs_get_u8(h,"theme",&value)==ESP_OK && value<PANEL_THEMES)
+            settings.theme=(panel_theme_t)value;
+        if(nvs_get_u8(h,"accent",&value)==ESP_OK && value<PANEL_ACCENTS)
+            settings.accent=(panel_accent_t)value;
         nvs_close(h);
     }
     // Here, and not where the screen is built. The setup portal opens
@@ -171,7 +181,9 @@ static void setting_set(panel_setting_t key,int value,bool save)
                      key==PANEL_GPU_SENSOR?"gpu_sensor":
                      key==PANEL_LIFT_WAKE?"lift_wake":
                      key==PANEL_PAGE_ORDER?"page_order":
-                     key==PANEL_PAGE_HIDDEN?"page_hidden":"touch_tones";
+                     key==PANEL_PAGE_HIDDEN?"page_hidden":
+                     key==PANEL_THEME?"theme":
+                     key==PANEL_ACCENT?"accent":"touch_tones";
     bool wide=key==PANEL_CPU_SENSOR||key==PANEL_GPU_SENSOR||key==PANEL_PAGE_ORDER||
               key==PANEL_PAGE_HIDDEN;
     esp_err_t result=ESP_OK;

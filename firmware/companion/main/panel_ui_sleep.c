@@ -31,7 +31,9 @@ static lv_obj_t *cover, *cover_time, *cover_date;
 static bool sleeping;
 
 LV_FONT_DECLARE(panel_clock_font);
-/* The colours of the clock page, TEXT and MUTED in ui.c. */
+/* The text and the words of the dark theme, in either theme: the cover is
+ * black in both, and a light cover would be a panel that looks switched
+ * on. See panel_theme.h; tests/test_panel_theme.py holds the two equal. */
 #define CLOCK_TIME_COLOUR 0xEDF4FC
 #define CLOCK_DATE_COLOUR 0xAEC4DE
 /* Between the time and the date. */

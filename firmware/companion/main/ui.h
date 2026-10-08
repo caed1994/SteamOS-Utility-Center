@@ -9,6 +9,7 @@
 #include "panel_led.h"
 #include "panel_pages.h"
 #include "panel_text.h"
+#include "panel_theme.h"
 #include "panel_timer.h"
 
 /* The band of pages that scrolls sideways: the controls, the session and
@@ -248,7 +249,8 @@ typedef void (*panel_action_cb_t)(panel_action_t action);
 typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
                PANEL_LANGUAGE, PANEL_SLEEP_AFTER,
                PANEL_CPU_SENSOR, PANEL_GPU_SENSOR, PANEL_LIFT_WAKE,
-               PANEL_PAGE_ORDER, PANEL_PAGE_HIDDEN } panel_setting_t;
+               PANEL_PAGE_ORDER, PANEL_PAGE_HIDDEN,
+               PANEL_THEME, PANEL_ACCENT } panel_setting_t;
 /* The lowest brightness of the display that the settings page offers, in
  * per cent: the lowest that the backlight of this board holds steady, as a
  * test on the board found it. BACKLIGHT_SLEEP_PERCENT in panel_display.c
@@ -270,11 +272,16 @@ typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
  *
  * page_order: the order of the pages of the band, as panel_pages.h
  * stores it. page_hidden: the pages that are not in the band, a bit for
- * each page, as panel_pages.h stores them. */
+ * each page, as panel_pages.h stores them.
+ *
+ * theme and accent: the colours of the screen, as panel_theme.h numbers
+ * them. Nought for both is the dark theme in its blue, the panel as it was
+ * before there was a choice. */
 typedef struct { int brightness, sound_volume; bool touch_tones;
                  panel_language_t language; int sleep_after;
                  uint32_t cpu_sensor, gpu_sensor; bool lift_wake;
-                 uint32_t page_order, page_hidden; }
+                 uint32_t page_order, page_hidden;
+                 panel_theme_t theme; panel_accent_t accent; }
     panel_settings_t;
 typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);

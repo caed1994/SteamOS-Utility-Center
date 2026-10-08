@@ -15,13 +15,32 @@
 #include "panel_fonts.h"
 #include "panel_update.h"
 
-#define BG 0x0C1721
-#define CARD 0x111F2B
-#define EDGE 0x293D51
-#define TEXT 0xEDF4FC
-#define MUTED 0xAEC4DE
-#define BLUE 0x49A8F7
-#define RED 0xF06B79
+/* The colours of the theme and the accent somebody chose: see
+ * panel_theme.h. panel_ui_create takes them before it builds anything, and
+ * a new choice builds the screen again, the way a new language does. Each
+ * name here was a fixed colour of the dark theme, and ACCENT was BLUE.
+ *
+ * ACCENT is for a face: a slider, a switch, a bar, a button. ACCENT_TEXT is
+ * for words and thin lines in the accent, on a card or a button. The two
+ * are one colour in the dark theme. In the light one, a yellow that reads
+ * as words on white is a brown that does not look yellow as a face. */
+static panel_palette_t palette;
+#define BG palette.bg
+#define CARD palette.card
+#define EDGE palette.edge
+#define TEXT palette.text
+#define MUTED palette.muted
+#define BUTTON palette.button
+#define ACCENT palette.accent
+#define ACCENT_TEXT palette.accent_text
+#define ON_ACCENT palette.on_accent
+#define KNOB palette.knob
+#define KNOB_EDGE palette.knob_edge
+/* The width of that rim: none where it is the knob itself, because a rim in
+ * the colour of the knob still draws the edge of the knob again, a shade
+ * off the one the dark theme always had. */
+#define KNOB_RIM (KNOB_EDGE!=KNOB)
+#define RED palette.red
 
 static lv_obj_t *connection,*dot,*audio_status,*audio_toggle,*audio_knob,*volume,*brightness_label,*sleep_label,*message;
 static lv_obj_t *controls[6],*overlay,*setup_screen,*setup_text,*cpu_value,*gpu_value,*power_value;
@@ -75,12 +94,11 @@ static lv_obj_t *boost_field,*boost_track,*boost_knob;
 static int boost_shown=-1;
 static lv_obj_t *history_chart,*history_empty,*history_ago,*history_axis[4],*history_buttons[HISTORY_WINDOWS];
 static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
-/* The colours of the three curves, and the legend that names them. The
- * processor in the blue of the tiles; the card in orange and its power in
- * green, which read apart from the blue and from each other. */
-#define CURVE_GPU 0xF5A25D
-#define CURVE_WATTS 0x70C256
-static const uint32_t curve_colors[PANEL_HISTORY_SERIES]={BLUE,CURVE_GPU,CURVE_WATTS};
+/* The colours of the three curves, and the legend that names them: the
+ * processor in blue, the card in orange and its power in green, which read
+ * apart from each other. Not in the accent, which can be the orange of the
+ * card. Each theme has its own three: see panel_theme.h. */
+#define CURVE_COLOURS {palette.curve_cpu,palette.curve_gpu,palette.curve_watts}
 /* The card of the GPU: three columns, each a name, a value and, for the
  * load and the memory, a bar. The room of each value is its longest at
  * 24 px, which check_pages measures: "100 %", the 162 px of "23.9 / 24.0
@@ -246,10 +264,19 @@ static lv_obj_t *icon(lv_obj_t *parent,const lv_image_dsc_t *source,int x,int y,
     lv_obj_t *o=lv_image_create(parent);lv_image_set_src(o,source);lv_obj_set_pos(o,x,y);
     lv_obj_set_style_image_recolor(o,lv_color_hex(color),0);lv_obj_set_style_image_recolor_opa(o,LV_OPA_COVER,0);return o;
 }
+/* The knob of a switch that the panel draws itself, "size" across. */
+static lv_obj_t *knob_in(lv_obj_t *track,int x,int y,int size)
+{
+    lv_obj_t *o=panel(track,x,y,size,size,KNOB,false);
+    lv_obj_set_style_radius(o,LV_RADIUS_CIRCLE,0);
+    lv_obj_set_style_border_width(o,KNOB_RIM,0);lv_obj_set_style_border_color(o,lv_color_hex(KNOB_EDGE),0);
+    lv_obj_remove_flag(o,LV_OBJ_FLAG_CLICKABLE);
+    return o;
+}
 static lv_obj_t *button(lv_obj_t *parent,const char *caption,int x,int y,int w,int h,lv_event_cb_t cb,intptr_t data)
 {
     lv_obj_t *b=lv_button_create(parent);lv_obj_set_pos(b,x,y);lv_obj_set_size(b,w,h);
-    lv_obj_set_style_bg_color(b,lv_color_hex(0x1B2B3C),0);
+    lv_obj_set_style_bg_color(b,lv_color_hex(BUTTON),0);
     lv_obj_set_style_text_color(b,lv_color_hex(TEXT),0);lv_obj_set_style_text_font(b,&panel_font_16,0);
     lv_obj_set_style_radius(b,5,0);lv_obj_set_style_border_width(b,1,0);lv_obj_set_style_border_color(b,lv_color_hex(EDGE),0);
     lv_obj_set_style_shadow_width(b,0,0);lv_obj_set_style_pad_all(b,0,0);
@@ -281,8 +308,8 @@ void panel_ui_confirm(panel_action_t action)
         :panel_text(TXT_CONFIRM_HERE);
     if(what[0])text_at(box,what,20,66,400,&panel_font_16,MUTED);
     button(box,panel_text(TXT_CANCEL),20,126,192,62,confirmation,0);
-    lv_obj_t *yes=button(box,panel_text(TXT_CONFIRM),228,126,192,62,confirmation,1);lv_obj_set_style_bg_color(yes,lv_color_hex(BLUE),0);
-    lv_obj_set_style_text_color(yes,lv_color_hex(BG),0);
+    lv_obj_t *yes=button(box,panel_text(TXT_CONFIRM),228,126,192,62,confirmation,1);lv_obj_set_style_bg_color(yes,lv_color_hex(ACCENT),0);
+    lv_obj_set_style_text_color(yes,lv_color_hex(ON_ACCENT),0);
 }
 static void clicked(lv_event_t *e)
 {
@@ -352,12 +379,30 @@ static lv_obj_t *slider_with(lv_obj_t *parent,int x,int y,int minimum,int maximu
     lv_obj_t *slider=lv_slider_create(parent);lv_obj_set_pos(slider,x,y);lv_obj_set_size(slider,380,8);
     lv_slider_set_range(slider,minimum,maximum);lv_slider_set_value(slider,value,LV_ANIM_OFF);
     lv_obj_set_style_bg_color(slider,lv_color_hex(EDGE),LV_PART_MAIN);
-    lv_obj_set_style_bg_color(slider,lv_color_hex(BLUE),LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(slider,lv_color_hex(TEXT),LV_PART_KNOB);
+    lv_obj_set_style_bg_color(slider,lv_color_hex(ACCENT),LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider,lv_color_hex(palette.slider_knob),LV_PART_KNOB);
     lv_obj_set_style_pad_all(slider,7,LV_PART_KNOB);lv_obj_set_ext_click_area(slider,18);
     lv_obj_add_event_cb(slider,cb,LV_EVENT_VALUE_CHANGED,(void *)data);
     lv_obj_add_event_cb(slider,cb,LV_EVENT_RELEASED,(void *)data);
     return slider;
+}
+/* A switch of the settings, 58 by 30, in the colours of the two the panel
+ * draws itself: the track in the colour of a line while it is off and in
+ * the accent while it is on, and the knob of the theme. The theme of LVGL
+ * had a light grey track and a white knob for it, which was no colour of
+ * either theme. cb gets each change. */
+static lv_obj_t *switch_at(lv_obj_t *parent,int x,int y,bool on,lv_event_cb_t cb)
+{
+    lv_obj_t *sw=lv_switch_create(parent);lv_obj_set_pos(sw,x,y);lv_obj_set_size(sw,58,30);
+    lv_obj_set_style_bg_color(sw,lv_color_hex(EDGE),LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sw,lv_color_hex(ACCENT),LV_PART_INDICATOR|LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw,lv_color_hex(KNOB),LV_PART_KNOB);
+    lv_obj_set_style_border_width(sw,KNOB_RIM,LV_PART_KNOB);
+    lv_obj_set_style_border_color(sw,lv_color_hex(KNOB_EDGE),LV_PART_KNOB);
+    lv_obj_set_ext_click_area(sw,8);
+    if(on)lv_obj_add_state(sw,LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw,cb,LV_EVENT_VALUE_CHANGED,NULL);
+    return sw;
 }
 static void slider_range(lv_obj_t *parent,int y,int minimum,int maximum,int value,panel_setting_t key)
 {
@@ -419,6 +464,40 @@ static void language_clicked(lv_event_t *e)
     settings_forget();
     panel_ui_create(send_action,save_setting,play_sound,&local);
     panel_ui_settings_open();
+}
+/* The colours of the screen, from the card of the appearance.
+ *
+ * Every object took its colours when it was built, so a new theme or a new
+ * accent builds the screen again, the way a new language does. The person
+ * stays where they were: on the settings, and as far down them as they had
+ * scrolled, which is where the card is. A tap on the choice that is there
+ * already changes nothing and builds nothing. */
+static void appearance_again(void)
+{
+    int32_t scrolled=settings_screen?lv_obj_get_scroll_y(settings_screen):0;
+    settings_forget();
+    panel_ui_create(send_action,save_setting,play_sound,&local);
+    panel_ui_settings_open();
+    lv_obj_update_layout(settings_screen);
+    lv_obj_scroll_to_y(settings_screen,scrolled,LV_ANIM_OFF);
+}
+static void theme_clicked(lv_event_t *e)
+{
+    panel_theme_t theme=(panel_theme_t)(intptr_t)lv_event_get_user_data(e);
+    feedback();
+    if(theme==local.theme)return;
+    local.theme=theme;
+    if(save_setting)save_setting(PANEL_THEME,(int)theme,true);
+    appearance_again();
+}
+static void accent_clicked(lv_event_t *e)
+{
+    panel_accent_t accent=(panel_accent_t)(intptr_t)lv_event_get_user_data(e);
+    feedback();
+    if(accent==local.accent)return;
+    local.accent=accent;
+    if(save_setting)save_setting(PANEL_ACCENT,(int)accent,true);
+    appearance_again();
 }
 static void settings_close(lv_event_t *e)
 {
@@ -581,7 +660,7 @@ void panel_ui_arrange_open(void)
         lv_obj_remove_flag(row,LV_OBJ_FLAG_CLICKABLE);
         char number[4];
         snprintf(number,sizeof number,"%d",place+1);
-        text_at(row,number,16,(ARRANGE_HEIGHT-lv_font_get_line_height(&panel_font_24))/2,24,&panel_font_24,BLUE);
+        text_at(row,number,16,(ARRANGE_HEIGHT-lv_font_get_line_height(&panel_font_24))/2,24,&panel_font_24,ACCENT_TEXT);
         arrange_names[place]=text_at(row,"",52,arrange_name_y(),212,&panel_font_16,TEXT);
         lv_obj_set_height(arrange_names[place],lv_font_get_line_height(&panel_font_16));
         arrange_starts[place]=text_at(row,panel_text(TXT_PAGES_START),52,
@@ -595,6 +674,17 @@ void panel_ui_arrange_open(void)
     arrange_show();
 }
 static void arrange_clicked(lv_event_t *e){(void)e;feedback();panel_ui_arrange_open();}
+/* The card of the appearance: as high as the card of the sound under it.
+ * The two themes are two buttons in the place of the one button of the
+ * cards under it, and the eight accents are a row over the width of the
+ * line in the card, 402 from 18: a circle of 38 every 52. */
+#define APPEARANCE_HIGH 216
+#define THEME_WIDTH 70
+#define THEME_STEP 74
+#define SWATCH 38
+#define SWATCH_STEP 52
+#define SWATCH_Y 158
+_Static_assert((PANEL_ACCENTS-1)*SWATCH_STEP+SWATCH==402,"the row of the accents fills the width of the line over it");
 void panel_ui_settings_open(void)
 {
     if(settings_screen)return;
@@ -623,13 +713,13 @@ void panel_ui_settings_open(void)
     lv_obj_t *display=panel(settings_screen,20,78,440,300,CARD,true);
     icon(display,&icon_sun,16,18,MUTED);
     text_at(display,panel_text(TXT_BRIGHTNESS),62,16,268,&panel_font_18,TEXT);
-    brightness_label=text_at(display,"",338,16,88,&panel_font_18,BLUE);
+    brightness_label=text_at(display,"",338,16,88,&panel_font_18,ACCENT_TEXT);
     lv_label_set_text_fmt(brightness_label,"%d %%",local.brightness);
     text_at(display,panel_text(TXT_BRIGHTNESS_WHAT),62,43,350,&panel_font_12,MUTED);
     slider_at(display,88,PANEL_BRIGHTNESS_MIN,local.brightness,PANEL_BRIGHTNESS);
     line(display,18,112,402,1);
     text_at(display,panel_text(TXT_SLEEP_AFTER),20,128,268,&panel_font_18,TEXT);
-    sleep_label=text_at(display,"",318,128,108,&panel_font_18,BLUE);
+    sleep_label=text_at(display,"",318,128,108,&panel_font_18,ACCENT_TEXT);
     {
         char said[24];
         sleep_words(said,sizeof said,local.sleep_after);
@@ -644,23 +734,49 @@ void panel_ui_settings_open(void)
     line(display,18,224,402,1);
     text_at(display,panel_text(TXT_LIFT_WAKE),20,240,330,&panel_font_18,TEXT);
     text_at(display,panel_text(TXT_LIFT_WAKE_WHAT),20,268,336,&panel_font_12,MUTED);
-    lv_obj_t *lift=lv_switch_create(display);lv_obj_set_pos(lift,358,241);lv_obj_set_size(lift,58,30);
-    lv_obj_set_style_bg_color(lift,lv_color_hex(BLUE),LV_PART_INDICATOR|LV_STATE_CHECKED);
-    lv_obj_set_ext_click_area(lift,8);
-    if(local.lift_wake)lv_obj_add_state(lift,LV_STATE_CHECKED);
-    lv_obj_add_event_cb(lift,lift_changed,LV_EVENT_VALUE_CHANGED,NULL);
-    lv_obj_t *sound=panel(settings_screen,20,392,440,216,CARD,true);
+    switch_at(display,358,241,local.lift_wake,lift_changed);
+    /* The colours of the screen, under the display they are on: the
+     * theme, and the accent in the eight colours of panel_theme.h. Each
+     * colour is a round button in the tone it has in this theme, and the
+     * one chosen has a tick and a ring. See appearance_again for a tap. */
+    lv_obj_t *appearance=panel(settings_screen,20,392,440,APPEARANCE_HIGH,CARD,true);
+    text_at(appearance,panel_text(TXT_APPEARANCE),20,16,248,&panel_font_18,TEXT);
+    text_at(appearance,panel_text(TXT_APPEARANCE_WHAT),20,44,248,&panel_font_12,MUTED);
+    for(int t=0;t<PANEL_THEMES;t++){
+        lv_obj_t *b=button(appearance,panel_text(panel_theme_name(t)),276+t*THEME_STEP,20,THEME_WIDTH,44,
+                           theme_clicked,t);
+        if(t!=(int)local.theme)continue;
+        lv_obj_set_style_bg_color(b,lv_color_hex(ACCENT),0);
+        lv_obj_set_style_text_color(b,lv_color_hex(ON_ACCENT),0);
+    }
+    line(appearance,18,84,402,1);
+    text_at(appearance,panel_text(TXT_ACCENT),20,100,268,&panel_font_18,TEXT);
+    text_at(appearance,panel_text(panel_accent_name(local.accent)),318,100,108,&panel_font_18,ACCENT_TEXT);
+    text_at(appearance,panel_text(TXT_ACCENT_WHAT),20,127,400,&panel_font_12,MUTED);
+    for(int a=0;a<PANEL_ACCENTS;a++){
+        bool chosen=a==(int)local.accent;
+        lv_obj_t *b=button(appearance,chosen?LV_SYMBOL_OK:"",18+a*SWATCH_STEP,SWATCH_Y,SWATCH,SWATCH,
+                           accent_clicked,a);
+        lv_obj_set_style_bg_color(b,lv_color_hex(panel_palette(local.theme,a).accent),0);
+        lv_obj_set_style_radius(b,LV_RADIUS_CIRCLE,0);
+        lv_obj_set_style_border_width(b,0,0);
+        lv_obj_set_style_text_color(b,lv_color_hex(ON_ACCENT),0);
+        /* The gap between two belongs to both, so a finger between them
+         * still finds one. */
+        lv_obj_set_ext_click_area(b,(SWATCH_STEP-SWATCH)/2);
+        if(!chosen)continue;
+        lv_obj_set_style_outline_width(b,2,0);
+        lv_obj_set_style_outline_pad(b,2,0);
+        lv_obj_set_style_outline_color(b,lv_color_hex(TEXT),0);
+    }
+    lv_obj_t *sound=panel(settings_screen,20,622,440,216,CARD,true);
     icon(sound,&icon_volume_2,12,12,MUTED);
     text_at(sound,panel_text(TXT_TONES),70,16,240,&panel_font_18,TEXT);
     text_at(sound,panel_text(TXT_TONES_WHAT),70,44,340,&panel_font_12,MUTED);
-    lv_obj_t *sw=lv_switch_create(sound);lv_obj_set_pos(sw,358,17);lv_obj_set_size(sw,58,30);
-    lv_obj_set_style_bg_color(sw,lv_color_hex(BLUE),LV_PART_INDICATOR|LV_STATE_CHECKED);
-    lv_obj_set_ext_click_area(sw,8);
-    if(local.touch_tones)lv_obj_add_state(sw,LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw,tones_changed,LV_EVENT_VALUE_CHANGED,NULL);
+    switch_at(sound,358,17,local.touch_tones,tones_changed);
     line(sound,18,76,402,1);
     text_at(sound,panel_text(TXT_ESP_VOLUME),20,92,296,&panel_font_16,TEXT);
-    sound_value=text_at(sound,"",338,92,88,&panel_font_18,BLUE);
+    sound_value=text_at(sound,"",338,92,88,&panel_font_18,ACCENT_TEXT);
     lv_label_set_text_fmt(sound_value,"%d %%",local.sound_volume);
     slider_at(sound,138,0,local.sound_volume,PANEL_SOUND_VOLUME);
     button(sound,panel_text(TXT_TEST_TONE),276,164,144,44,test_sound,0);
@@ -673,15 +789,15 @@ void panel_ui_settings_open(void)
      * question as before, and the setup screen that follows closes this
      * one: see settings_forget in panel_ui_update. */
     /* The order of the pages, on a screen of its own. */
-    lv_obj_t *pages=panel(settings_screen,20,622,440,84,CARD,true);
+    lv_obj_t *pages=panel(settings_screen,20,852,440,84,CARD,true);
     text_at(pages,panel_text(TXT_PAGES),20,16,240,&panel_font_18,TEXT);
     text_at(pages,panel_text(TXT_PAGES_WHAT),20,44,248,&panel_font_12,MUTED);
     button(pages,panel_text(TXT_PAGES_ARRANGE),276,20,144,44,arrange_clicked,0);
-    lv_obj_t *link=panel(settings_screen,20,720,440,84,CARD,true);
+    lv_obj_t *link=panel(settings_screen,20,950,440,84,CARD,true);
     text_at(link,panel_text(TXT_CONNECTION),20,16,240,&panel_font_18,TEXT);
     text_at(link,panel_text(TXT_SETUP_WHAT),20,44,240,&panel_font_12,MUTED);
     button(link,panel_text(TXT_SETUP),276,20,144,44,clicked,PANEL_SETUP);
-    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,818,440,&panel_font_12,MUTED);
+    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,1048,440,&panel_font_12,MUTED);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
 /* What a controller says in the head and on its card: the battery, the
@@ -827,12 +943,12 @@ void panel_ui_pads_open(void)
          * wraps, and the dots of LONG_DOT need the height. */
         pad_names[i]=text_at(card,"",56,16,PAD_NAME_WIDTH,&panel_font_18,TEXT);
         lv_obj_set_height(pad_names[i],lv_font_get_line_height(&panel_font_18));
-        pad_levels[i]=text_at(card,"",306,16,118,&panel_font_18,BLUE);
+        pad_levels[i]=text_at(card,"",306,16,118,&panel_font_18,ACCENT_TEXT);
         lv_obj_set_style_text_align(pad_levels[i],LV_TEXT_ALIGN_RIGHT,0);
         pad_tracks[i]=panel(card,PAD_BAR_LEFT,54,PAD_BAR_WIDTH,10,EDGE,false);
         lv_obj_set_style_radius(pad_tracks[i],LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(pad_tracks[i],LV_OBJ_FLAG_CLICKABLE);
-        pad_bars[i]=panel(pad_tracks[i],0,0,0,10,BLUE,false);
+        pad_bars[i]=panel(pad_tracks[i],0,0,0,10,ACCENT,false);
         lv_obj_set_style_radius(pad_bars[i],LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(pad_bars[i],LV_OBJ_FLAG_CLICKABLE);
         pad_unknown[i]=text_at(card,panel_text(TXT_NO_BATTERY),PAD_BAR_LEFT,50,PAD_BAR_WIDTH,&panel_font_14,MUTED);
@@ -1027,8 +1143,8 @@ static void history_show(void)
     history_stale=false;
     for(int i=0;i<HISTORY_WINDOWS;i++){
         bool on=history_windows[i]==history_minutes;
-        lv_obj_set_style_border_color(history_buttons[i],lv_color_hex(on?BLUE:EDGE),0);
-        lv_obj_set_style_text_color(history_buttons[i],lv_color_hex(on?BLUE:TEXT),0);
+        lv_obj_set_style_border_color(history_buttons[i],lv_color_hex(on?ACCENT_TEXT:EDGE),0);
+        lv_obj_set_style_text_color(history_buttons[i],lv_color_hex(on?ACCENT_TEXT:TEXT),0);
     }
     lv_label_set_text_fmt(history_ago,"-%d %s",history_minutes,panel_text(TXT_MINUTES));
     int found=0,low=0,high=0,cpu_low=0,cpu_high=0,watts_low=0,watts_high=0;
@@ -1095,7 +1211,7 @@ static void boost_show(const panel_state_t *s)
     int on=s->online&&s->boost_on;
     if(on==boost_shown)return;
     boost_shown=on;
-    lv_obj_set_style_bg_color(boost_track,lv_color_hex(on?BLUE:EDGE),0);
+    lv_obj_set_style_bg_color(boost_track,lv_color_hex(on?ACCENT:EDGE),0);
     lv_obj_set_x(boost_knob,on?BOOST_KNOB_ON:BOOST_KNOB_OFF);
 }
 /* A tap asks for the other state than the one the switch shows. The switch
@@ -1158,7 +1274,7 @@ static void sensor_chosen(lv_event_t *e)
 static void sensor_row(lv_obj_t *box,int row,int y,const char *name,int celsius,bool chosen)
 {
     lv_obj_t *b=button(box,"",20,y,400,44,sensor_chosen,row);
-    uint32_t color=chosen?BLUE:TEXT;
+    uint32_t color=chosen?ACCENT_TEXT:TEXT;
     char said[48];
     snprintf(said,sizeof said,"%s%s",chosen?LV_SYMBOL_OK "  ":"",name);
     lv_obj_t *left=text_at(b,said,14,12,250,&panel_font_16,color);
@@ -1234,7 +1350,7 @@ static lv_obj_t *sensor_reading(lv_obj_t *field,int from,const lv_image_dsc_t *s
     int32_t text=x+(int32_t)sign->header.w+SENSOR_GAP,room=from+SENSOR_FIELD-1-text;
     lv_obj_remove_flag(icon(field,sign,x,12,MUTED),LV_OBJ_FLAG_CLICKABLE);
     text_at(field,caption,text,6,room,&panel_font_12,MUTED);
-    return text_at(field,first,text,22,room,&panel_font_18,BLUE);
+    return text_at(field,first,text,22,room,&panel_font_18,ACCENT_TEXT);
 }
 /* A part of that card that a tap opens a choice from: clear, and lit while
  * it is pressed. */
@@ -1244,7 +1360,7 @@ static lv_obj_t *sensor_field(lv_obj_t *card,int x,int w,lv_event_cb_t cb)
     lv_obj_set_pos(f,x,0);lv_obj_set_size(f,w,46);
     lv_obj_remove_flag(f,LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_radius(f,5,0);
-    lv_obj_set_style_bg_color(f,lv_color_hex(0x1B2B3C),LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(f,lv_color_hex(BUTTON),LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(f,LV_OPA_COVER,LV_STATE_PRESSED);
     lv_obj_add_event_cb(f,cb,LV_EVENT_CLICKED,NULL);
     return f;
@@ -1481,13 +1597,13 @@ void panel_ui_self_open(void)
     text_at(update_card,panel_text(TXT_UPDATE),18,14,300,&panel_font_12,MUTED);
     lv_obj_t *name=text_at(update_card,panel_text(TXT_UPDATE_OFFERED),18,PC_TITLE_ROOM,PC_NAME_WIDTH,&panel_font_14,MUTED);
     lv_obj_set_height(name,lv_font_get_line_height(&panel_font_14));
-    update_offered=text_at(update_card,"--",PC_VALUE_X,PC_TITLE_ROOM,PC_VALUE_WIDTH,&panel_font_14,BLUE);
+    update_offered=text_at(update_card,"--",PC_VALUE_X,PC_TITLE_ROOM,PC_VALUE_WIDTH,&panel_font_14,ACCENT_TEXT);
     lv_obj_set_style_text_align(update_offered,LV_TEXT_ALIGN_RIGHT,0);
     update_note=text_at(update_card,"",18,PC_TITLE_ROOM+PC_ROW_STEP,404,&panel_font_14,MUTED);
     lv_label_set_long_mode(update_note,LV_LABEL_LONG_WRAP);
     update_button=button(update_card,panel_text(TXT_UPDATE_NOW),18,UPDATE_CARD_HEIGHT-58,404,44,update_clicked,0);
-    lv_obj_set_style_bg_color(update_button,lv_color_hex(BLUE),0);
-    lv_obj_set_style_text_color(update_button,lv_color_hex(BG),0);
+    lv_obj_set_style_bg_color(update_button,lv_color_hex(ACCENT),0);
+    lv_obj_set_style_text_color(update_button,lv_color_hex(ON_ACCENT),0);
     lv_obj_add_flag(update_card,LV_OBJ_FLAG_HIDDEN);
     /* The frames in movement, with a line under the rows that says what
      * the numbers are and since when they count. */
@@ -1549,10 +1665,10 @@ static void update_layer_show(const panel_state_t *s)
         lv_obj_t *track=panel(box,20,78,400,12,EDGE,false);
         lv_obj_set_style_radius(track,LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(track,LV_OBJ_FLAG_CLICKABLE);
-        update_bar=panel(track,0,0,0,12,BLUE,false);
+        update_bar=panel(track,0,0,0,12,ACCENT,false);
         lv_obj_set_style_radius(update_bar,LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(update_bar,LV_OBJ_FLAG_CLICKABLE);
-        update_percent=text_at(box,"",20,104,400,&panel_font_24,BLUE);
+        update_percent=text_at(box,"",20,104,400,&panel_font_24,ACCENT_TEXT);
         update_hint=text_at(box,"",20,150,400,&panel_font_16,MUTED);
     }
     bool restarting=s->update.phase==PANEL_UPDATE_RESTARTING;
@@ -1919,7 +2035,7 @@ static void look_open(void)
     for(int i=0;look_with_colours&&i<PANEL_LED_COLOURS;i++){
         if(i==0)text_at(box,panel_text(TXT_LED_COLOUR),20,LOOK_TOP,400,&panel_font_14,MUTED);
         lv_obj_t *b=button(box,"",20+(i%3)*136,LOOK_TOP+24+(i/3)*54,128,46,look_pick,i);
-        lv_obj_set_style_outline_color(b,lv_color_hex(BLUE),0);
+        lv_obj_set_style_outline_color(b,lv_color_hex(ACCENT_TEXT),0);
         lv_obj_set_style_outline_pad(b,1,0);
         uint32_t rgb=0;
         panel_led_rgb(panel_led_colour(i),&rgb);
@@ -1988,8 +2104,8 @@ static void cpu_show(const panel_state_t *s)
         int8_t lit=p==selected;
         if(lit==cpu_lit[p])continue;
         cpu_lit[p]=lit;
-        lv_obj_set_style_bg_color(cpu_buttons[p],lv_color_hex(lit?BLUE:0x1B2B3C),0);
-        lv_obj_set_style_text_color(cpu_buttons[p],lv_color_hex(lit?BG:TEXT),0);
+        lv_obj_set_style_bg_color(cpu_buttons[p],lv_color_hex(lit?ACCENT:BUTTON),0);
+        lv_obj_set_style_text_color(cpu_buttons[p],lv_color_hex(lit?ON_ACCENT:TEXT),0);
     }
     char running[56];
     if(usable&&s->cpu_governor[0])
@@ -2046,7 +2162,7 @@ static void led_card(lv_obj_t *page,panel_led_mode_t m,int y)
     lv_obj_t *card=panel(page,10,y,460,m==PANEL_LED_DESKTOP?LED_DESKTOP_HIGH:LED_GAME_HIGH,CARD,true);
     icon(card,m==PANEL_LED_GAME?&icon_gamepad_2:&icon_monitor,14,14,MUTED);
     text_at(card,panel_text(m==PANEL_LED_GAME?TXT_LED_GAME:TXT_LED_DESKTOP),52,16,290,&panel_font_14,MUTED);
-    c->now=text_at(card,panel_text(TXT_LED_NOW),346,16,100,&panel_font_14,BLUE);
+    c->now=text_at(card,panel_text(TXT_LED_NOW),346,16,100,&panel_font_14,ACCENT_TEXT);
     lv_obj_set_style_text_align(c->now,LV_TEXT_ALIGN_RIGHT,0);
     lv_obj_add_flag(c->now,LV_OBJ_FLAG_HIDDEN);
     line(card,14,40,432,1);
@@ -2137,8 +2253,8 @@ static void alarm_show(void)
     center_text(text_at(box,panel_text(TXT_TIMER),20,26,400,&panel_font_20,MUTED));
     center_text(text_at(box,panel_text(TXT_TIME_UP),20,64,400,&panel_font_32,TEXT));
     lv_obj_t *stop=button(box,panel_text(TXT_STOP),70,152,300,72,alarm_clicked,0);
-    lv_obj_set_style_bg_color(stop,lv_color_hex(BLUE),0);
-    lv_obj_set_style_text_color(stop,lv_color_hex(BG),0);
+    lv_obj_set_style_bg_color(stop,lv_color_hex(ACCENT),0);
+    lv_obj_set_style_text_color(stop,lv_color_hex(ON_ACCENT),0);
     lv_obj_set_style_text_font(stop,&panel_font_24,0);
 }
 panel_timer_news_t panel_ui_timer_tick(void)
@@ -2185,7 +2301,7 @@ static void drive_row(lv_obj_t *parent,int index,int y)
     lv_obj_t *track=panel(drive_rows[index],0,26,DRIVE_BAR_WIDTH,10,EDGE,false);
     lv_obj_set_style_radius(track,LV_RADIUS_CIRCLE,0);
     lv_obj_remove_flag(track,LV_OBJ_FLAG_CLICKABLE);
-    drive_bars[index]=panel(track,0,0,0,10,BLUE,false);
+    drive_bars[index]=panel(track,0,0,0,10,ACCENT,false);
     lv_obj_set_style_radius(drive_bars[index],LV_RADIUS_CIRCLE,0);
     lv_obj_remove_flag(drive_bars[index],LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(drive_rows[index],LV_OBJ_FLAG_HIDDEN);
@@ -2196,7 +2312,7 @@ static lv_obj_t *power_button(lv_obj_t *parent,const char *caption,const lv_imag
     uint32_t color=action==PANEL_POWEROFF?RED:MUTED;
     icon(b,source,14,14,color);
     text_at(b,caption,54,18,136,&panel_font_16,color);
-    if(action==PANEL_POWEROFF){lv_obj_set_style_bg_color(b,lv_color_hex(0x2C202B),0);lv_obj_set_style_border_color(b,lv_color_hex(0xA54757),0);}
+    if(action==PANEL_POWEROFF){lv_obj_set_style_bg_color(b,lv_color_hex(palette.danger),0);lv_obj_set_style_border_color(b,lv_color_hex(palette.danger_edge),0);}
     return b;
 }
 void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,panel_sound_cb_t sound_cb,const panel_settings_t *settings)
@@ -2204,6 +2320,11 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     last_state_valid=false;
     send_action=callback;save_setting=setting_cb;play_sound=sound_cb;local=*settings;
     panel_text_set(local.language);
+    /* A theme or an accent outside the lists is the dark theme or blue, as
+     * panel_palette draws it, and so the card of the appearance shows it. */
+    if((unsigned)local.theme>=PANEL_THEMES)local.theme=PANEL_THEME_DARK;
+    if((unsigned)local.accent>=PANEL_ACCENTS)local.accent=PANEL_ACCENT_BLUE;
+    palette=panel_palette(local.theme,local.accent);
     lv_obj_t *s=lv_screen_active();
     // Everything on the screen goes, because this runs a second time when
     // the language changes. Without it the new words are drawn over the old
@@ -2265,7 +2386,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     line(pc_area,50,16,1,28);
     connection=text_at(pc_area,panel_text(TXT_PC_OFFLINE),62,22,140,&panel_font_14,TEXT);
     lv_obj_remove_flag(connection,LV_OBJ_FLAG_CLICKABLE);
-    dot=panel(pc_area,202,26,9,9,0x60758A,false);lv_obj_set_style_radius(dot,LV_RADIUS_CIRCLE,0);
+    dot=panel(pc_area,202,26,9,9,palette.offline,false);lv_obj_set_style_radius(dot,LV_RADIUS_CIRCLE,0);
     lv_obj_remove_flag(dot,LV_OBJ_FLAG_CLICKABLE);
     line(s,234,16,1,28);
     /* The controllers, two side by side over the whole right of the head,
@@ -2331,8 +2452,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     audio_status=text_at(left,"--",70,40,82,&panel_font_18,TEXT);
     audio_toggle=button(left,"",154,24,54,48,clicked,PANEL_MUTE);controls[PANEL_MUTE]=audio_toggle;
     lv_obj_set_style_bg_opa(audio_toggle,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(audio_toggle,0,0);
-    lv_obj_t *track=panel(audio_toggle,0,10,52,28,BLUE,false);lv_obj_remove_flag(track,LV_OBJ_FLAG_CLICKABLE);lv_obj_set_style_radius(track,LV_RADIUS_CIRCLE,0);
-    audio_knob=panel(track,27,3,22,22,TEXT,false);lv_obj_remove_flag(audio_knob,LV_OBJ_FLAG_CLICKABLE);lv_obj_set_style_radius(audio_knob,LV_RADIUS_CIRCLE,0);
+    lv_obj_t *track=panel(audio_toggle,0,10,52,28,ACCENT,false);lv_obj_remove_flag(track,LV_OBJ_FLAG_CLICKABLE);lv_obj_set_style_radius(track,LV_RADIUS_CIRCLE,0);
+    audio_knob=knob_in(track,27,3,22);
     lv_obj_set_user_data(audio_toggle,track);
     line(left,16,108,190,1);
     center_text(text_at(left,panel_text(TXT_PC_VOLUME),12,131,196,&panel_font_14,MUTED));
@@ -2457,7 +2578,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
         *tracks[i]=panel(gpu_card,gpu_x[i],72,GPU_BAR_WIDTH,8,EDGE,false);
         lv_obj_set_style_radius(*tracks[i],LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(*tracks[i],LV_OBJ_FLAG_CLICKABLE);
-        *bars[i]=panel(*tracks[i],0,0,0,8,BLUE,false);
+        *bars[i]=panel(*tracks[i],0,0,0,8,ACCENT,false);
         lv_obj_set_style_radius(*bars[i],LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(*bars[i],LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(*tracks[i],LV_OBJ_FLAG_HIDDEN);
@@ -2469,7 +2590,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_set_pos(boost_field,GPU_COLUMN_X2-6,BOOST_Y);lv_obj_set_size(boost_field,gpu_room[2]+6,BOOST_HEIGHT);
     lv_obj_remove_flag(boost_field,LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_radius(boost_field,5,0);
-    lv_obj_set_style_bg_color(boost_field,lv_color_hex(0x1B2B3C),LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(boost_field,lv_color_hex(BUTTON),LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(boost_field,LV_OPA_COVER,LV_STATE_PRESSED);
     lv_obj_set_style_opa(boost_field,LV_OPA_40,LV_STATE_DISABLED);
     lv_obj_add_event_cb(boost_field,boost_clicked,LV_EVENT_CLICKED,NULL);
@@ -2482,9 +2603,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
                       BOOST_TRACK_WIDTH,BOOST_TRACK_HEIGHT,EDGE,false);
     lv_obj_set_style_radius(boost_track,LV_RADIUS_CIRCLE,0);
     lv_obj_remove_flag(boost_track,LV_OBJ_FLAG_CLICKABLE);
-    boost_knob=panel(boost_track,BOOST_KNOB_OFF,2,BOOST_TRACK_HEIGHT-4,BOOST_TRACK_HEIGHT-4,TEXT,false);
-    lv_obj_set_style_radius(boost_knob,LV_RADIUS_CIRCLE,0);
-    lv_obj_remove_flag(boost_knob,LV_OBJ_FLAG_CLICKABLE);
+    boost_knob=knob_in(boost_track,BOOST_KNOB_OFF,2,BOOST_TRACK_HEIGHT-4);
     lv_obj_add_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *history_card=panel(page[4],10,106,460,194,CARD,true);
     text_at(history_card,panel_text(TXT_HISTORY),16,14,120,&panel_font_14,MUTED);
@@ -2496,8 +2615,9 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     }
     /* The legend, one dot and one name for each curve. */
     const char *legend[PANEL_HISTORY_SERIES]={"CPU °C","GPU °C","GPU W"};
+    const uint32_t curves[PANEL_HISTORY_SERIES]=CURVE_COLOURS;
     for(int i=0;i<PANEL_HISTORY_SERIES;i++){
-        lv_obj_t *mark=panel(history_card,16+i*92,49,10,10,curve_colors[i],false);
+        lv_obj_t *mark=panel(history_card,16+i*92,49,10,10,curves[i],false);
         lv_obj_set_style_radius(mark,LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(mark,LV_OBJ_FLAG_CLICKABLE);
         text_at(history_card,legend[i],32+i*92,45,72,&panel_font_12,MUTED);
@@ -2521,7 +2641,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_chart_set_div_line_count(history_chart,3,0);
     lv_chart_set_point_count(history_chart,PANEL_HISTORY_DRAWN);
     for(int i=0;i<PANEL_HISTORY_SERIES;i++){
-        history_series[i]=lv_chart_add_series(history_chart,lv_color_hex(curve_colors[i]),
+        history_series[i]=lv_chart_add_series(history_chart,lv_color_hex(curves[i]),
             i==PANEL_HISTORY_WATTS?LV_CHART_AXIS_SECONDARY_Y:LV_CHART_AXIS_PRIMARY_Y);
         /* The points of the history in place, in PSRAM. Without a history
          * the chart keeps its own, which are empty. */
@@ -2700,14 +2820,14 @@ void panel_ui_update(const panel_state_t *s)
         if(!setup_screen){
             if(overlay){lv_obj_delete(overlay);overlay=NULL;}
             setup_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
-            text_at(setup_screen,panel_text(TXT_SETUP_TITLE),24,28,432,&panel_font_24,BLUE);
+            text_at(setup_screen,panel_text(TXT_SETUP_TITLE),24,28,432,&panel_font_24,ACCENT_TEXT);
             setup_text=text_at(setup_screen,"",24,96,432,&panel_font_18,TEXT);lv_label_set_long_mode(setup_text,LV_LABEL_LONG_WRAP);
             text_at(setup_screen,panel_text(TXT_SETUP_STOP),24,428,432,&panel_font_16,MUTED);
         }
         lv_label_set_text_fmt(setup_text,panel_text(TXT_SETUP_STEPS),s->setup_ssid,s->setup_password);return;
     }
     lv_label_set_text(connection,!s->wifi?panel_text(TXT_WIFI_OFFLINE):s->online?panel_text(TXT_PC_ONLINE):panel_text(TXT_PC_OFFLINE));
-    lv_obj_set_style_bg_color(dot,lv_color_hex(s->online?0x70C256:0x60758A),0);
+    lv_obj_set_style_bg_color(dot,lv_color_hex(s->online?palette.online:palette.offline),0);
     pads_head(s);
     pads_show(s);
     led_show(s);
@@ -2718,7 +2838,7 @@ void panel_ui_update(const panel_state_t *s)
     esp_power_show(s);
     bool audio=s->online&&s->volume>=0;
     lv_label_set_text(audio_status,!audio?"--":s->muted?panel_text(TXT_MUTED):panel_text(TXT_ACTIVE));
-    lv_obj_t *track=lv_obj_get_user_data(audio_toggle);lv_obj_set_style_bg_color(track,lv_color_hex(audio&&!s->muted?BLUE:EDGE),0);lv_obj_set_x(audio_knob,audio&&!s->muted?27:3);
+    lv_obj_t *track=lv_obj_get_user_data(audio_toggle);lv_obj_set_style_bg_color(track,lv_color_hex(audio&&!s->muted?ACCENT:EDGE),0);lv_obj_set_x(audio_knob,audio&&!s->muted?27:3);
     if(audio)lv_label_set_text_fmt(volume,"%d %%",s->volume);else lv_label_set_text(volume,"-- %");
     for(int i=0;i<6;i++){bool enabled=s->online&&(i>=3||audio);if(enabled)lv_obj_remove_state(controls[i],LV_STATE_DISABLED);else lv_obj_add_state(controls[i],LV_STATE_DISABLED);}
     /* One card, two faces. Offline with an address to wake at shows the
@@ -2777,9 +2897,11 @@ void panel_ui_update(const panel_state_t *s)
         int width=total?(int)((used*DRIVE_BAR_WIDTH)/total):0;
         lv_obj_set_width(drive_bars[i],width);
         /* Red where a drive is nearly full, which is the one thing about a
-         * drive somebody wants to see without reading. */
-        lv_obj_set_style_bg_color(drive_bars[i],
-                                  lv_color_hex(total&&used*10>=total*9?RED:BLUE),0);
+         * drive somebody wants to see without reading. What is left says it
+         * in red too: in the red accent every bar is red. */
+        bool full=total&&used*10>=total*9;
+        lv_obj_set_style_bg_color(drive_bars[i],lv_color_hex(full?RED:ACCENT),0);
+        lv_obj_set_style_text_color(drive_free[i],lv_color_hex(full?RED:MUTED),0);
     }
     if(no_drives){
         if(shown==0)lv_obj_remove_flag(no_drives,LV_OBJ_FLAG_HIDDEN);

@@ -58,6 +58,14 @@
     X(TXT_PAGE_CPU,        "CPU energy",            "CPU-Energie") \
     X(TXT_LIFT_WAKE_WHAT,  "Only when it went off by itself, not after the button", \
                            "Nur wenn es von selbst ausging, nicht nach dem Knopf") \
+    X(TXT_APPEARANCE,      "Appearance",            "Erscheinungsbild") \
+    X(TXT_APPEARANCE_WHAT, "Dark or light, on every page", \
+                           "Dunkel oder hell, auf allen Seiten") \
+    X(TXT_THEME_DARK,      "Dark",                  "Dunkel") \
+    X(TXT_THEME_LIGHT,     "Light",                 "Hell") \
+    X(TXT_ACCENT,          "Accent colour",         "Akzentfarbe") \
+    X(TXT_ACCENT_WHAT,     "Sliders, switches and highlights", \
+                           "Regler, Schalter und Hervorhebungen") \
     X(TXT_MINUTES,         "min",                   "Min") \
     X(TXT_CONNECTION,      "Connection",            "Verbindung") \
     X(TXT_TONES,           "Key tones",             "Tastentöne") \

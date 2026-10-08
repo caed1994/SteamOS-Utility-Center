@@ -7,6 +7,7 @@
 // words off them. What it holds is the part a person sees, which is the
 // part a rule in Python cannot reach.
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "lvgl.h"
@@ -324,6 +325,88 @@ static panel_state_t base(void)
     panel_state_t s={.online=true,.wifi=true,.volume=30,
                      .cpu_temp=40,.gpu_temp=45,.gpu_watts=60};
     return s;
+}
+// A colour of LVGL as panel_theme.h writes one, 0xRRGGBB.
+static uint32_t rgb_of(lv_color_t colour)
+{
+    return (uint32_t)colour.red<<16|(uint32_t)colour.green<<8|colour.blue;
+}
+// The contrast of two colours as WCAG 2 counts it: 1 for one colour on
+// itself, 21 for black on white.
+static double channel(unsigned value)
+{
+    double c=value/255.0;
+    return c<=0.04045?c/12.92:pow((c+0.055)/1.055,2.4);
+}
+static double luminance(uint32_t rgb)
+{
+    return 0.2126*channel(rgb>>16&255)+0.7152*channel(rgb>>8&255)+0.0722*channel(rgb&255);
+}
+static double contrast(uint32_t a,uint32_t b)
+{
+    double x=luminance(a)+0.05,y=luminance(b)+0.05;
+    return x>y?x/y:y/x;
+}
+// The labels under root that do not read, each printed, as a count.
+//
+// A label against what it is drawn on: the first thing under it that
+// covers. 4.5 for words, as WCAG 2 asks, and 3 for the large ones of 24 px
+// and up. A label in a greyed button is left out, which is meant to read as
+// out of use, and so is a hidden one.
+static unsigned unreadable(lv_obj_t *root,const char *where)
+{
+    if(lv_obj_has_flag(root,LV_OBJ_FLAG_HIDDEN))return 0;
+    if(lv_obj_get_style_opa(root,LV_PART_MAIN)<LV_OPA_COVER)return 0;
+    unsigned bad=0;
+    if(lv_obj_check_type(root,&lv_label_class)&&lv_label_get_text(root)[0]){
+        lv_obj_t *under=lv_obj_get_parent(root);
+        while(under&&lv_obj_get_style_bg_opa(under,LV_PART_MAIN)<LV_OPA_90)under=lv_obj_get_parent(under);
+        assert(under);
+        uint32_t words=rgb_of(lv_obj_get_style_text_color_filtered(root,LV_PART_MAIN));
+        uint32_t ground=rgb_of(lv_obj_get_style_bg_color(under,LV_PART_MAIN));
+        const lv_font_t *font=lv_obj_get_style_text_font(root,LV_PART_MAIN);
+        double least=lv_font_get_line_height(font)>=lv_font_get_line_height(&panel_font_24)?3.0:4.5;
+        double seen=contrast(words,ground);
+        if(seen<least){
+            bad++;
+            printf("%s: \"%s\" in #%06X on #%06X reads %.2f, and %.1f is the least\n",where,
+                   lv_label_get_text(root),(unsigned)words,(unsigned)ground,seen,least);
+        }
+    }
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++)bad+=unreadable(lv_obj_get_child(root,i),where);
+    return bad;
+}
+// Whether a text is whole in one line of that font and that width.
+static bool fits(const char *text,const lv_font_t *font,int32_t width)
+{
+    lv_point_t size;
+    lv_text_get_size(&size,text,font,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+    return size.x<=width;
+}
+// The card of the theme and the accent on the open settings, and the round
+// button of one accent in it: the buttons as wide as they are high, in the
+// order of the accents.
+static lv_obj_t *appearance_card(void)
+{
+    lv_obj_t *title=label(lv_screen_active(),panel_text(TXT_APPEARANCE));
+    assert(title);
+    return lv_obj_get_parent(title);
+}
+static lv_obj_t *accent_button(lv_obj_t *card,int accent)
+{
+    lv_obj_update_layout(card);
+    for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+        lv_obj_t *c=lv_obj_get_child(card,i);
+        if(!lv_obj_check_type(c,&lv_button_class)||lv_obj_get_width(c)!=lv_obj_get_height(c))continue;
+        if(accent--==0)return c;
+    }
+    return NULL;
+}
+// The settings page, which holds that card.
+static lv_obj_t *settings_page(void)
+{
+    lv_obj_t *card=appearance_card();
+    return lv_obj_get_parent(card);
 }
 int main(void)
 {
@@ -731,9 +814,12 @@ int main(void)
         lv_text_get_size(&what_size,panel_text(TXT_LIFT_WAKE_WHAT),&panel_font_12,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
         assert(what_size.x<=lv_obj_get_width(lift_what));
         assert(lv_obj_get_x(lift_what)+lv_obj_get_width(lift_what)<=lv_obj_get_x(lift_switch));
-        // The cards under it keep their gap.
+        // The cards under it keep their gap: the colours of the screen,
+        // and the sound under those.
+        lv_obj_t *look_card=lv_obj_get_parent(label(lv_screen_active(),panel_text(TXT_APPEARANCE)));
+        assert(lv_obj_get_y(look_card)==lv_obj_get_y(card)+lv_obj_get_height(card)+14);
         lv_obj_t *sound_card=lv_obj_get_parent(label(lv_screen_active(),panel_text(TXT_TONES)));
-        assert(lv_obj_get_y(sound_card)==lv_obj_get_y(card)+lv_obj_get_height(card)+14);
+        assert(lv_obj_get_y(sound_card)==lv_obj_get_y(look_card)+lv_obj_get_height(look_card)+14);
         // The switch shows the setting the screen was built with: off here,
         // and on for a panel that has it on.
         assert(!lv_obj_has_state(lift_switch,LV_STATE_CHECKED));
@@ -2911,6 +2997,243 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
+    // The colours of the screen: a dark theme and a light one, and an
+    // accent in eight colours. A card in the settings under the display:
+    // the two themes are two buttons, the chosen one lit, and the accents a
+    // row of round buttons, the chosen one with a tick and a ring. A tap
+    // saves the choice at once and builds the screen again in its colours,
+    // and the settings stay open as far down as they were.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_state_t t=base();
+        panel_ui_update(&t);
+        panel_ui_settings_open();
+        lv_obj_update_layout(lv_screen_active());
+        lv_obj_t *card=appearance_card();
+        // Nothing chosen: the dark theme in its blue, the panel as it was.
+        panel_palette_t dark=panel_palette(PANEL_THEME_DARK,PANEL_ACCENT_BLUE);
+        assert(dark.bg==0x0C1721&&dark.accent==0x49A8F7);
+        assert(rgb_of(lv_obj_get_style_bg_color(lv_screen_active(),0))==dark.bg);
+        lv_obj_t *dark_button=button_with(card,panel_text(TXT_THEME_DARK));
+        lv_obj_t *light_button=button_with(card,panel_text(TXT_THEME_LIGHT));
+        assert(dark_button&&light_button);
+        assert(rgb_of(lv_obj_get_style_bg_color(dark_button,0))==dark.accent);
+        assert(rgb_of(lv_obj_get_style_bg_color(light_button,0))==dark.button);
+        assert(label(card,panel_text(TXT_COLOUR_BLUE)));
+        // Eight round buttons in a row inside the card, each in the tone of
+        // its accent in this theme. The gap between two belongs to the
+        // touch of both, so a finger between them still finds one.
+        lv_area_t inside;
+        lv_obj_get_coords(card,&inside);
+        lv_area_t touch_before={0};
+        for(int a=0;a<PANEL_ACCENTS;a++){
+            lv_obj_t *b=accent_button(card,a);
+            assert(b&&lv_obj_get_width(b)>=38);
+            lv_area_t at,touch;
+            lv_obj_get_coords(b,&at);lv_obj_get_click_area(b,&touch);
+            assert(at.x1>inside.x1&&at.x2<inside.x2&&at.y1>inside.y1&&at.y2<inside.y2);
+            if(a){
+                lv_area_t before_at;
+                lv_obj_get_coords(accent_button(card,a-1),&before_at);
+                assert(at.x1>before_at.x2);
+                assert(touch.x1<=touch_before.x2+1);
+            }
+            touch_before=touch;
+            assert(rgb_of(lv_obj_get_style_bg_color(b,0))==panel_palette(PANEL_THEME_DARK,a).accent);
+            bool chosen=a==PANEL_ACCENT_BLUE;
+            assert((label(b,LV_SYMBOL_OK)!=NULL)==chosen);
+            assert((lv_obj_get_style_outline_width(b,0)>0)==chosen);
+        }
+        assert(!accent_button(card,PANEL_ACCENTS));
+        // The words of the card whole on their line, in each language, and
+        // the name of every accent in its room.
+        for(int language=0;language<PANEL_LANGUAGE_COUNT;language++){
+            panel_text_set((panel_language_t)language);
+            assert(fits(panel_text(TXT_APPEARANCE),&panel_font_18,248));
+            assert(fits(panel_text(TXT_APPEARANCE_WHAT),&panel_font_12,248));
+            assert(fits(panel_text(TXT_ACCENT),&panel_font_18,268));
+            assert(fits(panel_text(TXT_ACCENT_WHAT),&panel_font_12,400));
+            // A theme in its button of 70, with 4 of the button on each side
+            // of it inside the border: "Dunkel" takes 59.
+            for(int theme=0;theme<PANEL_THEMES;theme++)
+                assert(fits(panel_text(panel_theme_name(theme)),&panel_font_16,70-2-2*4));
+            for(int a=0;a<PANEL_ACCENTS;a++)
+                assert(fits(panel_text(panel_accent_name(a)),&panel_font_18,108));
+        }
+        panel_text_set(PANEL_ENGLISH);
+        // The light theme: saved at once, and the screen built again in its
+        // colours, with the settings open as far down as they were.
+        lv_obj_t *page=settings_page();
+        lv_obj_scroll_to_y(page,300,LV_ANIM_OFF);
+        int32_t scrolled=lv_obj_get_scroll_y(page);
+        assert(scrolled==300);
+        saved_count=0;
+        lv_obj_send_event(light_button,LV_EVENT_CLICKED,NULL);
+        assert(saved_count==1&&saved_key==PANEL_THEME&&saved_value==PANEL_THEME_LIGHT);
+        panel_palette_t light=panel_palette(PANEL_THEME_LIGHT,PANEL_ACCENT_BLUE);
+        assert(rgb_of(lv_obj_get_style_bg_color(lv_screen_active(),0))==light.bg);
+        assert(strcmp(panel_ui_where(),"the settings")==0);
+        assert(lv_obj_get_scroll_y(settings_page())==scrolled);
+        card=appearance_card();
+        assert(rgb_of(lv_obj_get_style_bg_color(card,0))==light.card);
+        light_button=button_with(card,panel_text(TXT_THEME_LIGHT));
+        assert(rgb_of(lv_obj_get_style_bg_color(light_button,0))==light.accent);
+        assert(rgb_of(lv_obj_get_style_bg_color(button_with(card,panel_text(TXT_THEME_DARK)),0))==light.button);
+        // The same tap again is no change: nothing saved, nothing built.
+        lv_obj_send_event(light_button,LV_EVENT_CLICKED,NULL);
+        assert(saved_count==1&&appearance_card()==card);
+        // An accent: saved at once, and the sliders and the switches in it.
+        lv_obj_send_event(accent_button(card,PANEL_ACCENT_ORANGE),LV_EVENT_CLICKED,NULL);
+        assert(saved_count==2&&saved_key==PANEL_ACCENT&&saved_value==PANEL_ACCENT_ORANGE);
+        assert(lv_obj_get_scroll_y(settings_page())==scrolled);
+        panel_palette_t orange=panel_palette(PANEL_THEME_LIGHT,PANEL_ACCENT_ORANGE);
+        card=appearance_card();
+        assert(label(card,panel_text(TXT_COLOUR_ORANGE)));
+        assert(label(accent_button(card,PANEL_ACCENT_ORANGE),LV_SYMBOL_OK));
+        assert(!label(accent_button(card,PANEL_ACCENT_BLUE),LV_SYMBOL_OK));
+        assert(rgb_of(lv_obj_get_style_bg_color(accent_button(card,PANEL_ACCENT_ORANGE),0))==orange.accent);
+        for(int i=0;i<3;i++){
+            int skip=i;
+            lv_obj_t *slider=slider_at_place(settings_page(),&skip);
+            assert(slider);
+            assert(rgb_of(lv_obj_get_style_bg_color(slider,LV_PART_INDICATOR))==orange.accent);
+            assert(rgb_of(lv_obj_get_style_bg_color(slider,LV_PART_KNOB))==orange.slider_knob);
+        }
+        lv_obj_t *lift=NULL;
+        lv_obj_t *display_card=lv_obj_get_parent(label(lv_screen_active(),panel_text(TXT_LIFT_WAKE)));
+        for(unsigned i=0;i<lv_obj_get_child_count(display_card);i++)
+            if(lv_obj_check_type(lv_obj_get_child(display_card,i),&lv_switch_class))lift=lv_obj_get_child(display_card,i);
+        assert(lift&&!lv_obj_has_state(lift,LV_STATE_CHECKED));
+        assert(rgb_of(lv_obj_get_style_bg_color(lift,LV_PART_MAIN))==orange.edge);
+        assert(rgb_of(lv_obj_get_style_bg_color(lift,LV_PART_KNOB))==orange.knob);
+        lv_obj_add_state(lift,LV_STATE_CHECKED);
+        assert(rgb_of(lv_obj_get_style_bg_color(lift,LV_PART_INDICATOR))==orange.accent);
+        // Back on the band, in the new colours: the page, the cards, the
+        // readings of the sensors and the switch of the sound.
+        // 49 and not the 40 of base: the scale of the history can say 40.
+        click(panel_text(TXT_BACK));
+        assert(!label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
+        t.cpu_temp=49;
+        panel_ui_update(&t);
+        assert(rgb_of(lv_obj_get_style_bg_color(lv_screen_active(),0))==orange.bg);
+        lv_obj_t *reading=label(lv_screen_active(),"49 °C");
+        assert(reading&&rgb_of(lv_obj_get_style_text_color(reading,0))==orange.accent_text);
+        assert(rgb_of(lv_obj_get_style_bg_color(lv_obj_get_parent(lv_obj_get_parent(reading)),0))==orange.card);
+        // A new language keeps the colours.
+        panel_ui_settings_open();
+        click(panel_language_name(PANEL_GERMAN));
+        assert(saved_key==PANEL_LANGUAGE);
+        assert(rgb_of(lv_obj_get_style_bg_color(lv_screen_active(),0))==orange.bg);
+        assert(label(appearance_card(),panel_text(TXT_COLOUR_ORANGE)));
+        click(panel_language_name(PANEL_ENGLISH));
+        // And back to the dark theme in blue: the panel as it was.
+        lv_obj_send_event(button_with(appearance_card(),panel_text(TXT_THEME_DARK)),LV_EVENT_CLICKED,NULL);
+        lv_obj_send_event(accent_button(appearance_card(),PANEL_ACCENT_BLUE),LV_EVENT_CLICKED,NULL);
+        assert(saved_key==PANEL_ACCENT&&saved_value==PANEL_ACCENT_BLUE);
+        assert(rgb_of(lv_obj_get_style_bg_color(lv_screen_active(),0))==dark.bg);
+        assert(rgb_of(lv_obj_get_style_bg_color(appearance_card(),0))==dark.card);
+        // A theme or an accent that this firmware does not have, from a
+        // later one: the dark theme in blue, and the card says so.
+        panel_settings_t later=english;
+        later.theme=(panel_theme_t)7;later.accent=(panel_accent_t)99;
+        panel_ui_create(action,setting,sound,&later);
+        panel_ui_settings_open();
+        assert(rgb_of(lv_obj_get_style_bg_color(lv_screen_active(),0))==dark.bg);
+        card=appearance_card();
+        assert(rgb_of(lv_obj_get_style_bg_color(button_with(card,panel_text(TXT_THEME_DARK)),0))==dark.accent);
+        assert(label(accent_button(card,PANEL_ACCENT_BLUE),LV_SYMBOL_OK));
+        lv_refr_now(screen);
+        assert(complaints==0);
+    }
+
+    // Every label of every page reads, in each theme and each accent: the
+    // band with the PC there and with the PC gone, the pages over it, the
+    // settings with the order of the pages, the question, the choice of a
+    // sensor, the colour of the LED bar, the alarm, an update that writes
+    // and the setup. The light theme is new, and a colour of it that nobody
+    // saw on a page of its own is what this is for.
+    {
+        unsigned bad=0;
+        for(int theme=0;theme<PANEL_THEMES;theme++)for(int accent=0;accent<PANEL_ACCENTS;accent++){
+            panel_settings_t chosen={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH,
+                                     .theme=(panel_theme_t)theme,.accent=(panel_accent_t)accent};
+            panel_ui_create(action,setting,sound,&chosen);
+            panel_ui_led_use(led_change);
+            panel_ui_cpu_use(cpu_change);
+            char where[64];
+            panel_state_t s=base();
+            s.cpu_temp=49;s.volume=42;
+            static const panel_pad_t pads[]={{"Steam Controller",93,false},{"PlayStation Controller",100,true},
+                                              {"Xbox Controller",-1,false}};
+            memcpy(s.pads,pads,sizeof pads);s.pad_count=3;
+            static const panel_sensor_t cpus[]={{"k10temp/Tctl","Tctl",49},{"k10temp/Tccd1","CCD 1",47}};
+            memcpy(s.cpu_sensors,cpus,sizeof cpus);s.cpu_sensor_count=2;
+            // A drive that is nearly full, in red, and one that is not.
+            s.drive_count=2;
+            strcpy(s.drives[0].name,"Internal");s.drives[0].total=512ULL<<30;s.drives[0].free=20ULL<<30;
+            strcpy(s.drives[1].name,"SD card");s.drives[1].total=256ULL<<30;s.drives[1].free=200ULL<<30;
+            strcpy(s.playing,"Portal 2");s.achievements_done=10;s.achievements_total=51;
+            s.clock_set=true;s.hour=18;s.minute=42;s.weekday=3;s.day=1;s.month=10;
+            s.gpu_load=87;s.gpu_mhz=2450;s.vram_used=8ULL<<30;s.vram_total=16ULL<<30;
+            s.boost_here=s.boost_on=true;
+            s.led_known=s.led_here=s.led_look=true;
+            strcpy(s.led_effect[PANEL_LED_DESKTOP],"breath");strcpy(s.led_effect[PANEL_LED_GAME],"fire");
+            strcpy(s.led_colour,"#ff8000");s.led_brightness=128;
+            s.cpu_known=s.cpu_here=true;strcpy(s.cpu_profile,"balanced");
+            s.cpu_offers=(uint8_t)((1u<<PANEL_CPU_PROFILES)-1);
+            strcpy(s.cpu_governor,"powersave");strcpy(s.cpu_epp,"balance_performance");strcpy(s.cpu_driver,"amd-pstate-epp");
+            s.esp_supply=PANEL_SUPPLY_BATTERY;s.esp_battery=87;
+            snprintf(s.update.offered,sizeof s.update.offered,"64-2b7f0c1");
+            s.update.phase=PANEL_UPDATE_FAILED;s.update.failure=TXT_UPDATE_BROKEN;
+            strcpy(s.message,panel_text(TXT_SENT));
+            strcpy(s.host,"FractalMachine");
+            panel_ui_update(&s);
+            #define READ_ALL(what) do{snprintf(where,sizeof where,"%s, %s, %s",panel_text(panel_theme_name(theme)), \
+                panel_text(panel_accent_name(accent)),what);bad+=unreadable(lv_screen_active(),where);}while(0)
+            READ_ALL("the band");
+            panel_ui_settings_open();panel_ui_arrange_open();READ_ALL("the settings and the order");
+            assert(panel_ui_home());
+            panel_ui_pads_open();READ_ALL("the controllers");assert(panel_ui_home());
+            panel_ui_pc_open();READ_ALL("the PC");assert(panel_ui_home());
+            panel_ui_self_open();READ_ALL("the panel");assert(panel_ui_home());
+            panel_ui_confirm(PANEL_POWEROFF);READ_ALL("a question");assert(panel_ui_home());
+            lv_obj_t *tile=label(lv_screen_active(),"49 °C");
+            assert(tile);
+            lv_obj_send_event(lv_obj_get_parent(tile),LV_EVENT_CLICKED,NULL);
+            assert(strcmp(panel_ui_where(),"a choice of sensor")==0);
+            READ_ALL("a choice of sensor");assert(panel_ui_home());
+            click(look_words_for(TXT_COLOUR_ORANGE,50,true));
+            assert(strcmp(panel_ui_where(),"the colour of the LED bar")==0);
+            READ_ALL("the colour of the LED bar");assert(panel_ui_home());
+            // The timer, to its end. Its + is on the fourth page: the + of
+            // the volume of the PC comes first on the screen.
+            lv_obj_t *clock_page=lv_obj_get_child(find_band(lv_screen_active()),3);
+            lv_obj_send_event(lv_obj_get_parent(label(clock_page,LV_SYMBOL_PLUS)),LV_EVENT_SHORT_CLICKED,NULL);
+            click(panel_text(TXT_START));
+            for(int i=0;i<200&&!panel_ui_timer_ringing();i++){lv_tick_inc(60*1000);panel_ui_timer_tick();}
+            assert(panel_ui_timer_ringing());
+            READ_ALL("the alarm");
+            assert(panel_ui_timer_stop());
+            panel_ui_timer_tick();
+            click(panel_text(TXT_RESET));
+            // The PC gone, with an address to wake it at.
+            panel_state_t gone=s;gone.online=false;gone.can_wake=true;
+            panel_ui_update(&gone);READ_ALL("the band without the PC");
+            panel_state_t writing=s;writing.update.phase=PANEL_UPDATE_RUNNING;writing.update.percent=45;
+            panel_ui_update(&writing);READ_ALL("an update");
+            panel_state_t setup=s;setup.setup=true;
+            strcpy(setup.setup_ssid,"SteamOS-Panel-3A12");strcpy(setup.setup_password,"ABCD2345EFGH");
+            panel_ui_update(&setup);READ_ALL("the setup");
+            #undef READ_ALL
+            lv_refr_now(screen);
+        }
+        assert(bad==0);
+        assert(complaints==0);
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+    }
+
     puts("OK: seven pages that snap, in an order somebody can change, any of them "
          "but the last one hidden with an eye, the "
          "session and its target button, the "
@@ -2925,6 +3248,8 @@ int main(void)
          "its power chip in detail and its frames in movement, and the page "
          "of the card with its history and its Cooling Boost, the page of "
          "the LED bar with the effect of each mode of the PC and the colour and the brightness of the desktop, and the page "
-         "of the energy profile of its CPU.");
+         "of the energy profile of its CPU, and all of it in a dark theme and a "
+         "light one, each in eight accents that a card of the settings chooses, "
+         "with every label of every page readable in each.");
     return 0;
 }

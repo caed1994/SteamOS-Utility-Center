@@ -85,9 +85,18 @@ int main(int argc,char **argv)
     lv_display_set_color_format(d,LV_COLOR_FORMAT_XRGB8888);
     lv_display_set_buffers(d,pixels,NULL,sizeof(pixels),LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(d,flush);
-    /* A third word "de" draws the screen in German. */
+    /* The words after the mode: "de" draws the screen in German, "light"
+     * in the light theme, and the name of a colour in that accent, as
+     * "panel.ppm settings de light orange". See panel_theme.h. */
     panel_settings_t settings={.brightness=70,.sound_volume=30,.touch_tones=false,.lift_wake=true,
-                               .language=argc>3&&strcmp(argv[3],"de")==0?PANEL_GERMAN:PANEL_ENGLISH};
+                               .language=PANEL_ENGLISH};
+    static const char *const accents[PANEL_ACCENTS]={"blue","cyan","green","yellow",
+                                                     "orange","red","magenta","purple"};
+    for(int i=3;i<argc;i++){
+        if(strcmp(argv[i],"de")==0)settings.language=PANEL_GERMAN;
+        else if(strcmp(argv[i],"light")==0)settings.theme=PANEL_THEME_LIGHT;
+        else for(int a=0;a<PANEL_ACCENTS;a++)if(strcmp(argv[i],accents[a])==0)settings.accent=(panel_accent_t)a;
+    }
     /* "pages-hidden" is that screen with the session hidden. */
     if(argc>2&&strcmp(argv[2],"pages-hidden")==0)settings.page_hidden=1u<<PANEL_PAGE_SESSION;
     /* The history of the page of the card, which main.c keeps in PSRAM. */
@@ -341,6 +350,16 @@ int main(int argc,char **argv)
         lv_obj_t *page=lv_obj_get_child(lv_screen_active(),-1);
         lv_obj_update_layout(page);
         lv_obj_scroll_to_y(page,LV_COORD_MAX,LV_ANIM_OFF);
+    }
+    /* "settings-appearance" is the card of the theme and the accent, in
+     * the middle of the screen. */
+    if(argc>2&&strcmp(argv[2],"settings-appearance")==0){
+        lv_obj_t *title=find_label(lv_screen_active(),panel_text(TXT_APPEARANCE));
+        if(title){
+            lv_obj_t *page=lv_obj_get_child(lv_screen_active(),-1);
+            lv_obj_update_layout(page);
+            lv_obj_scroll_to_y(page,lv_obj_get_y(lv_obj_get_parent(title))-150,LV_ANIM_OFF);
+        }
     }
     /* "standby" is the black cover of a sleeping panel with its clock, as
      * main.c writes it: the time, and the day and the date under it. */

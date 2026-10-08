@@ -154,6 +154,17 @@ static void walk(panel_language_t language)
     click(panel_text(TXT_SETUP));assert(label(lv_screen_active(),panel_text(TXT_CONFIRM_SETUP)));
     click(panel_text(TXT_CANCEL));assert(actions==0);
     assert(label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
+    // The colours of the screen: a theme is saved at a tap and builds both
+    // screens again, the way a language does, and the person stays on the
+    // settings with every value as it was.
+    click(panel_text(TXT_THEME_LIGHT));
+    assert(last_key==PANEL_THEME && last_value==PANEL_THEME_LIGHT && last_save);
+    assert(label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
+    assert(label(lv_screen_active(),"55 %") && label(lv_screen_active(),"45 %"));
+    skip=1;sw=kind(lv_screen_active(),&lv_switch_class,&skip);assert(lv_obj_has_state(sw,LV_STATE_CHECKED));
+    click(panel_text(TXT_THEME_DARK));
+    assert(last_key==PANEL_THEME && last_value==PANEL_THEME_DARK && last_save);
+    assert(settings==15 && actions==0);
     // The words below are the ones the button chose.
     click(panel_text(TXT_BACK));
     assert(!label(lv_screen_active(),panel_text(TXT_SETUP)));
@@ -277,6 +288,6 @@ int main(void)
     home_key();
     puts("OK: Offline navigation in each language, the language button, local "
          "callbacks, values retained, PC actions isolated, setup confirmation, "
-         "the home key.");
+         "the theme buttons, the home key.");
     return 0;
 }
