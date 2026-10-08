@@ -14,6 +14,8 @@
 #include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "driver/ledc.h"
 #include "panel_boot.h"
 #include "panel_frames.h"
@@ -673,9 +675,32 @@ bool panel_display_touched(void)
            && count>0;
 }
 
+/* The stream of the display started again at the next frame boundary.
+ *
+ * The display has no memory of its own: the RGB driver streams the frame
+ * buffer to it, through two bounce buffers that an interrupt fills out of
+ * PSRAM. When a fill comes late, the driver starts the stream again at the
+ * next VSYNC (lcd_rgb_panel_try_restart_transmission). Its own note says
+ * that a restart that comes late shifts the picture, and after that no
+ * fill is missing any more, so nothing starts it again: the shift stays.
+ * Read off the board: the clock of a sleeping panel stood far down the
+ * screen and cut off, and came back to its place at the wake, when the
+ * clock of the CPU went up and the pixel clock changed. A black cover had
+ * hidden the same shift before there was a clock on it.
+ *
+ * So the stream starts again at the moments that can shift it: each change
+ * of the pixel clock, and each draw of a sleeping panel. A restart of a
+ * stream that is in step changes nothing on the screen, and costs a reset
+ * of the DMA in the VSYNC interrupt: the two bounce buffers are full by
+ * then, and nothing is copied. */
+static void stream_restart(void)
+{
+    if(panel_rgb)esp_lcd_rgb_panel_restart(panel_rgb);
+}
+
 void panel_display_sleep_clock(const char *time,const char *date)
 {
-    if(panel_screen)panel_ui_sleep_clock(panel_screen,time,date);
+    if(panel_screen && panel_ui_sleep_clock(panel_screen,time,date))stream_restart();
 }
 
 esp_err_t panel_display_standby(bool sleep,int brightness)
@@ -694,6 +719,13 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
         /* After the cover is on the screen, so the slow frames are black
          * ones. See PANEL_PCLK_SLEEP_HZ. */
         if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_SLEEP_HZ);
+        stream_restart();
+        /* The new clock and the restart come in at the next VSYNC. main.c
+         * takes the CPU down to its low speed when this returns, and a
+         * frame at the full pixel clock with the CPU at 80 MHz is the one
+         * where the fills come late. So this waits out the rest of a frame
+         * at the old clock and one at the new one first. */
+        vTaskDelay(pdMS_TO_TICKS((frame_us(pclk_awake)+frame_us(PANEL_PCLK_SLEEP_HZ))/1000)+1);
         ESP_LOGI("panel_display",
                  "Display asleep: backlight down to %d%%, which is as dark "
                  "as this board goes, pixel clock %d MHz",BACKLIGHT_SLEEP_PERCENT,
@@ -701,6 +733,7 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
     }else{
         /* The full pixel clock before the first frame that shows anything. */
         if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,pclk_awake);
+        stream_restart();
         panel_taps_break(&panel_taps);
         panel_ui_sleep(panel_screen,panel_input,false);
         esp_err_t err=backlight_on(brightness);
@@ -708,6 +741,7 @@ esp_err_t panel_display_standby(bool sleep,int brightness)
             backlight_off();
             panel_ui_sleep(panel_screen,panel_input,true);
             if(panel_rgb)esp_lcd_rgb_panel_set_pclk(panel_rgb,PANEL_PCLK_SLEEP_HZ);
+            stream_restart();
             return err;
         }
         ESP_LOGI("panel_display","Backlight ON: PWM restored to %d%%",brightness);
