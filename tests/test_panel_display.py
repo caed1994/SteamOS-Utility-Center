@@ -581,6 +581,75 @@ class LogFloodTest(unittest.TestCase):
         self.assertRegex(body, r"repeats=0;")
 
 
+class SliderDragTest(unittest.TestCase):
+    """A slider that somebody drags, and the work that runs under it.
+
+    Reported from the board: the sliders of brightness and volume stopped
+    for a moment now and then, with the PC on and with it off. Two things
+    ran in the task that draws while a finger was down:
+
+    - the board support writes a line at each new brightness, and a drag
+      sets one at each read of the touch
+    - panel_ui_update wrote every label again at each new state, and with
+      no PC the state is new every 5 s: the power chip and the uptime
+
+    Measured on the host with the screen of this firmware and no PC, each
+    of those updates drew 14 areas again, 14 % of the screen. After the
+    change it draws none. check_idle holds that number.
+    """
+
+    UPDATE_PARTS = ("temperatures_show", "esp_power_show", "pads_head",
+                    "pads_show", "card_show", "name_show", "history_show",
+                    "pc_show", "self_show", "update_layer_show")
+    RAW = re.compile(r"lv_label_set_text(?:_fmt)?\(|"
+                     r"lv_obj_remove_flag\([^;]*LV_OBJ_FLAG_HIDDEN|"
+                     r"lv_obj_add_flag\([^;]*LV_OBJ_FLAG_HIDDEN|"
+                     r"lv_obj_set_style_(?:bg|text)_color\(")
+
+    def source(self, name):
+        with open(os.path.join(FIRMWARE, name), encoding="utf-8") as handle:
+            return without_comments(handle.read())
+
+    def function(self, code, name):
+        found = re.search(r"^(?:static )?void %s\([^;{]*\)\s*\{.*?\n\}" % name,
+                          code, re.S | re.M)
+        self.assertIsNotNone(found, name)
+        return found.group(0)
+
+    def test_the_board_support_writes_no_line_per_brightness(self):
+        code = self.source("main.c")
+        start = code.index("if (!panel_display_start())")
+        quiet = code.index('esp_log_level_set("ESP32-S3-Touch-LCD-4B",ESP_LOG_WARN);')
+        self.assertLess(start, quiet)
+
+    def test_the_update_writes_through_the_helpers(self):
+        code = self.source("ui.c")
+        update = self.function(code, "panel_ui_update")
+        # The setup page writes its long text itself and returns.
+        update = update[update.index("set_text(connection,"):]
+        self.assertEqual(self.RAW.findall(update), [])
+        for name in self.UPDATE_PARTS:
+            self.assertEqual(self.RAW.findall(self.function(code, name)), [], name)
+
+    def test_the_helpers_write_a_change_only(self):
+        code = self.source("ui.c")
+        text = self.function(code, "set_text")
+        self.assertLess(text.index("strcmp(lv_label_get_text(label),text)!=0"),
+                        text.index("lv_label_set_text(label,text)"))
+        self.assertIn("set_text(label,text);", self.function(code, "set_textf"))
+        self.assertIn("lv_color_eq(", self.function(code, "set_bg"))
+        self.assertIn("lv_color_eq(", self.function(code, "set_text_colour"))
+        self.assertIn("lv_obj_has_flag(o,LV_OBJ_FLAG_HIDDEN)!=shown)return;",
+                      self.function(code, "set_shown"))
+
+    def test_a_check_counts_what_an_update_with_no_pc_draws(self):
+        with open(os.path.join(REPO, "firmware", "companion", "preview",
+                               "check_idle.c"), encoding="utf-8") as handle:
+            check = without_comments(handle.read())
+        loop = check[check.index("off.self.uptime_s+=5;"):]
+        self.assertIn("assert(invalidations==0);", loop)
+
+
 class DrawingStackTest(unittest.TestCase):
     """The stack of the task that draws.
 

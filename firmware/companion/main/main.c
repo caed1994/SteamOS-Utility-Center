@@ -1641,6 +1641,11 @@ void app_main(void)
         state.can_wake=panel_wol_parse(config.wol_mac,kept);
     }
     if (!panel_display_start()) ESP_ERROR_CHECK(ESP_FAIL);
+    /* The board support writes a line at each new brightness, and a drag
+     * of the slider sets one at each read of the touch: a line every 15 ms
+     * to the console, from the task that draws. Its warnings stay. After
+     * the start of the display, so that the start keeps its lines. */
+    esp_log_level_set("ESP32-S3-Touch-LCD-4B",ESP_LOG_WARN);
     ram_step("display");
     esp_err_t key_err=panel_power_init();
     if(key_err!=ESP_OK)ESP_LOGW("panel_power","PWRKEY unavailable: %s",esp_err_to_name(key_err));

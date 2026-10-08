@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 caed1994
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -254,6 +255,44 @@ static lv_obj_t *text_at(lv_obj_t *parent,const char *text,int x,int y,int width
     lv_label_set_text(label,text);return label;
 }
 static void center_text(lv_obj_t *label){lv_obj_set_style_text_align(label,LV_TEXT_ALIGN_CENTER,0);}
+/* Writes that change nothing draw nothing.
+ *
+ * LVGL draws a label again at each lv_label_set_text, and an object at
+ * each new local style and at each removal of LV_OBJ_FLAG_HIDDEN, with the
+ * same value as well. panel_ui_update writes the whole screen at each new
+ * state. With no PC the state is new every 5 s too: the readings of the
+ * power chip and the uptime of the panel. Measured on this screen with no
+ * PC, each of those updates drew 14 areas again, 14 % of the screen, and
+ * none of them had changed. The update writes through these, and they
+ * write a change only. The timer and the clock use set_text as well: they
+ * are asked five times a second. */
+static void set_text(lv_obj_t *label,const char *text)
+{
+    if(label&&strcmp(lv_label_get_text(label),text)!=0)lv_label_set_text(label,text);
+}
+static void set_textf(lv_obj_t *label,const char *format,...)
+{
+    char text[128];
+    va_list args;
+    va_start(args,format);vsnprintf(text,sizeof text,format,args);va_end(args);
+    set_text(label,text);
+}
+static void set_bg(lv_obj_t *o,uint32_t rgb)
+{
+    lv_color_t colour=lv_color_hex(rgb);
+    if(o&&!lv_color_eq(lv_obj_get_style_bg_color(o,0),colour))lv_obj_set_style_bg_color(o,colour,0);
+}
+static void set_text_colour(lv_obj_t *o,uint32_t rgb)
+{
+    lv_color_t colour=lv_color_hex(rgb);
+    if(o&&!lv_color_eq(lv_obj_get_style_text_color(o,0),colour))lv_obj_set_style_text_color(o,colour,0);
+}
+static void set_shown(lv_obj_t *o,bool shown)
+{
+    if(!o||lv_obj_has_flag(o,LV_OBJ_FLAG_HIDDEN)!=shown)return;
+    if(shown)lv_obj_remove_flag(o,LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);
+}
 static lv_obj_t *panel(lv_obj_t *parent,int x,int y,int w,int h,uint32_t color,bool border)
 {
     lv_obj_t *o=lv_obj_create(parent);lv_obj_remove_style_all(o);
@@ -874,16 +913,16 @@ static void pads_head(const panel_state_t *s)
          * second controller. */
         bool shown=i==0||i<count;
         if(shown){
-            lv_obj_remove_flag(pad_icons[i],LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(pad_values[i],LV_OBJ_FLAG_HIDDEN);
+            set_shown(pad_icons[i],true);
+            set_shown(pad_values[i],true);
         }else{
-            lv_obj_add_flag(pad_icons[i],LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(pad_values[i],LV_OBJ_FLAG_HIDDEN);
+            set_shown(pad_icons[i],false);
+            set_shown(pad_values[i],false);
         }
         char said[24];
         if(i<count)pad_level(said,sizeof said,&s->pads[i]);
         else snprintf(said,sizeof said,"-- %%");
-        lv_label_set_text(pad_values[i],said);
+        set_text(pad_values[i],said);
     }
 }
 /* Every pointer into the page of the controllers, dropped. The same rule
@@ -905,27 +944,27 @@ static void pads_show(const panel_state_t *s)
 {
     if(!pads_screen)return;
     int count=pads_known(s);
-    lv_label_set_text(pads_none,panel_text(s->online?TXT_NO_PADS:TXT_PC_OFFLINE));
-    if(count>0)lv_obj_add_flag(pads_none,LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_remove_flag(pads_none,LV_OBJ_FLAG_HIDDEN);
+    set_text(pads_none,panel_text(s->online?TXT_NO_PADS:TXT_PC_OFFLINE));
+    if(count>0)set_shown(pads_none,false);
+    else set_shown(pads_none,true);
     for(int i=0;i<PANEL_PADS;i++){
-        if(i>=count){lv_obj_add_flag(pad_cards[i],LV_OBJ_FLAG_HIDDEN);continue;}
+        if(i>=count){set_shown(pad_cards[i],false);continue;}
         const panel_pad_t *pad=&s->pads[i];
         char said[24];
-        lv_obj_remove_flag(pad_cards[i],LV_OBJ_FLAG_HIDDEN);
+        set_shown(pad_cards[i],true);
         char name[PANEL_PAD_NAME];
         pad_fit(name,sizeof name,pad->name,&panel_font_18,PAD_NAME_WIDTH);
-        lv_label_set_text(pad_names[i],name);
+        set_text(pad_names[i],name);
         pad_level(said,sizeof said,pad);
-        lv_label_set_text(pad_levels[i],said);
+        set_text(pad_levels[i],said);
         /* A bar for a battery, and words for a controller with none: an
          * empty bar reads as a flat battery. */
         if(pad->battery<0){
-            lv_obj_add_flag(pad_tracks[i],LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(pad_unknown[i],LV_OBJ_FLAG_HIDDEN);
+            set_shown(pad_tracks[i],false);
+            set_shown(pad_unknown[i],true);
         }else{
-            lv_obj_remove_flag(pad_tracks[i],LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(pad_unknown[i],LV_OBJ_FLAG_HIDDEN);
+            set_shown(pad_tracks[i],true);
+            set_shown(pad_unknown[i],false);
             lv_obj_set_width(pad_bars[i],PAD_BAR_WIDTH*pad->battery/100);
         }
     }
@@ -1022,11 +1061,11 @@ static void pc_show(const panel_state_t *s)
     if(!pc_screen)return;
     /* What a PC that does not answer said last is no answer to show. */
     for(int i=0;i<PC_GROUPS;i++){
-        if(s->online)lv_obj_remove_flag(pc_cards[i],LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(pc_cards[i],LV_OBJ_FLAG_HIDDEN);
+        if(s->online)set_shown(pc_cards[i],true);
+        else set_shown(pc_cards[i],false);
     }
-    if(s->online)lv_obj_add_flag(pc_none,LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_remove_flag(pc_none,LV_OBJ_FLAG_HIDDEN);
+    if(s->online)set_shown(pc_none,false);
+    else set_shown(pc_none,true);
     if(!s->online)return;
     const panel_pc_t *pc=&s->pc;
     char said[64];
@@ -1119,8 +1158,8 @@ static void temperatures_show(const panel_state_t *s)
 {
     int cpu=sensor_shown(s->cpu_sensors,s->cpu_sensor_count,local.cpu_sensor,s->cpu_temp);
     int gpu=sensor_shown(s->gpu_sensors,s->gpu_sensor_count,local.gpu_sensor,s->gpu_temp);
-    if(s->online&&cpu>=0)lv_label_set_text_fmt(cpu_value,"%d °C",cpu);else lv_label_set_text(cpu_value,"-- °C");
-    if(s->online&&gpu>=0)lv_label_set_text_fmt(gpu_value,"%d °C",gpu);else lv_label_set_text(gpu_value,"-- °C");
+    if(s->online&&cpu>=0)set_textf(cpu_value,"%d °C",cpu);else set_text(cpu_value,"-- °C");
+    if(s->online&&gpu>=0)set_textf(gpu_value,"%d °C",gpu);else set_text(gpu_value,"-- °C");
 }
 void panel_ui_history_use(panel_history_t *kept){history=kept;history_stale=true;}
 void panel_ui_history_tick(const panel_state_t *s,uint32_t now_ms)
@@ -1150,9 +1189,9 @@ static void history_show(void)
     for(int i=0;i<HISTORY_WINDOWS;i++){
         bool on=history_windows[i]==history_minutes;
         lv_obj_set_style_border_color(history_buttons[i],lv_color_hex(on?ACCENT_TEXT:EDGE),0);
-        lv_obj_set_style_text_color(history_buttons[i],lv_color_hex(on?ACCENT_TEXT:TEXT),0);
+        set_text_colour(history_buttons[i],on?ACCENT_TEXT:TEXT);
     }
-    lv_label_set_text_fmt(history_ago,"-%d %s",history_minutes,panel_text(TXT_MINUTES));
+    set_textf(history_ago,"-%d %s",history_minutes,panel_text(TXT_MINUTES));
     int found=0,low=0,high=0,cpu_low=0,cpu_high=0,watts_low=0,watts_high=0;
     if(history){
         history_drawn=history->version;
@@ -1178,15 +1217,15 @@ static void history_show(void)
     /* A scale with no curve on it is empty: the note in the middle says
      * why. */
     if(cpu||gpu){
-        lv_label_set_text_fmt(history_axis[0],"%d °C",top);
-        lv_label_set_text_fmt(history_axis[1],"%d °C",bottom);
-    }else{lv_label_set_text(history_axis[0],"");lv_label_set_text(history_axis[1],"");}
+        set_textf(history_axis[0],"%d °C",top);
+        set_textf(history_axis[1],"%d °C",bottom);
+    }else{set_text(history_axis[0],"");set_text(history_axis[1],"");}
     if(watts){
-        lv_label_set_text_fmt(history_axis[2],"%d W",most);
-        lv_label_set_text(history_axis[3],"0 W");
-    }else{lv_label_set_text(history_axis[2],"");lv_label_set_text(history_axis[3],"");}
-    if(found)lv_obj_add_flag(history_empty,LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_remove_flag(history_empty,LV_OBJ_FLAG_HIDDEN);
+        set_textf(history_axis[2],"%d W",most);
+        set_text(history_axis[3],"0 W");
+    }else{set_text(history_axis[2],"");set_text(history_axis[3],"");}
+    if(found)set_shown(history_empty,false);
+    else set_shown(history_empty,true);
     lv_chart_refresh(history_chart);
 }
 static void history_window_clicked(lv_event_t *e)
@@ -1207,8 +1246,8 @@ static void boost_show(const panel_state_t *s)
 {
     if(!boost_field)return;
     if(s->boost_here==lv_obj_has_flag(boost_field,LV_OBJ_FLAG_HIDDEN)){
-        if(s->boost_here)lv_obj_remove_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
+        if(s->boost_here)set_shown(boost_field,true);
+        else set_shown(boost_field,false);
     }
     if(s->online==lv_obj_has_state(boost_field,LV_STATE_DISABLED)){
         if(s->online)lv_obj_remove_state(boost_field,LV_STATE_DISABLED);
@@ -1217,7 +1256,7 @@ static void boost_show(const panel_state_t *s)
     int on=s->online&&s->boost_on;
     if(on==boost_shown)return;
     boost_shown=on;
-    lv_obj_set_style_bg_color(boost_track,lv_color_hex(on?ACCENT:EDGE),0);
+    set_bg(boost_track,on?ACCENT:EDGE);
     lv_obj_set_x(boost_knob,on?BOOST_KNOB_ON:BOOST_KNOB_OFF);
 }
 /* A tap asks for the other state than the one the switch shows. The switch
@@ -1237,12 +1276,12 @@ static void card_show(const panel_state_t *s)
 {
     if(!gpu_load_value)return;
     if(s->online&&s->gpu_load>=0){
-        lv_label_set_text_fmt(gpu_load_value,"%d %%",s->gpu_load);
-        lv_obj_remove_flag(gpu_load_track,LV_OBJ_FLAG_HIDDEN);
+        set_textf(gpu_load_value,"%d %%",s->gpu_load);
+        set_shown(gpu_load_track,true);
         lv_obj_set_width(gpu_load_bar,GPU_BAR_WIDTH*(s->gpu_load>100?100:s->gpu_load)/100);
     }else{
-        lv_label_set_text(gpu_load_value,"--");
-        lv_obj_add_flag(gpu_load_track,LV_OBJ_FLAG_HIDDEN);
+        set_text(gpu_load_value,"--");
+        set_shown(gpu_load_track,false);
     }
     if(s->online&&s->vram_total>0&&s->vram_used<=s->vram_total){
         char used[16],total[16],said[40];
@@ -1252,15 +1291,15 @@ static void card_show(const panel_state_t *s)
         char *unit=strstr(used," GB");
         if(unit)*unit=0;
         snprintf(said,sizeof said,"%s / %s",used,total);
-        lv_label_set_text(vram_value,said);
-        lv_obj_remove_flag(vram_track,LV_OBJ_FLAG_HIDDEN);
+        set_text(vram_value,said);
+        set_shown(vram_track,true);
         lv_obj_set_width(vram_bar,(int32_t)(GPU_BAR_WIDTH*s->vram_used/s->vram_total));
     }else{
-        lv_label_set_text(vram_value,"--");
-        lv_obj_add_flag(vram_track,LV_OBJ_FLAG_HIDDEN);
+        set_text(vram_value,"--");
+        set_shown(vram_track,false);
     }
-    if(s->online&&s->gpu_mhz>=0)lv_label_set_text_fmt(gpu_clock_value,"%d MHz",s->gpu_mhz);
-    else lv_label_set_text(gpu_clock_value,"--");
+    if(s->online&&s->gpu_mhz>=0)set_textf(gpu_clock_value,"%d MHz",s->gpu_mhz);
+    else set_text(gpu_clock_value,"--");
     boost_show(s);
 }
 static void sensor_close(void){if(sensor_layer){lv_obj_delete(sensor_layer);sensor_layer=NULL;}}
@@ -1483,10 +1522,10 @@ static void self_show(const panel_state_t *s)
      * failed, and nowhere else. */
     const panel_update_t *update=&s->update;
     bool failed=update->phase==PANEL_UPDATE_FAILED;
-    if(!update->offered[0]&&!failed){lv_obj_add_flag(update_card,LV_OBJ_FLAG_HIDDEN);return;}
-    lv_obj_remove_flag(update_card,LV_OBJ_FLAG_HIDDEN);
+    if(!update->offered[0]&&!failed){set_shown(update_card,false);return;}
+    set_shown(update_card,true);
     say_version(said,sizeof said,update->offered);
-    lv_label_set_text(update_offered,update->offered[0]?said:"--");
+    set_text(update_offered,update->offered[0]?said:"--");
     /* What stands in the way, or what went wrong the last time. The
      * battery first: it is the one somebody can change now. */
     bool power=update_power_ok(s);
@@ -1497,8 +1536,8 @@ static void self_show(const panel_state_t *s)
         snprintf(note,sizeof note,panel_text(TXT_UPDATE_FAILED),panel_text(update->failure));
         color=RED;
     }
-    lv_label_set_text(update_note,note);
-    lv_obj_set_style_text_color(update_note,lv_color_hex(color),0);
+    set_text(update_note,note);
+    set_text_colour(update_note,color);
     bool can=s->online&&update->offered[0]&&power;
     if(can)lv_obj_remove_state(update_button,LV_STATE_DISABLED);
     else lv_obj_add_state(update_button,LV_STATE_DISABLED);
@@ -1680,10 +1719,10 @@ static void update_layer_show(const panel_state_t *s)
     }
     bool restarting=s->update.phase==PANEL_UPDATE_RESTARTING;
     int percent=s->update.percent<0?0:s->update.percent>100?100:s->update.percent;
-    lv_label_set_text(update_title,panel_text(TXT_UPDATE_RUNNING));
+    set_text(update_title,panel_text(TXT_UPDATE_RUNNING));
     lv_obj_set_width(update_bar,400*percent/100);
-    lv_label_set_text_fmt(update_percent,"%d %%",percent);
-    lv_label_set_text(update_hint,panel_text(restarting?TXT_UPDATE_RESTART:TXT_UPDATE_KEEP_ON));
+    set_textf(update_percent,"%d %%",percent);
+    set_text(update_hint,panel_text(restarting?TXT_UPDATE_RESTART:TXT_UPDATE_KEEP_ON));
 }
 static void gpu_tile_clicked(lv_event_t *e){(void)e;feedback();sensor_menu(true);}
 const char *panel_ui_where(void)
@@ -1708,12 +1747,6 @@ const char *panel_ui_where(void)
     return pages[band_page()];
 }
 
-/* A label set only when its text is new. LVGL draws a label again at each
- * set, and the timer and the clock are asked five times a second. */
-static void set_text(lv_obj_t *label,const char *text)
-{
-    if(label&&strcmp(lv_label_get_text(label),text)!=0)lv_label_set_text(label,text);
-}
 static void enable(lv_obj_t *o,bool on)
 {
     if(!o)return;
@@ -2112,8 +2145,8 @@ static void cpu_show(const panel_state_t *s)
         int8_t lit=p==selected;
         if(lit==cpu_lit[p])continue;
         cpu_lit[p]=lit;
-        lv_obj_set_style_bg_color(cpu_buttons[p],lv_color_hex(lit?ACCENT:BUTTON),0);
-        lv_obj_set_style_text_color(cpu_buttons[p],lv_color_hex(lit?ON_ACCENT:TEXT),0);
+        set_bg(cpu_buttons[p],lit?ACCENT:BUTTON);
+        set_text_colour(cpu_buttons[p],lit?ON_ACCENT:TEXT);
     }
     char running[56];
     if(usable&&s->cpu_governor[0])
@@ -3075,7 +3108,7 @@ static void name_show(const char *text)
     int32_t lines=size.y>line?2:1;
     lv_obj_set_height(playing_name,lines*line);
     lv_obj_set_y(playing_name,NAME_TOP+(NAME_ROOM-lines*line)/2);
-    lv_label_set_text(playing_name,text);
+    set_text(playing_name,text);
 }
 /* The battery of this panel, in the corner of the main screen.
  *
@@ -3091,12 +3124,12 @@ static void esp_power_show(const panel_state_t *s)
 {
     if(!esp_power)return;
     if(s->esp_supply==PANEL_SUPPLY_UNKNOWN){
-        lv_obj_add_flag(esp_power,LV_OBJ_FLAG_HIDDEN);
+        set_shown(esp_power,false);
         return;
     }
-    lv_obj_remove_flag(esp_power,LV_OBJ_FLAG_HIDDEN);
+    set_shown(esp_power,true);
     if(s->esp_supply==PANEL_SUPPLY_CABLE){
-        lv_label_set_text(esp_power,LV_SYMBOL_USB);
+        set_text(esp_power,LV_SYMBOL_USB);
         return;
     }
     int level=s->esp_battery<0?0:s->esp_battery>100?100:s->esp_battery;
@@ -3105,7 +3138,7 @@ static void esp_power_show(const panel_state_t *s)
                      :level>=40?LV_SYMBOL_BATTERY_2
                      :level>=15?LV_SYMBOL_BATTERY_1
                      :LV_SYMBOL_BATTERY_EMPTY;
-    lv_label_set_text_fmt(esp_power,"%s%s %d %%",
+    set_textf(esp_power,"%s%s %d %%",
                           s->esp_charging?LV_SYMBOL_CHARGE " ":"",shape,level);
 }
 void panel_ui_update(const panel_state_t *s)
@@ -3118,7 +3151,7 @@ void panel_ui_update(const panel_state_t *s)
      * A padding-only difference can merely cause an extra update, never hide one. */
     if(last_state_valid && memcmp(&last_state,s,sizeof(*s))==0)return;
     memcpy(&last_state,s,sizeof(*s));last_state_valid=true;
-    if(sound_status)lv_label_set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
+    set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
     if(s->setup){
         settings_forget();pads_forget();pc_forget();sensor_close();look_close();self_forget();
         if(!setup_screen){
@@ -3130,8 +3163,8 @@ void panel_ui_update(const panel_state_t *s)
         }
         lv_label_set_text_fmt(setup_text,panel_text(TXT_SETUP_STEPS),s->setup_ssid,s->setup_password);return;
     }
-    lv_label_set_text(connection,!s->wifi?panel_text(TXT_WIFI_OFFLINE):s->online?panel_text(TXT_PC_ONLINE):panel_text(TXT_PC_OFFLINE));
-    lv_obj_set_style_bg_color(dot,lv_color_hex(s->online?palette.online:palette.offline),0);
+    set_text(connection,!s->wifi?panel_text(TXT_WIFI_OFFLINE):s->online?panel_text(TXT_PC_ONLINE):panel_text(TXT_PC_OFFLINE));
+    set_bg(dot,s->online?palette.online:palette.offline);
     pads_head(s);
     pads_show(s);
     led_show(s);
@@ -3141,9 +3174,9 @@ void panel_ui_update(const panel_state_t *s)
     update_layer_show(s);
     esp_power_show(s);
     bool audio=s->online&&s->volume>=0;
-    lv_label_set_text(audio_status,!audio?"--":s->muted?panel_text(TXT_MUTED):panel_text(TXT_ACTIVE));
-    lv_obj_t *track=lv_obj_get_user_data(audio_toggle);lv_obj_set_style_bg_color(track,lv_color_hex(audio&&!s->muted?ACCENT:EDGE),0);lv_obj_set_x(audio_knob,audio&&!s->muted?27:3);
-    if(audio)lv_label_set_text_fmt(volume,"%d %%",s->volume);else lv_label_set_text(volume,"-- %");
+    set_text(audio_status,!audio?"--":s->muted?panel_text(TXT_MUTED):panel_text(TXT_ACTIVE));
+    lv_obj_t *track=lv_obj_get_user_data(audio_toggle);set_bg(track,audio&&!s->muted?ACCENT:EDGE);lv_obj_set_x(audio_knob,audio&&!s->muted?27:3);
+    if(audio)set_textf(volume,"%d %%",s->volume);else set_text(volume,"-- %");
     for(int i=0;i<6;i++){bool enabled=s->online&&(i>=3||audio);if(enabled)lv_obj_remove_state(controls[i],LV_STATE_DISABLED);else lv_obj_add_state(controls[i],LV_STATE_DISABLED);}
     /* One card, two faces. Offline with an address to wake at shows the
      * wake button; anything else shows the three, greyed where they cannot
@@ -3152,28 +3185,27 @@ void panel_ui_update(const panel_state_t *s)
      * worse than none. */
     bool offer_wake=!s->online&&s->can_wake;
     for(int i=PANEL_SUSPEND;i<=PANEL_POWEROFF;i++){
-        if(offer_wake)lv_obj_add_flag(controls[i],LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_remove_flag(controls[i],LV_OBJ_FLAG_HIDDEN);
+        if(offer_wake)set_shown(controls[i],false);
+        else set_shown(controls[i],true);
     }
-    if(offer_wake){lv_obj_remove_flag(wake_button,LV_OBJ_FLAG_HIDDEN);lv_obj_remove_flag(wake_what,LV_OBJ_FLAG_HIDDEN);}
-    else{lv_obj_add_flag(wake_button,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(wake_what,LV_OBJ_FLAG_HIDDEN);}
+    if(offer_wake){set_shown(wake_button,true);set_shown(wake_what,true);}
+    else{set_shown(wake_button,false);set_shown(wake_what,false);}
     temperatures_show(s);
-    if(s->online&&s->gpu_watts>=0)lv_label_set_text_fmt(power_value,"%d W",s->gpu_watts);else lv_label_set_text(power_value,"-- W");
+    if(s->online&&s->gpu_watts>=0)set_textf(power_value,"%d W",s->gpu_watts);else set_text(power_value,"-- W");
     card_show(s);
-    lv_label_set_text(message,s->message);
-    if(s->message[0])lv_obj_remove_flag(message,LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(message,LV_OBJ_FLAG_HIDDEN);
+    set_text(message,s->message);
+    if(s->message[0])set_shown(message,true);
+    else set_shown(message,false);
     /* The mark for the network. It answers one question, whether the panel
      * is on the network, and leaves whether the PC answers to the dot at
      * the top: a mark that meant both would say nothing about either. */
-    if(wifi_mark)lv_obj_set_style_text_color(wifi_mark,
-        lv_color_hex(s->wifi?MUTED:RED),0);
+    if(wifi_mark)set_text_colour(wifi_mark,s->wifi?MUTED:RED);
     /* The second page. Offline leaves every one of these at a dash rather
      * than at the last thing the PC said, which would read as current. */
     if(mode_now){
-        lv_label_set_text(mode_now,!s->online?"--":
+        set_text(mode_now,!s->online?"--":
                           s->game_mode?panel_text(TXT_MODE_GAME):panel_text(TXT_MODE_DESKTOP));
-        lv_label_set_text(mode_caption,s->game_mode?panel_text(TXT_TO_DESKTOP):panel_text(TXT_TO_GAME));
+        set_text(mode_caption,s->game_mode?panel_text(TXT_TO_DESKTOP):panel_text(TXT_TO_GAME));
         /* The button carries where it goes, so the press is the target and
          * never "the other one". See PANEL_DESKTOP_MODE in ui.h. */
         lv_obj_remove_event_cb(mode_button,clicked);
@@ -3186,13 +3218,13 @@ void panel_ui_update(const panel_state_t *s)
     if(shown>PANEL_DRIVES)shown=PANEL_DRIVES;
     for(int i=0;i<PANEL_DRIVES;i++){
         if(!drive_rows[i])break;
-        if(i>=shown){lv_obj_add_flag(drive_rows[i],LV_OBJ_FLAG_HIDDEN);continue;}
-        lv_obj_remove_flag(drive_rows[i],LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(drive_names[i],s->drives[i].name);
+        if(i>=shown){set_shown(drive_rows[i],false);continue;}
+        set_shown(drive_rows[i],true);
+        set_text(drive_names[i],s->drives[i].name);
         char left[24],whole[24];
         say_size(left,sizeof(left),s->drives[i].free);
         say_size(whole,sizeof(whole),s->drives[i].total);
-        lv_label_set_text_fmt(drive_free[i],"%s %s / %s",left,panel_text(TXT_FREE),whole);
+        set_textf(drive_free[i],"%s %s / %s",left,panel_text(TXT_FREE),whole);
         /* The bar fills with what is used, because a bar that fills as a
          * drive empties reads backwards. A total of nought would divide by
          * nought, and drives() never sends one. */
@@ -3204,12 +3236,12 @@ void panel_ui_update(const panel_state_t *s)
          * drive somebody wants to see without reading. What is left says it
          * in red too: in the red accent every bar is red. */
         bool full=total&&used*10>=total*9;
-        lv_obj_set_style_bg_color(drive_bars[i],lv_color_hex(full?RED:ACCENT),0);
-        lv_obj_set_style_text_color(drive_free[i],lv_color_hex(full?RED:MUTED),0);
+        set_bg(drive_bars[i],full?RED:ACCENT);
+        set_text_colour(drive_free[i],full?RED:MUTED);
     }
     if(no_drives){
-        if(shown==0)lv_obj_remove_flag(no_drives,LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(no_drives,LV_OBJ_FLAG_HIDDEN);
+        if(shown==0)set_shown(no_drives,true);
+        else set_shown(no_drives,false);
     }
     /* The third page. */
     if(playing_name)
@@ -3219,9 +3251,9 @@ void panel_ui_update(const panel_state_t *s)
      * that answer. */
     if(achievement_count){
         if(s->online&&s->playing[0]&&s->achievements_total>0)
-            lv_label_set_text_fmt(achievement_count,"%d / %d",
+            set_textf(achievement_count,"%d / %d",
                                   s->achievements_done,s->achievements_total);
-        else lv_label_set_text(achievement_count,"--");
+        else set_text(achievement_count,"--");
     }
     /* The fourth page: the time, and the date under it, or dashes and a
      * word until the network has set the clock. */

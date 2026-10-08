@@ -102,10 +102,27 @@ int main(void)
     strcpy(state.led_colour,"#00ff00");panel_ui_update(&state);lv_obj_update_layout(lv_screen_active());
     assert(watched_hits>0);
     lv_refr_now(display);
-    /* New settings page must receive a previously cached audio failure state. */
+    /* A new settings page shows the failure of the sound that the state
+     * held before the page opened. */
     state.sound_error=true;panel_ui_update(&state);lv_refr_now(display);
-    panel_ui_settings_open();lv_refr_now(display);invalidations=0;
-    panel_ui_update(&state);lv_obj_update_layout(lv_screen_active());assert(invalidations>0);
-    puts("OK: 20000 unchanged updates cause no invalidation; changes still redraw; the page of the CPU and the colours of the LED bar redraw only for their own changes; settings state refreshes.");
+    panel_ui_settings_open();lv_refr_now(display);
+    assert(!label(lv_screen_active(),panel_text(TXT_NO_AUDIO)));
+    panel_ui_update(&state);lv_obj_update_layout(lv_screen_active());
+    assert(label(lv_screen_active(),panel_text(TXT_NO_AUDIO)));
+    lv_refr_now(display);
+    /* With no PC the state is new every 5 s: the readings of the power
+     * chip and the uptime of the panel. Neither of them is on the band or
+     * on the settings page, so such an update draws nothing. Before, it
+     * drew every label of the band and of the head again, under a slider
+     * that somebody held. */
+    panel_state_t off={.wifi=true,.online=false,.esp_supply=PANEL_SUPPLY_BATTERY,.esp_battery=87};
+    off.sound_error=true;
+    panel_ui_update(&off);lv_refr_now(display);invalidations=0;
+    for(int i=0;i<20;i++){
+        off.self.uptime_s+=5;off.esp_detail.vbat_mv=3990+i;
+        panel_ui_update(&off);lv_obj_update_layout(lv_screen_active());
+    }
+    assert(invalidations==0);
+    puts("OK: 20000 unchanged updates cause no invalidation; changes still redraw; the page of the CPU and the colours of the LED bar redraw only for their own changes; settings state refreshes; the readings of the panel itself redraw nothing on the settings.");
     return 0;
 }
