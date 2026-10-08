@@ -719,7 +719,8 @@ class SleepClockTest(unittest.TestCase):
     It cannot go as low as it once did. At 4 MHz the panel showed each line
     twice, which a black cover hid and the clock on the cover did not. The
     lowest clock this panel was seen to show right is the 12 MHz of the
-    startup animation, and 8 MHz is on trial on the board."""
+    startup animation. 8 MHz was tried on the board after it, and the clock
+    of the standby stood in the middle with its date."""
 
     def source(self):
         with open(os.path.join(FIRMWARE, "panel_display.c"),
@@ -755,14 +756,16 @@ class SleepClockTest(unittest.TestCase):
         self.assertGreaterEqual(self.number("PANEL_PCLK_SLEEP_HZ"), 8000000)
         self.assertEqual(self.number("PANEL_PCLK_BOOT_HZ"), 12000000)
 
-    def test_the_note_says_what_to_look_at_and_where_to_go_back(self):
-        """A trial with no way back is a guess. The note names the test
-        and the clock that was seen right."""
+    def test_the_note_gives_the_measurement_and_the_way_back(self):
+        """The clock was chosen by a look at the board, and the note says
+        what was seen, how to look again, and which clock to go back to."""
         with open(os.path.join(FIRMWARE, "panel_display.c"),
                   encoding="utf-8") as handle:
             note = handle.read()
-        self.assertIn("8 MHz is on trial", note)
-        self.assertIn("goes back to 12 MHz", note)
+        self.assertIn("Read off the board after a trial", note)
+        self.assertIn("between a line of 65 us, which", note)
+        self.assertIn("12 MHz is the one to go back to", note)
+        self.assertEqual(self.number("PANEL_PCLK_SLEEP_HZ"), 8000000)
 
     def test_the_scroll_clock_comes_after_the_animation(self):
         over = re.search(r"void panel_display_boot_over\(void\)\s*\{(.*?)\n\}",
