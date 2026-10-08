@@ -163,6 +163,8 @@ static panel_settings_t settings_load(void)
             settings.theme=(panel_theme_t)value;
         if(nvs_get_u8(h,"accent",&value)==ESP_OK && value<PANEL_ACCENTS)
             settings.accent=(panel_accent_t)value;
+        /* The alarm clock, read with care: see panel_alarm_unpack. */
+        if(nvs_get_u32(h,"alarm",&key)==ESP_OK)settings.alarm=key;
         nvs_close(h);
     }
     // Here, and not where the screen is built. The setup portal opens
@@ -183,9 +185,10 @@ static void setting_set(panel_setting_t key,int value,bool save)
                      key==PANEL_PAGE_ORDER?"page_order":
                      key==PANEL_PAGE_HIDDEN?"page_hidden":
                      key==PANEL_THEME?"theme":
-                     key==PANEL_ACCENT?"accent":"touch_tones";
+                     key==PANEL_ACCENT?"accent":
+                     key==PANEL_ALARM?"alarm":"touch_tones";
     bool wide=key==PANEL_CPU_SENSOR||key==PANEL_GPU_SENSOR||key==PANEL_PAGE_ORDER||
-              key==PANEL_PAGE_HIDDEN;
+              key==PANEL_PAGE_HIDDEN||key==PANEL_ALARM;
     esp_err_t result=ESP_OK;
     if(key==PANEL_BRIGHTNESS){
         if(!atomic_load(&display_asleep))result=bsp_display_brightness_set(value);
@@ -330,12 +333,13 @@ static void standby_clock(bool now)
     if(!now && minute==shown)return;
     shown=minute;
     struct tm at;
-    char hours[8]="",date[64]="";
+    char hours[8]="",date[64]="",alarm[24]="";
     if(panel_time_now(&at)){
         snprintf(hours,sizeof hours,"%02d:%02d",at.tm_hour,at.tm_min);
         panel_text_date(date,sizeof date,at.tm_wday,at.tm_mday,at.tm_mon+1);
+        panel_ui_alarm_clock_next(alarm,sizeof alarm);
     }
-    panel_display_sleep_clock(hours,date);
+    panel_display_sleep_clock(hours,date,alarm);
 }
 
 /* Put the display down or bring it back, and remember why.
@@ -380,10 +384,36 @@ static void display_sleeping(bool sleep,bool by_hand)
                  "and PC polling remain active");
 }
 
-/* Whether the timer that rings woke the display, and from which sleep.
- * A timer nobody stopped puts the display back where it found it: nobody
+/* Whether the ring of the timer or of the alarm clock woke the display, and
+ * from which sleep. A ring nobody stopped puts the display back where it
+ * found it, and so does a snooze: nobody
  * is there to look. The LVGL task alone reads and writes these. */
 static bool alarm_woke,alarm_woke_by_hand;
+
+/* A ring ended with nobody there, or it snoozes: the display goes back
+ * where the ring found it. Not while the other one still rings. */
+static void ring_quiet(void)
+{
+    if(panel_ui_timer_ringing()||panel_ui_alarm_clock_ringing())return;
+    if(alarm_woke)display_sleeping(true,alarm_woke_by_hand);
+    alarm_woke=false;
+}
+
+/* The local time as the alarm clock reads it. See panel_alarm.h. */
+static panel_alarm_clock_t wall_clock(void)
+{
+    struct tm at;
+    panel_alarm_clock_t now={0};
+    if(!panel_time_now(&at))return now;
+    now.known=true;
+    /* A number that is new at each midnight. */
+    now.day=at.tm_year*1000+at.tm_yday;
+    now.weekday=(uint8_t)at.tm_wday;
+    now.hour=(uint8_t)at.tm_hour;
+    now.minute=(uint8_t)at.tm_min;
+    now.second=(uint8_t)at.tm_sec;
+    return now;
+}
 
 static void ui_tick(lv_timer_t *timer)
 {
@@ -393,30 +423,46 @@ static void ui_tick(lv_timer_t *timer)
     /* From the LVGL timer only: the call from app_main comes before the
      * startup animation begins. See panel_display_boot_over. */
     if(timer && !panel_boot_playing())panel_display_boot_over();
-    /* The timer of the fourth page, first and in a sleep as well: it runs
-     * on while the display is dark, and its end wakes the display, from
-     * the sleep of the button too. The wake ends the rest of the radio on
-     * its own: asleep_by_hand goes false with it. */
+    /* The timer and the alarm clock of the fourth page, first and in a
+     * sleep as well: they run on while the display is dark, and a ring
+     * wakes the display, from the sleep of the button too. The wake ends
+     * the rest of the radio on its own: asleep_by_hand goes false with it.
+     * A ring that begins while the other rings keeps what that one found. */
+    bool rang=panel_ui_timer_ringing()||panel_ui_alarm_clock_ringing();
+    panel_alarm_clock_t wall=wall_clock();
     panel_timer_news_t news=panel_ui_timer_tick();
-    if(news.went_off){
-        alarm_woke=atomic_load(&display_asleep);
-        alarm_woke_by_hand=atomic_load(&asleep_by_hand);
+    panel_alarm_news_t wake=panel_ui_alarm_clock_tick(&wall);
+    if(news.went_off||wake.went_off){
+        if(!rang){
+            alarm_woke=atomic_load(&display_asleep);
+            alarm_woke_by_hand=atomic_load(&asleep_by_hand);
+        }
         display_sleeping(false,false);
-        ESP_LOGI("panel_timer","The timer went off%s",
+        ESP_LOGI("panel_timer","The %s went off%s",news.went_off?"timer":"alarm",
                  alarm_woke?", and woke the display":"");
     }
-    if(news.beep)sound_send(panel_ui_alarm_volume());
-    if(news.gave_up){
-        ESP_LOGI("panel_timer","Nobody stopped the timer, so it is quiet again");
-        if(alarm_woke)display_sleeping(true,alarm_woke_by_hand);
-        alarm_woke=false;
+    if(news.beep||wake.beep)sound_send(panel_ui_alarm_volume());
+    if(news.gave_up||wake.gave_up){
+        ESP_LOGI("panel_timer","Nobody stopped the %s, so it is quiet again",
+                 news.gave_up?"timer":"alarm");
+        ring_quiet();
+    }
+    if(panel_ui_alarm_clock_take_snooze()){
+        ESP_LOGI("panel_timer","The alarm snoozes, by a touch");
+        ring_quiet();
     }
     if(panel_power_take_toggle()){
-        /* The button stops a timer that rings, and does nothing else then:
-         * the hand that reaches for it wants the noise to end. */
-        if(panel_ui_timer_stop()){
-            alarm_woke=false;
-            ESP_LOGI("panel_timer","Stopped by the button");
+        /* The button quiets a ring, and does nothing else then: the hand
+         * that reaches for it wants the noise to end. It stops the timer
+         * and snoozes the alarm clock. Somebody who stops the timer is
+         * there, and the display stays. A snooze is five more minutes of
+         * sleep, and the display goes back. */
+        bool stopped=panel_ui_timer_stop();
+        bool snoozed=panel_ui_alarm_clock_snooze();
+        if(stopped||snoozed){
+            if(stopped)alarm_woke=false;
+            if(snoozed)ring_quiet();
+            ESP_LOGI("panel_timer","%s by the button",snoozed?"Snoozed":"Stopped");
         }else if(atomic_load(&updating)){
             /* The progress stays in view. A dark panel in the middle of an
              * update reads as one that is off. */
@@ -425,14 +471,17 @@ static void ui_tick(lv_timer_t *timer)
     }
     if(panel_power_take_home()){
         /* The home key goes to the start page, and it keeps the two rules
-         * of the standby key: it quiets a timer that rings and does
-         * nothing else then, and it waits for an update. A display that
+         * of the standby key: it quiets a ring and does nothing else
+         * then, and it waits for an update. A display that
          * went dark on its own comes back for it, as it does for a touch.
          * One that the standby key switched off stays off, as it does for
          * a touch too: that one comes back with the standby key alone. */
-        if(panel_ui_timer_stop()){
-            alarm_woke=false;
-            ESP_LOGI("panel_timer","Stopped by the home key");
+        bool stopped=panel_ui_timer_stop();
+        bool snoozed=panel_ui_alarm_clock_snooze();
+        if(stopped||snoozed){
+            if(stopped)alarm_woke=false;
+            if(snoozed)ring_quiet();
+            ESP_LOGI("panel_timer","%s by the home key",snoozed?"Snoozed":"Stopped");
         }else if(atomic_load(&updating)){
             ESP_LOGI("panel_power","The home key waits for the update");
         }else if(atomic_load(&display_asleep) && atomic_load(&asleep_by_hand)){
@@ -455,7 +504,7 @@ static void ui_tick(lv_timer_t *timer)
             if(lifted || panel_display_touched())display_sleeping(false,false);
         }
     }else if(display_sleep_after>0 && !panel_ui_timer_ringing() &&
-             !atomic_load(&updating) &&
+             !panel_ui_alarm_clock_ringing() && !atomic_load(&updating) &&
              lv_display_get_inactive_time(NULL)
                  >= (uint32_t)display_sleep_after*60u*1000u){
         /* Not while it rings: a minute of no touch is a minute of ringing

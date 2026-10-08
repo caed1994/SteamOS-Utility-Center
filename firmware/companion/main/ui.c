@@ -64,6 +64,11 @@ static lv_obj_t *no_drives,*band,*esp_power,*wifi_mark;
 LV_FONT_DECLARE(panel_clock_font);
 static lv_obj_t *clock_digits,*clock_date,*timer_value,*timer_minus,*timer_plus;
 static lv_obj_t *timer_go,*timer_go_label,*timer_reset,*alarm_layer;
+/* The alarm clock: its button on the clock card, the layer that sets it,
+ * and the layer over everything while it rings. See alarm_clock_open. */
+static lv_obj_t *alarm_clock_button,*alarm_clock_icon,*alarm_clock_layer,*alarm_clock_ring_layer;
+static lv_obj_t *alarm_clock_switch,*alarm_clock_hours,*alarm_clock_minutes,*alarm_clock_status;
+static lv_obj_t *alarm_clock_days[PANEL_ALARM_DAYS];
 /* The timer itself is not part of the screen. panel_ui_create builds the
  * screen again when the language changes, and a timer that runs goes on
  * running through that. */
@@ -634,12 +639,13 @@ static void pads_forget(void);
 static void pc_forget(void);
 static void self_forget(void);
 static void look_close(void);
+static void alarm_clock_close(void);
 bool panel_ui_home(void)
 {
     if(!band||setup_screen||update_layer)return false;
     /* No answer to the question, which is what Cancel sends: nothing. */
     if(overlay){lv_obj_delete(overlay);overlay=NULL;}
-    sensor_close();look_close();settings_forget();pads_forget();pc_forget();
+    sensor_close();look_close();alarm_clock_close();settings_forget();pads_forget();pc_forget();
     /* Only when it is open: self_drop starts the counts of the frames and
      * of the touches again, and a press of the key is no visit of that
      * page. */
@@ -1289,7 +1295,7 @@ static void sensor_row(lv_obj_t *box,int row,int y,const char *name,int celsius,
  * screen, as a question is. */
 static void sensor_menu(bool gpu)
 {
-    if(sensor_layer||look_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen||update_layer
+    if(sensor_layer||look_layer||alarm_clock_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen||update_layer
        ||setup_screen)return;
     const panel_state_t *s=&last_state;
     int count=!last_state_valid?0:gpu?s->gpu_sensor_count:s->cpu_sensor_count;
@@ -1571,7 +1577,8 @@ static lv_obj_t *self_card(lv_obj_t *column,panel_text_id_t title,const int *row
 }
 void panel_ui_self_open(void)
 {
-    if(self_screen||pc_screen||pads_screen||settings_screen||setup_screen||sensor_layer||look_layer)return;
+    if(self_screen||pc_screen||pads_screen||settings_screen||setup_screen||sensor_layer||look_layer
+       ||alarm_clock_layer)return;
     self_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
     button(self_screen,panel_text(TXT_BACK),12,8,112,44,self_close,0);
     text_at(self_screen,panel_text(TXT_SELF_TITLE),136,20,320,&panel_font_20,TEXT);
@@ -1685,6 +1692,7 @@ const char *panel_ui_where(void)
     if(overlay)return "a question";
     if(sensor_layer)return "a choice of sensor";
     if(look_layer)return "the colour of the LED bar";
+    if(alarm_clock_layer)return "the alarm clock";
     if(arrange_screen)return "the order of the pages";
     if(settings_screen)return "the settings";
     if(pads_screen)return "the controllers";
@@ -2018,7 +2026,7 @@ static void look_slid(lv_event_t *e)
  * beside the box, closes it. */
 static void look_open(void)
 {
-    if(look_layer||sensor_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen
+    if(look_layer||sensor_layer||alarm_clock_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen
        ||update_layer||setup_screen)return;
     int index=look_scene(&last_state);
     look_with_colours=panel_led_coloured(PANEL_LED_DESKTOP,index);
@@ -2277,6 +2285,284 @@ int panel_ui_alarm_volume(void)
 {
     return local.sound_volume>ALARM_LEAST_VOLUME?local.sound_volume:ALARM_LEAST_VOLUME;
 }
+/* The alarm clock of the fourth page. See panel_alarm.h.
+ *
+ * The alarm and its state outlive a new screen, as the timer does: a new
+ * language rings on. The button on the clock card opens the layer that
+ * sets it, and the button is in the accent colour while an alarm is set. */
+static panel_alarm_t alarm_clock;
+static bool alarm_clock_ready;
+/* The local time of the last tick, from main.c. */
+static panel_alarm_clock_t alarm_clock_now;
+/* The setting as NVS holds it, so that only a change goes there. */
+static uint32_t alarm_clock_stored;
+/* A snooze by a touch that main.c did not take yet. */
+static bool alarm_clock_snoozed;
+/* What the layer shows, until it closes. */
+static panel_alarm_set_t alarm_clock_draft;
+/* The layer: the box, the two wheels of the time and the colon between
+ * them, a button for each day, a line that says when it rings, and Done. */
+#define ALARM_BOX_HIGH 384
+#define ALARM_ROLLER_TOP 68
+#define ALARM_ROLLER_WIDTH 120
+#define ALARM_ROLLER_SPACE 10
+#define ALARM_COLON_WIDTH 40
+#define ALARM_ROLLER_X ((440-2*ALARM_ROLLER_WIDTH-ALARM_COLON_WIDTH)/2)
+#define ALARM_DAYS_TOP 220
+#define ALARM_DAY_WIDTH 56
+#define ALARM_DAY_GAP 4
+#define ALARM_DAY_X ((440-PANEL_ALARM_DAYS*ALARM_DAY_WIDTH-(PANEL_ALARM_DAYS-1)*ALARM_DAY_GAP)/2)
+#define ALARM_STATUS_TOP 276
+#define ALARM_BUTTONS_TOP 312
+/* The button on the clock card, in its top right corner. */
+#define ALARM_BUTTON_SIZE 52
+static void alarm_clock_store(void)
+{
+    uint32_t packed=panel_alarm_pack(alarm_clock.set);
+    if(packed==alarm_clock_stored)return;
+    alarm_clock_stored=packed;local.alarm=packed;
+    if(save_setting)save_setting(PANEL_ALARM,(int)packed,true);
+}
+static void alarm_clock_mark(void)
+{
+    if(!alarm_clock_icon)return;
+    bool set=alarm_clock.set.on||alarm_clock.phase!=PANEL_ALARM_WAITING;
+    lv_obj_set_style_image_recolor(alarm_clock_icon,lv_color_hex(set?ACCENT_TEXT:MUTED),0);
+}
+/* "Mo 07:00": the short name of the day, and the time. */
+static void alarm_clock_when(char *out,size_t room,panel_alarm_next_t next)
+{
+    if(!room)return;
+    out[0]=0;
+    if(!next.due)return;
+    snprintf(out,room,"%s %02d:%02d",
+             panel_text((panel_text_id_t)(TXT_SUNDAY_SHORT+next.weekday%7)),next.hour,next.minute);
+}
+void panel_ui_alarm_clock_next(char *out,size_t room)
+{
+    alarm_clock_when(out,room,panel_alarm_next(&alarm_clock,&alarm_clock_now,lv_tick_get()));
+}
+static void alarm_clock_ring_hide(void)
+{
+    if(!alarm_clock_ring_layer)return;
+    lv_obj_delete(alarm_clock_ring_layer);alarm_clock_ring_layer=NULL;
+}
+bool panel_ui_alarm_clock_snooze(void)
+{
+    if(!panel_alarm_snooze(&alarm_clock,lv_tick_get()))return false;
+    alarm_clock_ring_hide();alarm_clock_mark();
+    return true;
+}
+static void alarm_clock_snooze_touched(lv_event_t *e){(void)e;if(panel_ui_alarm_clock_snooze())alarm_clock_snoozed=true;}
+static void alarm_clock_off_touched(lv_event_t *e)
+{
+    (void)e;
+    if(!panel_alarm_off(&alarm_clock))return;
+    alarm_clock_ring_hide();alarm_clock_store();alarm_clock_mark();
+}
+/* Over everything else on the screen, as the ring of the timer is. A tap
+ * anywhere on it is a snooze, and so is a key: see ui_tick in main.c. Off
+ * is the one button that ends it, so a hand that gropes for the panel in
+ * the dark does not switch the alarm off by chance. */
+static void alarm_clock_ring_show(void)
+{
+    if(alarm_clock_ring_layer)return;
+    alarm_clock_ring_layer=panel(lv_screen_active(),0,0,480,480,BG,false);
+    lv_obj_set_style_bg_opa(alarm_clock_ring_layer,LV_OPA_90,0);
+    lv_obj_add_event_cb(alarm_clock_ring_layer,alarm_clock_snooze_touched,LV_EVENT_CLICKED,NULL);
+    /* The card takes no press of its own, so a press on it reaches the
+     * layer under it. */
+    lv_obj_t *box=panel(alarm_clock_ring_layer,20,96,440,288,CARD,true);
+    lv_obj_remove_flag(box,LV_OBJ_FLAG_CLICKABLE);
+    center_text(text_at(box,panel_text(TXT_ALARM),20,22,400,&panel_font_20,MUTED));
+    char time[8];
+    snprintf(time,sizeof time,"%02d:%02d",alarm_clock.set.hour%24,alarm_clock.set.minute%60);
+    center_text(text_at(box,time,20,54,400,&panel_count_font,TEXT));
+    lv_obj_t *snooze=button(box,panel_text(TXT_SNOOZE),20,148,400,64,alarm_clock_snooze_touched,0);
+    lv_obj_set_style_bg_color(snooze,lv_color_hex(ACCENT),0);
+    lv_obj_set_style_text_color(snooze,lv_color_hex(ON_ACCENT),0);
+    lv_obj_set_style_text_font(snooze,&panel_font_24,0);
+    lv_obj_t *off=button(box,panel_text(TXT_ALARM_OFF),20,224,400,48,alarm_clock_off_touched,0);
+    lv_obj_set_style_text_font(off,&panel_font_20,0);
+}
+panel_alarm_news_t panel_ui_alarm_clock_tick(const panel_alarm_clock_t *now)
+{
+    alarm_clock_now=*now;
+    panel_alarm_news_t news=panel_alarm_tick(&alarm_clock,now,lv_tick_get());
+    if(news.went_off){alarm_clock_ring_show();alarm_clock_mark();}
+    if(news.gave_up){alarm_clock_ring_hide();alarm_clock_store();alarm_clock_mark();}
+    return news;
+}
+bool panel_ui_alarm_clock_ringing(void){return alarm_clock.phase==PANEL_ALARM_RINGING;}
+bool panel_ui_alarm_clock_take_snooze(void)
+{
+    bool snoozed=alarm_clock_snoozed;
+    alarm_clock_snoozed=false;
+    return snoozed;
+}
+/* The line under the days: when the alarm rings once the layer closes,
+ * with what the layer shows now. */
+static void alarm_clock_status_show(void)
+{
+    if(!alarm_clock_status)return;
+    char when[24],text[64]="";
+    if(!alarm_clock_now.known)snprintf(text,sizeof text,"%s",panel_text(TXT_CLOCK_UNSET));
+    else{
+        panel_alarm_t after=alarm_clock;
+        if(panel_alarm_pack(alarm_clock_draft)!=panel_alarm_pack(alarm_clock.set))
+            panel_alarm_change(&after,alarm_clock_draft,&alarm_clock_now);
+        panel_alarm_next_t next=panel_alarm_next(&after,&alarm_clock_now,lv_tick_get());
+        alarm_clock_when(when,sizeof when,next);
+        if(next.due)snprintf(text,sizeof text,
+                             panel_text(after.phase==PANEL_ALARM_SNOOZING?TXT_ALARM_SNOOZED:TXT_ALARM_RINGS),
+                             when);
+    }
+    set_text(alarm_clock_status,text);
+}
+static void alarm_clock_draft_show(void)
+{
+    if(alarm_clock_switch){
+        if(alarm_clock_draft.on)lv_obj_add_state(alarm_clock_switch,LV_STATE_CHECKED);
+        else lv_obj_remove_state(alarm_clock_switch,LV_STATE_CHECKED);
+    }
+    for(int i=0;i<PANEL_ALARM_DAYS;i++){
+        if(!alarm_clock_days[i])continue;
+        if(alarm_clock_draft.days>>i&1)lv_obj_add_state(alarm_clock_days[i],LV_STATE_CHECKED);
+        else lv_obj_remove_state(alarm_clock_days[i],LV_STATE_CHECKED);
+    }
+    alarm_clock_status_show();
+}
+static void alarm_clock_switched(lv_event_t *e)
+{
+    lv_obj_t *sw=lv_event_get_target(e);
+    alarm_clock_draft.on=lv_obj_has_state(sw,LV_STATE_CHECKED);
+    feedback();alarm_clock_status_show();
+}
+/* A new time or a new day switches the alarm on: that is what somebody
+ * who sets one wants. */
+static void alarm_clock_rolled(lv_event_t *e)
+{
+    lv_obj_t *roller=lv_event_get_target(e);
+    uint8_t value=(uint8_t)lv_roller_get_selected(roller);
+    if(roller==alarm_clock_hours)alarm_clock_draft.hour=value;
+    else alarm_clock_draft.minute=value;
+    alarm_clock_draft.on=true;
+    alarm_clock_draft_show();
+}
+static void alarm_clock_day_clicked(lv_event_t *e)
+{
+    int day=(int)(intptr_t)lv_event_get_user_data(e);
+    alarm_clock_draft.days^=(uint8_t)(1u<<day);
+    alarm_clock_draft.on=true;
+    feedback();alarm_clock_draft_show();
+}
+static void alarm_clock_forget(void)
+{
+    alarm_clock_layer=NULL;alarm_clock_switch=NULL;alarm_clock_hours=NULL;
+    alarm_clock_minutes=NULL;alarm_clock_status=NULL;
+    for(int i=0;i<PANEL_ALARM_DAYS;i++)alarm_clock_days[i]=NULL;
+}
+/* Done, a tap beside the box and the home key all close the layer, and
+ * each sets what it shows. A layer that changed nothing leaves a snooze
+ * that runs alone. */
+static void alarm_clock_close(void)
+{
+    if(!alarm_clock_layer)return;
+    if(panel_alarm_pack(alarm_clock_draft)!=panel_alarm_pack(alarm_clock.set)){
+        panel_alarm_change(&alarm_clock,alarm_clock_draft,&alarm_clock_now);
+        alarm_clock_store();alarm_clock_mark();
+    }
+    lv_obj_delete(alarm_clock_layer);alarm_clock_forget();
+}
+static void alarm_clock_outside(lv_event_t *e){(void)e;alarm_clock_close();}
+static void alarm_clock_done(lv_event_t *e){(void)e;feedback();alarm_clock_close();}
+static void alarm_clock_end_snooze(lv_event_t *e)
+{
+    (void)e;
+    feedback();
+    bool edited=panel_alarm_pack(alarm_clock_draft)!=panel_alarm_pack(alarm_clock.set);
+    if(panel_alarm_off(&alarm_clock)){alarm_clock_store();alarm_clock_mark();}
+    /* An alarm with no day switched itself off just now. A layer that
+     * changed nothing follows it, or the close switches it on again. */
+    if(!edited)alarm_clock_draft=alarm_clock.set;
+    alarm_clock_close();
+}
+/* A wheel of two digit numbers, from nought to count less one, that turns
+ * round from the last to the first. */
+static lv_obj_t *alarm_clock_roller(lv_obj_t *box,int x,int count,int selected)
+{
+    char options[60*3+1];
+    size_t at=0;
+    for(int i=0;i<count&&at<sizeof options;i++)
+        at+=(size_t)snprintf(options+at,sizeof options-at,i?"\n%02d":"%02d",i);
+    lv_obj_t *r=lv_roller_create(box);
+    lv_obj_set_style_text_font(r,&panel_font_32,0);
+    lv_obj_set_style_text_font(r,&panel_font_32,LV_PART_SELECTED);
+    lv_obj_set_style_text_line_space(r,ALARM_ROLLER_SPACE,0);
+    lv_obj_set_style_text_align(r,LV_TEXT_ALIGN_CENTER,0);
+    lv_obj_set_style_text_color(r,lv_color_hex(MUTED),0);
+    lv_obj_set_style_bg_color(r,lv_color_hex(BUTTON),0);
+    lv_obj_set_style_border_width(r,1,0);lv_obj_set_style_border_color(r,lv_color_hex(EDGE),0);
+    lv_obj_set_style_radius(r,6,0);
+    lv_obj_set_style_bg_color(r,lv_color_hex(ACCENT),LV_PART_SELECTED);
+    lv_obj_set_style_bg_opa(r,LV_OPA_COVER,LV_PART_SELECTED);
+    lv_obj_set_style_text_color(r,lv_color_hex(ON_ACCENT),LV_PART_SELECTED);
+    lv_roller_set_options(r,options,LV_ROLLER_MODE_INFINITE);
+    lv_roller_set_visible_row_count(r,3);
+    lv_obj_set_pos(r,x,ALARM_ROLLER_TOP);lv_obj_set_width(r,ALARM_ROLLER_WIDTH);
+    lv_roller_set_selected(r,(uint32_t)selected,LV_ANIM_OFF);
+    lv_obj_add_event_cb(r,alarm_clock_rolled,LV_EVENT_VALUE_CHANGED,NULL);
+    return r;
+}
+/* The layer that sets the alarm: on or off, the time on two wheels, and
+ * the days. No day is one ring, and the alarm then switches itself off.
+ * The line under the days says when it rings. Nothing is set until the
+ * layer closes. */
+static void alarm_clock_open(lv_event_t *e)
+{
+    (void)e;
+    if(alarm_clock_layer||alarm_clock_ring_layer||alarm_layer||look_layer||sensor_layer||overlay
+       ||settings_screen||pads_screen||pc_screen||self_screen||update_layer||setup_screen)return;
+    feedback();
+    alarm_clock_draft=alarm_clock.set;
+    alarm_clock_layer=panel(lv_screen_active(),0,0,480,480,BG,false);
+    lv_obj_set_style_bg_opa(alarm_clock_layer,LV_OPA_90,0);
+    lv_obj_add_event_cb(alarm_clock_layer,alarm_clock_outside,LV_EVENT_CLICKED,NULL);
+    /* The box takes a tap of its own, so a tap beside a wheel does not
+     * close the layer. */
+    lv_obj_t *box=panel(alarm_clock_layer,20,(480-ALARM_BOX_HIGH)/2,440,ALARM_BOX_HIGH,CARD,true);
+    text_at(box,panel_text(TXT_ALARM_TITLE),20,18,300,&panel_font_20,TEXT);
+    alarm_clock_switch=switch_at(box,362,14,alarm_clock_draft.on,alarm_clock_switched);
+    line(box,20,56,398,1);
+    alarm_clock_hours=alarm_clock_roller(box,ALARM_ROLLER_X,24,alarm_clock_draft.hour);
+    alarm_clock_minutes=alarm_clock_roller(box,ALARM_ROLLER_X+ALARM_ROLLER_WIDTH+ALARM_COLON_WIDTH,
+                                           60,alarm_clock_draft.minute);
+    lv_obj_update_layout(box);
+    int32_t middle=ALARM_ROLLER_TOP+lv_obj_get_height(alarm_clock_hours)/2;
+    center_text(text_at(box,":",ALARM_ROLLER_X+ALARM_ROLLER_WIDTH,
+                        middle-lv_font_get_line_height(&panel_font_32)/2,ALARM_COLON_WIDTH,
+                        &panel_font_32,TEXT));
+    /* Monday first, as a calendar of this country has it. */
+    static const panel_text_id_t names[PANEL_ALARM_DAYS]={TXT_MONDAY_SHORT,TXT_TUESDAY_SHORT,
+        TXT_WEDNESDAY_SHORT,TXT_THURSDAY_SHORT,TXT_FRIDAY_SHORT,TXT_SATURDAY_SHORT,TXT_SUNDAY_SHORT};
+    for(int i=0;i<PANEL_ALARM_DAYS;i++){
+        lv_obj_t *b=button(box,panel_text(names[i]),ALARM_DAY_X+i*(ALARM_DAY_WIDTH+ALARM_DAY_GAP),
+                           ALARM_DAYS_TOP,ALARM_DAY_WIDTH,44,alarm_clock_day_clicked,i);
+        lv_obj_set_style_bg_color(b,lv_color_hex(ACCENT),LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(b,lv_color_hex(ON_ACCENT),LV_STATE_CHECKED);
+        alarm_clock_days[i]=b;
+    }
+    alarm_clock_status=text_at(box,"",20,ALARM_STATUS_TOP,400,&panel_font_16,MUTED);
+    center_text(alarm_clock_status);
+    lv_obj_t *done;
+    if(alarm_clock.phase==PANEL_ALARM_SNOOZING){
+        button(box,panel_text(TXT_SNOOZE_END),20,ALARM_BUTTONS_TOP,196,52,alarm_clock_end_snooze,0);
+        done=button(box,panel_text(TXT_ALARM_DONE),224,ALARM_BUTTONS_TOP,196,52,alarm_clock_done,0);
+    }else done=button(box,panel_text(TXT_ALARM_DONE),20,ALARM_BUTTONS_TOP,400,52,alarm_clock_done,0);
+    lv_obj_set_style_bg_color(done,lv_color_hex(ACCENT),0);
+    lv_obj_set_style_text_color(done,lv_color_hex(ON_ACCENT),0);
+    alarm_clock_draft_show();
+}
 /* How a drive row sits in its card.
  *
  * The card is 460 across. The icon and the line above it stand 14 in from
@@ -2319,6 +2605,14 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
 {
     last_state_valid=false;
     send_action=callback;save_setting=setting_cb;play_sound=sound_cb;local=*settings;
+    /* The alarm clock from what NVS holds, one time only: a new screen
+     * keeps an alarm that rings or snoozes. */
+    if(!alarm_clock_ready){
+        panel_alarm_init(&alarm_clock,panel_alarm_unpack(local.alarm));
+        alarm_clock_stored=panel_alarm_pack(alarm_clock.set);
+        alarm_clock_ready=true;
+    }
+    local.alarm=alarm_clock_stored;
     panel_text_set(local.language);
     /* A theme or an accent outside the lists is the dark theme or blue, as
      * panel_palette draws it, and so the card of the appearance shows it. */
@@ -2358,6 +2652,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     playing_name=NULL;achievement_count=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
     clock_digits=NULL;clock_date=NULL;timer_value=NULL;timer_minus=NULL;timer_plus=NULL;
     timer_go=NULL;timer_go_label=NULL;timer_reset=NULL;alarm_layer=NULL;
+    alarm_clock_button=NULL;alarm_clock_icon=NULL;alarm_clock_ring_layer=NULL;alarm_clock_forget();
     gpu_load_value=NULL;gpu_load_track=NULL;gpu_load_bar=NULL;
     vram_value=NULL;vram_track=NULL;vram_bar=NULL;gpu_clock_value=NULL;
     boost_field=NULL;boost_track=NULL;boost_knob=NULL;boost_shown=-1;
@@ -2537,6 +2832,13 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     center_text(clock_digits);
     clock_date=text_at(clock_card,panel_text(TXT_CLOCK_UNSET),20,96,420,&panel_font_18,MUTED);
     center_text(clock_date);
+    /* The alarm clock, in the top right corner of the card: right of the
+     * digits even at their widest. See alarm_clock_open. */
+    alarm_clock_button=button(clock_card,"",460-10-ALARM_BUTTON_SIZE,10,ALARM_BUTTON_SIZE,
+                              ALARM_BUTTON_SIZE,alarm_clock_open,0);
+    alarm_clock_icon=icon(alarm_clock_button,&icon_alarm_clock,(ALARM_BUTTON_SIZE-26)/2,
+                          (ALARM_BUTTON_SIZE-26)/2,MUTED);
+    alarm_clock_mark();
     lv_obj_t *timer_card=panel(page[3],10,146,460,154,CARD,true);
     timer_minus=button(timer_card,LV_SYMBOL_MINUS,14,14,84,72,timer_step,-1);
     timer_plus=button(timer_card,LV_SYMBOL_PLUS,362,14,84,72,timer_step,1);
@@ -2554,8 +2856,10 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     timer_go_label=lv_obj_get_child(timer_go,0);
     timer_reset=button(timer_card,panel_text(TXT_RESET),234,96,212,44,timer_reset_clicked,0);
     timer_show();
-    /* A new screen for a new language, while the timer rings. */
+    /* A new screen for a new language, while the timer or the alarm
+     * rings. */
     if(timer.phase==PANEL_TIMER_RINGING)alarm_show();
+    if(alarm_clock.phase==PANEL_ALARM_RINGING)alarm_clock_ring_show();
     /* The fifth page: the card, and the history under it.
      *
      * Three columns over the card: its load and its memory, each with a

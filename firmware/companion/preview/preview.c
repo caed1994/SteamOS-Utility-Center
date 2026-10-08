@@ -99,6 +99,14 @@ int main(int argc,char **argv)
     }
     /* "pages-hidden" is that screen with the session hidden. */
     if(argc>2&&strcmp(argv[2],"pages-hidden")==0)settings.page_hidden=1u<<PANEL_PAGE_SESSION;
+    /* "alarm-clock" is the clock page with an alarm at 6:30 from Monday to
+     * Friday. "alarm-clock-set" has the layer that sets it open, and
+     * "alarm-clock-ring" has it ringing. "standby-alarm" is the cover with
+     * its next ring. */
+    bool alarm_clock=argc>2&&(strncmp(argv[2],"alarm-clock",11)==0||
+                              strcmp(argv[2],"standby-alarm")==0);
+    if(alarm_clock)settings.alarm=panel_alarm_pack((panel_alarm_set_t){.on=true,.hour=6,.minute=30,
+                                                                       .days=0x1F});
     /* The history of the page of the card, which main.c keeps in PSRAM. */
     static panel_history_t history;
     panel_history_reset(&history);
@@ -174,7 +182,8 @@ int main(int argc,char **argv)
      * minutes set. "timer" has it running for 90 seconds, "alarm" has it
      * ringing, and "noclock" is a panel the network has not set yet. */
     bool clock=argc>2&&(strcmp(argv[2],"clock")==0||strcmp(argv[2],"timer")==0||
-                        strcmp(argv[2],"alarm")==0||strcmp(argv[2],"noclock")==0);
+                        strcmp(argv[2],"alarm")==0||strcmp(argv[2],"noclock")==0||
+                        strncmp(argv[2],"alarm-clock",11)==0);
     if(clock&&strcmp(argv[2],"noclock")!=0){
         s.clock_set=true;s.hour=18;s.minute=42;s.weekday=3;s.day=1;s.month=10;
     }
@@ -205,6 +214,18 @@ int main(int argc,char **argv)
         if(strcmp(argv[2],"alarm")==0){
             lv_tick_inc(25*60*1000);
             panel_ui_timer_tick();
+        }
+        if(alarm_clock){
+            /* The time of the page, or a Thursday at 6:30 for the ring. */
+            panel_alarm_clock_t now={.known=true,.day=1,.weekday=3,.hour=18,.minute=42};
+            if(strcmp(argv[2],"alarm-clock-ring")==0)
+                now=(panel_alarm_clock_t){.known=true,.day=2,.weekday=4,.hour=6,.minute=30};
+            panel_ui_alarm_clock_tick(&now);
+            /* The button in the corner of the clock card, pressed by its
+             * event. */
+            lv_obj_t *clock_card=lv_obj_get_child(lv_obj_get_child(band,3),0);
+            if(strcmp(argv[2],"alarm-clock-set")==0)
+                lv_obj_send_event(lv_obj_get_child(clock_card,2),LV_EVENT_CLICKED,NULL);
         }
     }
     /* The fifth page. "card" is 35 minutes of the board's machine: ten
@@ -362,14 +383,20 @@ int main(int argc,char **argv)
         }
     }
     /* "standby" is the black cover of a sleeping panel with its clock, as
-     * main.c writes it: the time, and the day and the date under it. */
-    if(argc>2&&strcmp(argv[2],"standby")==0){
+     * main.c writes it: the time, and the day and the date under it.
+     * "standby-alarm" has the next ring of the alarm clock under them. */
+    if(argc>2&&(strcmp(argv[2],"standby")==0||strcmp(argv[2],"standby-alarm")==0)){
         lv_indev_t *input=lv_indev_create();
         lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);
         lv_indev_set_display(input,d);
-        char date[64];
+        char date[64],alarm[24]="";
         panel_text_date(date,sizeof date,4,8,10);
-        panel_ui_sleep_clock(d,"21:47",date);
+        if(alarm_clock){
+            panel_alarm_clock_t now={.known=true,.day=1,.weekday=4,.hour=21,.minute=47};
+            panel_ui_alarm_clock_tick(&now);
+            panel_ui_alarm_clock_next(alarm,sizeof alarm);
+        }
+        panel_ui_sleep_clock(d,"21:47",date,alarm);
         panel_ui_sleep(d,input,true);
     }
     lv_refr_now(d);

@@ -272,6 +272,21 @@
     X(TXT_RESET,           "Reset",                 "Zurücksetzen") \
     X(TXT_TIME_UP,         "Time is up",            "Zeit abgelaufen") \
     X(TXT_STOP,            "Stop",                  "Stopp") \
+    X(TXT_ALARM,           "ALARM",                 "WECKER") \
+    X(TXT_ALARM_TITLE,     "Alarm",                 "Wecker") \
+    X(TXT_SNOOZE,          "Snooze",                "Schlummern") \
+    X(TXT_ALARM_OFF,       "Off",                   "Aus") \
+    X(TXT_ALARM_DONE,      "Done",                  "Fertig") \
+    X(TXT_SNOOZE_END,      "End snooze",            "Schlummern beenden") \
+    X(TXT_ALARM_RINGS,     "Rings %s",              "Klingelt %s") \
+    X(TXT_ALARM_SNOOZED,   "Snoozed until %s",      "Schlummert bis %s") \
+    X(TXT_SUNDAY_SHORT,    "Su",                    "So") \
+    X(TXT_MONDAY_SHORT,    "Mo",                    "Mo") \
+    X(TXT_TUESDAY_SHORT,   "Tu",                    "Di") \
+    X(TXT_WEDNESDAY_SHORT, "We",                    "Mi") \
+    X(TXT_THURSDAY_SHORT,  "Th",                    "Do") \
+    X(TXT_FRIDAY_SHORT,    "Fr",                    "Fr") \
+    X(TXT_SATURDAY_SHORT,  "Sa",                    "Sa") \
     X(TXT_GPU_LOAD,        "GPU load",              "GPU-Last") \
     X(TXT_GPU_VRAM,        "VRAM",                  "VRAM") \
     X(TXT_GPU_CLOCK,       "GPU clock",             "GPU-Takt") \

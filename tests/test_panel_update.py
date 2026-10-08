@@ -432,6 +432,7 @@ class FirmwareRuleTest(unittest.TestCase):
         main = code("main.c")
         self.assertRegex(main, r"display_sleep_after>0 && "
                                r"!panel_ui_timer_ringing\(\) &&\s*"
+                               r"!panel_ui_alarm_clock_ringing\(\) && "
                                r"!atomic_load\(&updating\) &&")
         self.assertRegex(main, r"\}else if\(atomic_load\(&updating\)\)\{"
                                r"[^}]*\}else display_sleeping\(")

@@ -91,6 +91,7 @@ PC for its status over Wi-Fi and has no cable to the PC in normal use.
 | Keys | one task, every 15 ms; settle 20 ms; short press 40 to 1000 ms (`panel_key.c`, `panel_power.c`) |
 | Touch | GT911, read by LVGL every 15 ms; its INT line (EXIO6) is not used |
 | Standby | a black cover with a clock (`panel_ui_sleep.c`), one draw a minute. The key standby turns Wi-Fi off |
+| Alarm clock | one alarm on the clock page (`panel_alarm.c`, NVS key `alarm`): weekdays or one time, snooze 5 min, rings 5 min. Both keys snooze, Off by touch only. The cover shows the next ring |
 | Settings | NVS namespace `panel`: Wi-Fi, server, token, page order, theme, accent, language and more |
 | Update | the PC offers `firmware/companion/prebuilt/` through `/v1/firmware`; two slots, boot on trial |
 

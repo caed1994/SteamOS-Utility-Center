@@ -307,7 +307,7 @@ class StandbyClockTest(unittest.TestCase):
     def test_the_same_text_draws_nothing(self):
         body = self.function(self.source("panel_ui_sleep.c"),
                              "void panel_ui_sleep_clock(")
-        same = body.index("strcmp(lv_label_get_text(cover_date), date) == 0) return;")
+        same = body.index("strcmp(lv_label_get_text(cover_alarm_text), alarm) == 0)) return;")
         self.assertLess(same, body.index("lv_display_enable_invalidation"))
 
     def test_a_sleeping_display_gets_its_invalidation_back(self):

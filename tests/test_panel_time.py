@@ -146,19 +146,22 @@ class AlarmTest(unittest.TestCase):
         """display_sleeping(false,...) clears asleep_by_hand, which ends the
         rest of the radio as well."""
         tick = self.tick()
-        went = tick[tick.index("if(news.went_off){"):]
-        went = went[:went.index("}")]
+        went = tick[tick.index("if(news.went_off||wake.went_off){"):]
+        went = went[:went.index("ESP_LOGI")]
         self.assertIn("display_sleeping(false,false);", went)
 
     def test_it_beeps_at_the_volume_of_the_alarm(self):
-        self.assertIn("if(news.beep)sound_send(panel_ui_alarm_volume());",
+        self.assertIn("if(news.beep||wake.beep)sound_send(panel_ui_alarm_volume());",
                       self.tick())
 
     def test_nobody_there_puts_the_display_back_where_it_was(self):
         tick = self.tick()
-        gave = tick[tick.index("if(news.gave_up){"):]
+        gave = tick[tick.index("if(news.gave_up||wake.gave_up){"):]
+        self.assertIn("ring_quiet();", gave[:gave.index("}")])
+        code = without_comments(read("main", "main.c"))
+        quiet = body(code, "static void ring_quiet(void)")
         self.assertIn("if(alarm_woke)display_sleeping(true,alarm_woke_by_hand);",
-                      gave[:gave.index("alarm_woke=false;")])
+                      quiet[:quiet.index("alarm_woke=false;")])
 
     def test_the_button_stops_the_alarm_before_it_toggles_anything(self):
         tick = self.tick()

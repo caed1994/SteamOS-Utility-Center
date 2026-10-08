@@ -961,6 +961,109 @@ int main(void)
         assert(complaints==0);
     }
 
+    // The alarm clock. A button in the corner of the clock card opens the
+    // layer that sets it. The wheels and the days change what the layer
+    // shows, and the close sets it and stores it. It rings over the whole
+    // screen, a tap anywhere on it snoozes it, and Off ends it.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_alarm_clock_t wednesday={.known=true,.day=1,.weekday=3,.hour=18,.minute=42};
+        panel_alarm_news_t news=panel_ui_alarm_clock_tick(&wednesday);
+        assert(!news.went_off&&!panel_ui_alarm_clock_ringing());
+        char next[24];
+        panel_ui_alarm_clock_next(next,sizeof next);
+        assert(next[0]==0);
+        lv_obj_t *card=lv_obj_get_child(lv_obj_get_child(find_band(lv_screen_active()),3),0);
+        lv_obj_t *button=lv_obj_get_child(card,2);
+        assert(lv_obj_check_type(button,&lv_button_class));
+        lv_obj_t *bell=lv_obj_get_child(button,0);
+        lv_color_t off_colour=lv_obj_get_style_image_recolor(bell,0);
+        lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
+        lv_obj_t *title=label(lv_screen_active(),panel_text(TXT_ALARM_TITLE));
+        assert(title);
+        lv_obj_t *layer=lv_obj_get_parent(lv_obj_get_parent(title));
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_width(layer)==480&&lv_obj_get_height(layer)==480);
+        assert(lv_obj_get_index(layer)==(int32_t)lv_obj_get_child_count(lv_screen_active())-1);
+        assert(strcmp(panel_ui_where(),"the alarm clock")==0);
+        // The two wheels: the hours, then the minutes. A turn switches the
+        // alarm on in the layer, and the line under the days says when it
+        // rings. Nothing is stored before the close.
+        lv_obj_t *box=lv_obj_get_parent(title),*wheels[2]={NULL,NULL};
+        for(unsigned i=0,n=0;i<lv_obj_get_child_count(box)&&n<2;i++)
+            if(lv_obj_check_type(lv_obj_get_child(box,i),&lv_roller_class))wheels[n++]=lv_obj_get_child(box,i);
+        assert(wheels[0]&&wheels[1]);
+        assert(lv_roller_get_selected(wheels[0])==7&&lv_roller_get_selected(wheels[1])==0);
+        unsigned before=saved_count;
+        lv_roller_set_selected(wheels[0],6,LV_ANIM_OFF);lv_obj_send_event(wheels[0],LV_EVENT_VALUE_CHANGED,NULL);
+        lv_roller_set_selected(wheels[1],30,LV_ANIM_OFF);lv_obj_send_event(wheels[1],LV_EVENT_VALUE_CHANGED,NULL);
+        assert(label(layer,"Rings Th 06:30"));
+        click(panel_text(TXT_MONDAY_SHORT));
+        assert(label(layer,"Rings Mo 06:30"));
+        assert(saved_count==before);
+        click(panel_text(TXT_ALARM_DONE));
+        assert(!label(lv_screen_active(),panel_text(TXT_ALARM_TITLE)));
+        assert(saved_count==before+1&&saved_key==PANEL_ALARM);
+        assert((uint32_t)saved_value==panel_alarm_pack((panel_alarm_set_t){.on=true,.hour=6,.minute=30,.days=1}));
+        assert(!lv_color_eq(lv_obj_get_style_image_recolor(bell,0),off_colour));
+        panel_ui_alarm_clock_next(next,sizeof next);
+        assert(strcmp(next,"Mo 06:30")==0);
+        // Monday at 6:30: it rings, over everything, and a new screen for a
+        // new language keeps the ring.
+        panel_alarm_clock_t monday={.known=true,.day=6,.weekday=1,.hour=6,.minute=30};
+        news=panel_ui_alarm_clock_tick(&monday);
+        assert(news.went_off&&news.beep&&panel_ui_alarm_clock_ringing());
+        assert(label(lv_screen_active(),panel_text(TXT_SNOOZE)));
+        panel_settings_t german={.brightness=70,.sound_volume=30,.language=PANEL_GERMAN};
+        panel_ui_create(action,setting,sound,&german);
+        lv_obj_t *snooze=label(lv_screen_active(),panel_text(TXT_SNOOZE));
+        assert(snooze&&label(lv_screen_active(),"06:30"));
+        // A tap beside the buttons snoozes it, and main.c hears of it one
+        // time.
+        layer=lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(snooze)));
+        assert(lv_obj_get_parent(layer)==lv_screen_active());
+        lv_obj_send_event(layer,LV_EVENT_CLICKED,NULL);
+        assert(!panel_ui_alarm_clock_ringing()&&!label(lv_screen_active(),panel_text(TXT_SNOOZE)));
+        assert(panel_ui_alarm_clock_take_snooze()&&!panel_ui_alarm_clock_take_snooze());
+        panel_ui_alarm_clock_next(next,sizeof next);
+        assert(strcmp(next,"Mo 06:35")==0);
+        // The layer during a snooze says so, and ends it on request. The
+        // alarm of each Monday stays.
+        card=lv_obj_get_child(lv_obj_get_child(find_band(lv_screen_active()),3),0);
+        lv_obj_send_event(lv_obj_get_child(card,2),LV_EVENT_CLICKED,NULL);
+        assert(label(lv_screen_active(),"Schlummert bis Mo 06:35"));
+        click(panel_text(TXT_SNOOZE_END));
+        assert(!label(lv_screen_active(),panel_text(TXT_ALARM_TITLE)));
+        panel_ui_alarm_clock_next(next,sizeof next);
+        assert(strcmp(next,"Mo 06:30")==0);
+        // The next Monday: Off ends it, and a key would have snoozed it.
+        monday.day=13;
+        news=panel_ui_alarm_clock_tick(&monday);
+        assert(news.went_off);
+        click(panel_text(TXT_ALARM_OFF));
+        assert(!panel_ui_alarm_clock_ringing()&&!panel_ui_alarm_clock_snooze());
+        assert(!panel_ui_alarm_clock_take_snooze());
+        // The home key closes the layer, and sets what it shows.
+        before=saved_count;
+        lv_obj_send_event(lv_obj_get_child(card,2),LV_EVENT_CLICKED,NULL);
+        title=label(lv_screen_active(),panel_text(TXT_ALARM_TITLE));
+        assert(title);
+        box=lv_obj_get_parent(title);
+        for(unsigned i=0;i<lv_obj_get_child_count(box);i++)
+            if(lv_obj_check_type(lv_obj_get_child(box,i),&lv_roller_class)){
+                lv_roller_set_selected(lv_obj_get_child(box,i),7,LV_ANIM_OFF);
+                lv_obj_send_event(lv_obj_get_child(box,i),LV_EVENT_VALUE_CHANGED,NULL);
+                break;
+            }
+        assert(panel_ui_home());
+        assert(!label(lv_screen_active(),panel_text(TXT_ALARM_TITLE)));
+        assert(saved_count==before+1&&saved_key==PANEL_ALARM);
+        assert((uint32_t)saved_value==panel_alarm_pack((panel_alarm_set_t){.on=true,.hour=7,.minute=30,.days=1}));
+        lv_refr_now(screen);
+        assert(complaints==0);
+    }
+
     // The controllers: two in the head with no caption, and a page of four
     // that a tap on the head opens.
     {
@@ -3241,7 +3344,7 @@ int main(void)
          "them drawn with nothing for LVGL to complain about, the battery of "
          "the panel in the corner with the network mark against it, the "
          "achievements of the game under its name, room under both "
-         "display sliders, the clock with a timer that rings, and two "
+         "display sliders, the clock with a timer that rings and an alarm that snoozes, and two "
          "controllers in the head with a page of four behind it, and the "
          "page of the PC that scrolls, and a choice of sensor for each tile "
          "of the temperatures, and the page of the panel with its update, "

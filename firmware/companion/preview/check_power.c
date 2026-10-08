@@ -153,14 +153,17 @@ int main(void)
     lv_display_add_event_cb(screen,refresh_edge,LV_EVENT_REFR_START,NULL);
     lv_display_add_event_cb(screen,refresh_edge,LV_EVENT_REFR_READY,NULL);
     dirty=0;flushes=0;
-    panel_ui_sleep_clock(screen,"07:05","Thursday, 8 October");
+    panel_ui_sleep_clock(screen,"07:05","Thursday, 8 October","");
     lv_refr_now(screen);
     assert(dirty==0&&flushes==0);
     /* The sleep shows it: the time over the date, both across the screen
-     * and together in its middle, in the font of the clock page. */
+     * and together in its middle, in the font of the clock page. The row of
+     * the alarm clock under them waits hidden: no alarm is set. */
     panel_ui_sleep(screen,input,true);
-    lv_obj_t *black=cover_of(screen);assert(black&&lv_obj_get_child_count(black)==2);
+    lv_obj_t *black=cover_of(screen);assert(black&&lv_obj_get_child_count(black)==3);
     lv_obj_t *hours=lv_obj_get_child(black,0),*date=lv_obj_get_child(black,1);
+    lv_obj_t *ring=lv_obj_get_child(black,2);
+    assert(lv_obj_has_flag(ring,LV_OBJ_FLAG_HIDDEN));
     assert(strcmp(lv_label_get_text(hours),"07:05")==0);
     assert(strcmp(lv_label_get_text(date),"Thursday, 8 October")==0);
     assert(lv_obj_get_style_text_font(hours,0)==&panel_clock_font);
@@ -180,11 +183,11 @@ int main(void)
     /* The same minute again, five times a second in a sleep: nothing is
      * asked of the display. */
     dirty=0;flushes=0;
-    for(int i=0;i<300;i++)panel_ui_sleep_clock(screen,"07:05","Thursday, 8 October");
+    for(int i=0;i<300;i++)panel_ui_sleep_clock(screen,"07:05","Thursday, 8 October","");
     assert(dirty==0&&flushes==0&&!lv_display_is_invalidation_enabled(screen));
     /* A new minute: one draw, of the line of the time and nothing else,
      * and the sleeping display takes no invalidation after it. */
-    panel_ui_sleep_clock(screen,"07:06","Thursday, 8 October");
+    panel_ui_sleep_clock(screen,"07:06","Thursday, 8 October","");
     assert(flushes==1&&dirty>0&&inside(&dirty_box,&time_draw));
     assert(!lv_display_is_invalidation_enabled(screen));
     assert(strcmp(lv_label_get_text(hours),"07:06")==0);
@@ -194,23 +197,64 @@ int main(void)
     assert(dirty==0&&flushes==0);
     /* A new day: both lines, and nothing outside them. */
     lv_area_t both={0,time_draw.y1,479,date_draw.y2};
-    panel_ui_sleep_clock(screen,"00:00","Friday, 9 October");
+    panel_ui_sleep_clock(screen,"00:00","Friday, 9 October","");
     assert(flushes>=1&&inside(&dirty_box,&both)&&dirty_box.y2>time_draw.y2);
+    /* An alarm: its row under the date, and the three lines together in
+     * the middle of the screen. The lines move, so one draw of the clock,
+     * and nothing outside it. */
+    lv_area_t old_draw={0,time_draw.y1,479,date_draw.y2};
+    dirty=0;flushes=0;
+    panel_ui_sleep_clock(screen,"00:00","Friday, 9 October","Fr 06:30");
+    assert(!lv_obj_has_flag(ring,LV_OBJ_FLAG_HIDDEN)&&!lv_display_is_invalidation_enabled(screen));
+    lv_obj_t *bell=lv_obj_get_child(ring,0),*ring_text=lv_obj_get_child(ring,1);
+    assert(strcmp(lv_label_get_text(ring_text),"Fr 06:30")==0);
+    assert(lv_obj_get_style_text_font(ring_text,0)==&panel_font_24);
+    lv_area_t ring_at,bell_at,words_at;
+    lv_obj_get_coords(hours,&time_at);lv_obj_get_coords(date,&date_at);
+    lv_obj_get_coords(ring,&ring_at);
+    assert(time_at.y2<date_at.y1&&date_at.y2<ring_at.y1);
+    above=time_at.y1;below=479-ring_at.y2;
+    assert(above-below<=1&&below-above<=1);
+    lv_area_t clock_draw={0,time_at.y1-lv_obj_get_ext_draw_size(hours),479,ring_at.y2};
+    if(old_draw.y2>clock_draw.y2)clock_draw.y2=old_draw.y2;
+    assert(flushes>=1&&inside(&dirty_box,&clock_draw));
+    /* The icon and the time beside it, together in the middle of the row. */
+    lv_obj_get_coords(bell,&bell_at);lv_obj_get_coords(ring_text,&words_at);
+    assert(bell_at.x2<words_at.x1);
+    int32_t left=bell_at.x1,right=479-words_at.x2;
+    assert(left-right<=1&&right-left<=1);
+    /* The same again, five times a second: nothing. */
+    dirty=0;flushes=0;
+    for(int i=0;i<300;i++)panel_ui_sleep_clock(screen,"00:00","Friday, 9 October","Fr 06:30");
+    assert(dirty==0&&flushes==0);
+    /* A new minute with the alarm: the line of the time alone, where it
+     * stands now. */
+    time_draw=time_at;
+    lv_area_increase(&time_draw,lv_obj_get_ext_draw_size(hours),lv_obj_get_ext_draw_size(hours));
+    panel_ui_sleep_clock(screen,"00:01","Friday, 9 October","Fr 06:30");
+    assert(flushes==1&&dirty>0&&inside(&dirty_box,&time_draw));
+    /* The alarm goes: the row hides, and the two lines are back in the
+     * middle. */
+    panel_ui_sleep_clock(screen,"00:01","Friday, 9 October","");
+    assert(lv_obj_has_flag(ring,LV_OBJ_FLAG_HIDDEN));
+    lv_obj_get_coords(hours,&time_at);lv_obj_get_coords(date,&date_at);
+    above=time_at.y1;below=479-date_at.y2;
+    assert(above-below<=1&&below-above<=1);
     /* No clock: black again. */
-    panel_ui_sleep_clock(screen,"","");
+    panel_ui_sleep_clock(screen,"","","");
     assert(lv_label_get_text(hours)[0]==0&&lv_label_get_text(date)[0]==0);
     /* The wake takes the cover away, clock and all, and draws everything. */
-    panel_ui_sleep_clock(screen,"08:00","Thursday, 8 October");
+    panel_ui_sleep_clock(screen,"08:00","Thursday, 8 October","");
     panel_ui_sleep(screen,input,false);
     assert(!covered(screen)&&lv_display_is_invalidation_enabled(screen));
     /* After a clean of the screen, the next cover has its clock again. */
     lv_obj_clean(lv_screen_active());panel_ui_sleep_reset();
-    panel_ui_sleep_clock(screen,"09:30","Thursday, 8 October");
+    panel_ui_sleep_clock(screen,"09:30","Thursday, 8 October","");
     /* Made by the clock while the panel is awake, the cover waits hidden. */
     lv_obj_update_layout(lv_screen_active());
     assert(cover_of(screen)&&!covered(screen));
     panel_ui_sleep(screen,input,true);
-    black=cover_of(screen);assert(black&&lv_obj_get_child_count(black)==2);
+    black=cover_of(screen);assert(black&&lv_obj_get_child_count(black)==3);
     assert(strcmp(lv_label_get_text(lv_obj_get_child(black,0)),"09:30")==0);
     panel_ui_sleep(screen,input,false);
 

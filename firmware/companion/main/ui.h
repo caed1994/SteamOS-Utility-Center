@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "panel_alarm.h"
 #include "panel_cpu.h"
 #include "panel_history.h"
 #include "panel_led.h"
@@ -250,7 +251,7 @@ typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
                PANEL_LANGUAGE, PANEL_SLEEP_AFTER,
                PANEL_CPU_SENSOR, PANEL_GPU_SENSOR, PANEL_LIFT_WAKE,
                PANEL_PAGE_ORDER, PANEL_PAGE_HIDDEN,
-               PANEL_THEME, PANEL_ACCENT } panel_setting_t;
+               PANEL_THEME, PANEL_ACCENT, PANEL_ALARM } panel_setting_t;
 /* The lowest brightness of the display that the settings page offers, in
  * per cent: the lowest that the backlight of this board holds steady, as a
  * test on the board found it. BACKLIGHT_SLEEP_PERCENT in panel_display.c
@@ -276,12 +277,16 @@ typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
  *
  * theme and accent: the colours of the screen, as panel_theme.h numbers
  * them. Nought for both is the dark theme in its blue, the panel as it was
- * before there was a choice. */
+ * before there was a choice.
+ *
+ * alarm: the alarm clock, as panel_alarm_pack stores it. Nought, or any
+ * number that this firmware did not write, is an alarm that is off. */
 typedef struct { int brightness, sound_volume; bool touch_tones;
                  panel_language_t language; int sleep_after;
                  uint32_t cpu_sensor, gpu_sensor; bool lift_wake;
                  uint32_t page_order, page_hidden;
-                 panel_theme_t theme; panel_accent_t accent; }
+                 panel_theme_t theme; panel_accent_t accent;
+                 uint32_t alarm; }
     panel_settings_t;
 typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);
@@ -331,5 +336,19 @@ panel_timer_news_t panel_ui_timer_tick(void);
 bool panel_ui_timer_stop(void);
 bool panel_ui_timer_ringing(void);
 /* The volume of the alarm: the volume of the sounds, and never so low that
- * a timer goes off unheard. */
+ * a timer goes off unheard. The alarm clock rings at it too. */
 int panel_ui_alarm_volume(void);
+/* The alarm clock of the fourth page, once a tick of the panel, asleep or
+ * awake, with the local time. main.c wakes the display and beeps for it,
+ * as it does for the timer. See panel_alarm.h. */
+panel_alarm_news_t panel_ui_alarm_clock_tick(const panel_alarm_clock_t *now);
+bool panel_ui_alarm_clock_ringing(void);
+/* A press of a key: a snooze of an alarm that rings. false when none
+ * rang. */
+bool panel_ui_alarm_clock_snooze(void);
+/* true one time after a snooze by a touch, so that main.c can put the
+ * display back where the ring found it, as it does for a key. */
+bool panel_ui_alarm_clock_take_snooze(void);
+/* The next ring for the cover of a sleep, as "Mo 07:00", or an empty text
+ * when no alarm is set. Always ends inside room. */
+void panel_ui_alarm_clock_next(char *out, size_t room);

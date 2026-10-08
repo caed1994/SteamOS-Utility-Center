@@ -701,9 +701,9 @@ bool panel_display_touched(void)
            && count>0;
 }
 
-void panel_display_sleep_clock(const char *time,const char *date)
+void panel_display_sleep_clock(const char *time,const char *date,const char *alarm)
 {
-    if(panel_screen)panel_ui_sleep_clock(panel_screen,time,date);
+    if(panel_screen)panel_ui_sleep_clock(panel_screen,time,date,alarm);
 }
 
 esp_err_t panel_display_standby(bool sleep,int brightness)
