@@ -17,6 +17,5 @@ void panel_ui_sleep_reset(void);
  * A text that is the same as the one shown costs a comparison and
  * nothing else. A sleeping panel draws a new one at once, and only the
  * line that changed: invalidation goes on for the change and off again.
- * An awake panel keeps it for the next sleep. Same lock as above. true
- * when it drew on a sleeping panel. */
-bool panel_ui_sleep_clock(lv_display_t *screen, const char *time, const char *date);
+ * An awake panel keeps it for the next sleep. Same lock as above. */
+void panel_ui_sleep_clock(lv_display_t *screen, const char *time, const char *date);

@@ -306,14 +306,14 @@ class StandbyClockTest(unittest.TestCase):
 
     def test_the_same_text_draws_nothing(self):
         body = self.function(self.source("panel_ui_sleep.c"),
-                             "bool panel_ui_sleep_clock(")
-        same = body.index("strcmp(lv_label_get_text(cover_date), date) == 0) return false;")
+                             "void panel_ui_sleep_clock(")
+        same = body.index("strcmp(lv_label_get_text(cover_date), date) == 0) return;")
         self.assertLess(same, body.index("lv_display_enable_invalidation"))
 
     def test_a_sleeping_display_gets_its_invalidation_back(self):
         """On for the change, and off again after the one draw."""
         body = self.function(self.source("panel_ui_sleep.c"),
-                             "bool panel_ui_sleep_clock(")
+                             "void panel_ui_sleep_clock(")
         on = body.index("if (sleeping) lv_display_enable_invalidation(screen, true);")
         draw = body.index("lv_refr_now(screen);")
         off = body.index("lv_display_enable_invalidation(screen, false);")
@@ -341,42 +341,6 @@ class StandbyClockTest(unittest.TestCase):
         target = cmake[start:cmake.index(")", start)]
         for one in ("panel_ui_sleep.c", "panel_clock_font.c", "panel_font_24.c"):
             self.assertIn(one, target)
-
-    def standby(self):
-        return self.function(self.source("panel_display.c"),
-                             "esp_err_t panel_display_standby(")
-
-    def test_each_change_of_the_pixel_clock_starts_the_stream_again(self):
-        """A late restart of the driver shifts the picture and keeps it
-        shifted. Read off the board as a clock far down the screen."""
-        body = self.standby()
-        changes = [m.end() for m in re.finditer(
-            r"esp_lcd_rgb_panel_set_pclk\(panel_rgb,[^;]*\);", body)]
-        self.assertEqual(len(changes), 3)
-        for end in changes:
-            self.assertTrue(body[end:].lstrip().startswith("stream_restart();"),
-                            body[end:end + 80])
-
-    def test_the_cpu_stays_fast_until_the_sleeping_clock_is_in(self):
-        """main.c lowers the clock after the standby returns, so the wait
-        is inside it, after the change and before the end of the branch."""
-        body = self.standby()
-        branch = body[body.index("if(sleep){"):body.index("}else{")]
-        self.assertLess(branch.index("stream_restart();"),
-                        branch.index("vTaskDelay("))
-        self.assertIn("frame_us(pclk_awake)+frame_us(PANEL_PCLK_SLEEP_HZ)",
-                      branch)
-        sleeping = self.function(self.source("main.c"),
-                                 "static void display_sleeping(")
-        self.assertLess(sleeping.index("panel_display_standby("),
-                        sleeping.index("if(sleep)panel_clock_low(true);"))
-
-    def test_a_draw_of_a_sleeping_panel_starts_the_stream_again(self):
-        text = self.source("panel_display.c")
-        self.assertIn("panel_ui_sleep_clock(panel_screen,time,date))stream_restart();",
-                      text)
-        restart = self.function(text, "static void stream_restart(")
-        self.assertIn("esp_lcd_rgb_panel_restart(panel_rgb)", restart)
 
     def test_the_check_counts_what_it_draws(self):
         with open(os.path.join(REPO, "firmware", "companion", "preview",

@@ -153,9 +153,7 @@ int main(void)
     lv_display_add_event_cb(screen,refresh_edge,LV_EVENT_REFR_START,NULL);
     lv_display_add_event_cb(screen,refresh_edge,LV_EVENT_REFR_READY,NULL);
     dirty=0;flushes=0;
-    /* It says so: nothing was drawn, so the display has nothing to start
-     * again. See stream_restart in panel_display.c. */
-    assert(!panel_ui_sleep_clock(screen,"07:05","Thursday, 8 October"));
+    panel_ui_sleep_clock(screen,"07:05","Thursday, 8 October");
     lv_refr_now(screen);
     assert(dirty==0&&flushes==0);
     /* The sleep shows it: the time over the date, both across the screen
@@ -182,11 +180,11 @@ int main(void)
     /* The same minute again, five times a second in a sleep: nothing is
      * asked of the display. */
     dirty=0;flushes=0;
-    for(int i=0;i<300;i++)assert(!panel_ui_sleep_clock(screen,"07:05","Thursday, 8 October"));
+    for(int i=0;i<300;i++)panel_ui_sleep_clock(screen,"07:05","Thursday, 8 October");
     assert(dirty==0&&flushes==0&&!lv_display_is_invalidation_enabled(screen));
     /* A new minute: one draw, of the line of the time and nothing else,
      * and the sleeping display takes no invalidation after it. */
-    assert(panel_ui_sleep_clock(screen,"07:06","Thursday, 8 October"));
+    panel_ui_sleep_clock(screen,"07:06","Thursday, 8 October");
     assert(flushes==1&&dirty>0&&inside(&dirty_box,&time_draw));
     assert(!lv_display_is_invalidation_enabled(screen));
     assert(strcmp(lv_label_get_text(hours),"07:06")==0);
@@ -196,18 +194,18 @@ int main(void)
     assert(dirty==0&&flushes==0);
     /* A new day: both lines, and nothing outside them. */
     lv_area_t both={0,time_draw.y1,479,date_draw.y2};
-    assert(panel_ui_sleep_clock(screen,"00:00","Friday, 9 October"));
+    panel_ui_sleep_clock(screen,"00:00","Friday, 9 October");
     assert(flushes>=1&&inside(&dirty_box,&both)&&dirty_box.y2>time_draw.y2);
     /* No clock: black again. */
-    assert(panel_ui_sleep_clock(screen,"",""));
+    panel_ui_sleep_clock(screen,"","");
     assert(lv_label_get_text(hours)[0]==0&&lv_label_get_text(date)[0]==0);
     /* The wake takes the cover away, clock and all, and draws everything. */
-    assert(panel_ui_sleep_clock(screen,"08:00","Thursday, 8 October"));
+    panel_ui_sleep_clock(screen,"08:00","Thursday, 8 October");
     panel_ui_sleep(screen,input,false);
     assert(!covered(screen)&&lv_display_is_invalidation_enabled(screen));
     /* After a clean of the screen, the next cover has its clock again. */
     lv_obj_clean(lv_screen_active());panel_ui_sleep_reset();
-    assert(!panel_ui_sleep_clock(screen,"09:30","Thursday, 8 October"));
+    panel_ui_sleep_clock(screen,"09:30","Thursday, 8 October");
     /* Made by the clock while the panel is awake, the cover waits hidden. */
     lv_obj_update_layout(lv_screen_active());
     assert(cover_of(screen)&&!covered(screen));

@@ -136,13 +136,13 @@ static bool set_line(lv_obj_t *line, const char *text)
     return true;
 }
 
-bool panel_ui_sleep_clock(lv_display_t *screen, const char *time, const char *date)
+void panel_ui_sleep_clock(lv_display_t *screen, const char *time, const char *date)
 {
-    if (!cover_for(screen) || !cover_time || !cover_date) return false;
+    if (!cover_for(screen) || !cover_time || !cover_date) return;
     if (!time) time = "";
     if (!date) date = "";
     if (strcmp(lv_label_get_text(cover_time), time) == 0 &&
-        strcmp(lv_label_get_text(cover_date), date) == 0) return false;
+        strcmp(lv_label_get_text(cover_date), date) == 0) return;
     /* A sleeping display takes no invalidation, so nothing reaches the
      * screen while it sleeps. The change takes it for its own two areas and
      * gives it back. Nothing else is dirty then: what changed under the
@@ -150,8 +150,8 @@ bool panel_ui_sleep_clock(lv_display_t *screen, const char *time, const char *da
     if (sleeping) lv_display_enable_invalidation(screen, true);
     set_line(cover_time, time);
     set_line(cover_date, date);
-    if (!sleeping) return false;
-    lv_refr_now(screen);
-    lv_display_enable_invalidation(screen, false);
-    return true;
+    if (sleeping) {
+        lv_refr_now(screen);
+        lv_display_enable_invalidation(screen, false);
+    }
 }
