@@ -21,7 +21,7 @@ from . import desktop, elf, load, mounts, notify, phone, render
 from . import repair
 from . import link as link_module
 from . import serialport, shim
-from . import steamworks
+from . import steamapps, steamworks
 from . import temperature
 from .link import EspLink
 
@@ -1209,14 +1209,34 @@ def _open_friend_listener(stats, want_messages):
         return None
 
 
+def _publish_counts(app_id, counts):
+    """Gives the wall panel the live achievement counts, or removes them.
+
+    Nought unlocked is not given. A late load of the stats also reads as
+    nought, and the page of the game is then the better answer. See
+    steamapps.live_path.
+    """
+    try:
+        if app_id and counts and counts[0] > 0:
+            steamapps.publish_live(app_id, counts[0], counts[1])
+        else:
+            steamapps.clear_live()
+    except OSError as exc:
+        # The flash of the bar does not need the file.
+        LOG.warning("could not write the achievement counts: %s", exc)
+
+
 def run_watch_achievements(config, interval=1.0):
     """Flashes the bar for an achievement and for friend activity in a game.
 
     It runs as the normal user, beside Steam. It does not run as the service in
-    its sandbox. It writes trigger words into the notification pipe and does
-    nothing else.
+    its sandbox. It writes trigger words into the notification pipe, and the
+    live achievement counts of the game into a file for the wall panel. It
+    does nothing else.
     """
     _interrupt_on_sigterm()
+    # A run that stopped with no cleanup can leave old counts.
+    _publish_counts(None, None)
 
     achievements_on = config["NOTIFY_ACHIEVEMENTS"]
     messages_on = config["NOTIFY_MESSAGES"]
@@ -1233,6 +1253,7 @@ def run_watch_achievements(config, interval=1.0):
     listener = None
     current_app = None
     stats = None
+    published = None
 
     # flush, because this runs as a service. Python buffers a stdout that
     # goes to a pipe. These lines thus stay in the buffer until the
@@ -1347,6 +1368,10 @@ def run_watch_achievements(config, interval=1.0):
                             LOG.info("achievement unlocked: %s",
                                      stats.display_name(name))
                             _flash(fifo, "achievement")
+                        counts = watcher.counts()
+                        if counts != published:
+                            _publish_counts(current_app, counts)
+                            published = counts
                     if listener is not None:
                         # One flash for each kind, whatever the number that
                         # arrived. The queue discards a repeat of the flash
@@ -1367,6 +1392,8 @@ def run_watch_achievements(config, interval=1.0):
                     stats.close()
                     stats, watcher, listener = None, None, None
                     current_app = None
+                    _publish_counts(None, None)
+                    published = None
 
             time.sleep(interval)
     except KeyboardInterrupt:
@@ -1376,6 +1403,7 @@ def run_watch_achievements(config, interval=1.0):
             listener.close()
         if stats is not None:
             stats.close()
+        _publish_counts(None, None)
     return 0
 
 

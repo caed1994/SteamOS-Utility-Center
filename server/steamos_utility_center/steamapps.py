@@ -178,7 +178,8 @@ def now_playing(root=PROC, home=None, where=None):
 #
 # It is the cache of a page. Steam writes it when it lays that page out,
 # so an achievement unlocked a minute ago can be missing until the page is
-# built again. The binary stats file next to the schema is what the client
+# built again. The counts of the achievement watcher fill that gap: see
+# live_path. The binary stats file next to the schema is what the client
 # updates at an unlock, but which of its entries hold achievements could
 # not be read off the machine, so it is not used.
 LIBRARY_PAGES = os.path.join("config", "librarycache")
@@ -214,6 +215,16 @@ def _page_of(appid, home):
     return newest
 
 
+def _numbers(achieved, total):
+    """(achieved, total) if the two are counts that agree, or None."""
+    # bool is an int in Python, and True is not a count.
+    numbers = all(isinstance(n, int) and not isinstance(n, bool)
+                  for n in (achieved, total))
+    if not numbers or total <= 0 or not 0 <= achieved <= total:
+        return None
+    return achieved, total
+
+
 def _counts(page):
     """(achieved, total) out of a parsed page, or None.
 
@@ -234,13 +245,7 @@ def _counts(page):
         data = value.get("data", value)
         if not isinstance(data, dict):
             return None
-        achieved, total = data.get("nAchieved"), data.get("nTotal")
-        # bool is an int in Python, and True is not a count.
-        numbers = all(isinstance(n, int) and not isinstance(n, bool)
-                      for n in (achieved, total))
-        if not numbers or total <= 0 or not 0 <= achieved <= total:
-            return None
-        return achieved, total
+        return _numbers(data.get("nAchieved"), data.get("nTotal"))
     return None
 
 
@@ -278,9 +283,81 @@ def achievements(appid, home=None):
     return value
 
 
-def now_playing_achievements(root=PROC, home=None):
-    """The achievements of the game that runs, as a dict, or None."""
-    counts = achievements(running_appid(root), home=home)
+# The counts that the achievement watcher reads through Steamworks while a
+# game runs. The watcher sees an unlock within a second, and the page above
+# does not. It writes the counts into this file for the panel service. Both
+# are user services of the same user, so both find the same runtime
+# directory.
+#
+# The file names its game, so the counts of a different game are not used.
+# The watcher removes the file at its start and at its end. With no file,
+# the page above is the answer, for example on a machine with no LED module.
+LIVE_NAME = "steamos-utility-center-achievements.json"
+
+# The file holds three numbers. A file far past that is not one of these.
+LIVE_LIMIT = 4096
+
+
+def live_path():
+    """The file of the live counts, in the runtime directory of the user."""
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    return os.path.join(runtime, LIVE_NAME)
+
+
+def publish_live(appid, achieved, total, path=None):
+    """Writes the live counts of that game for the panel service.
+
+    The data goes into a second file that then replaces the first. A read
+    thus never gets half a file.
+    """
+    path = live_path() if path is None else path
+    temporary = path + ".new"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump({"appid": int(appid), "achieved": int(achieved),
+                   "total": int(total)}, handle)
+    os.replace(temporary, path)
+
+
+def clear_live(path=None):
+    """Removes the live counts. No file is not a fault."""
+    path = live_path() if path is None else path
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+def live_achievements(appid, path=None):
+    """(achieved, total) that the watcher wrote for that game, or None."""
+    if appid is None:
+        return None
+    path = live_path() if path is None else path
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(LIVE_LIMIT + 1)
+        if len(raw) > LIVE_LIMIT:
+            return None
+        data = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    # Not a bool and not a float, which Python also takes as equal.
+    if type(data.get("appid")) is not int or data["appid"] != int(appid):
+        return None
+    return _numbers(data.get("achieved"), data.get("total"))
+
+
+def now_playing_achievements(root=PROC, home=None, live=None):
+    """The achievements of the game that runs, as a dict, or None.
+
+    The live counts of the watcher come first, because they follow each
+    unlock. The page of the game is the answer where no watcher runs.
+    """
+    appid = running_appid(root)
+    counts = live_achievements(appid, path=live)
+    if counts is None:
+        counts = achievements(appid, home=home)
     if counts is None:
         return None
     return {"achieved": counts[0], "total": counts[1]}

@@ -18,7 +18,23 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "server"))
 
 from steamos_utility_center import config as config_module  # noqa: E402
-from steamos_utility_center import elf, service, steamworks  # noqa: E402
+from steamos_utility_center import elf, service, steamapps  # noqa: E402
+from steamos_utility_center import steamworks  # noqa: E402
+
+
+def private_live_file(case):
+    """Sends the live counts of the watcher to a file of this test.
+
+    The runtime directory of the person that runs the tests can hold the
+    counts of a real watcher, and a test must not remove them.
+    """
+    runtime = tempfile.TemporaryDirectory()
+    case.addCleanup(runtime.cleanup)
+    path = os.path.join(runtime.name, steamapps.LIVE_NAME)
+    original = steamapps.live_path
+    steamapps.live_path = lambda: path
+    case.addCleanup(setattr, steamapps, "live_path", original)
+    return path
 
 
 class FakeStats:
@@ -126,6 +142,35 @@ class AchievementWatcherTest(unittest.TestCase):
         watcher.poll()
         watcher.poll()
         self.assertEqual(stats.callbacks_run, 2)
+
+    def test_the_counts_follow_the_polls(self):
+        # The wall panel shows these two numbers. See LiveCountTest.
+        stats = FakeStats({"A": True, "B": False, "C": False})
+        watcher = steamworks.AchievementWatcher(stats)
+        self.assertIsNone(watcher.counts())
+        watcher.poll()
+        self.assertEqual(watcher.counts(), (1, 3))
+        stats.state["B"] = True
+        watcher.poll()
+        self.assertEqual(watcher.counts(), (2, 3))
+
+    def test_the_counts_take_a_late_stats_load(self):
+        # No flash for the load, but the count is the one that Steam has.
+        stats = FakeStats({name: False for name in "ABCDEFGHIJ"})
+        watcher = steamworks.AchievementWatcher(stats)
+        watcher.poll()
+        stats.state.update({name: True for name in "ABCDEFGH"})
+        watcher.poll()
+        self.assertEqual(watcher.counts(), (8, 10))
+
+    def test_an_empty_read_keeps_the_counts(self):
+        stats = FakeStats({"A": True, "B": False})
+        watcher = steamworks.AchievementWatcher(stats)
+        self.assertIsNone(watcher.counts())
+        watcher.poll()
+        stats.state = {}
+        watcher.poll()
+        self.assertEqual(watcher.counts(), (1, 2))
 
 
 class PointerNormalisationTest(unittest.TestCase):
@@ -351,6 +396,7 @@ class WatcherSessionLifetimeTest(unittest.TestCase):
 
     def setUp(self):
         self.opened, self.closed, self.flashes = [], [], []
+        self.live = private_live_file(self)
         self._patch(steamworks, "find_library", lambda _explicit: "libsteam.so")
         self._patch(steamworks, "select_route",
                     lambda app, lib, reporter=None: ("accessor:x", 1))
@@ -414,6 +460,68 @@ class WatcherSessionLifetimeTest(unittest.TestCase):
         self.assertEqual(self.flashes, ["achievement"])
 
 
+class LiveCountTest(WatcherSessionLifetimeTest):
+    """The watcher gives the wall panel the counts of the game that runs.
+
+    The panel showed the count of the library page, which Steam writes at
+    the start of a game. An unlock in the game thus did not change it.
+    """
+
+    GAME = 1942280
+
+    def setUp(self):
+        super().setUp()
+        # What counts() gives at each poll, and what the panel service
+        # reads at each poll.
+        self.answers, self.seen = [], []
+        test = self
+
+        class Watcher(_FakeWatcher):
+            def poll(self):
+                test.seen.append(steamapps.live_achievements(test.GAME))
+                return super().poll()
+
+            def counts(self):
+                if not test.answers:
+                    return None
+                return test.answers[min(self.polls, len(test.answers)) - 1]
+
+        self._patch(steamworks, "AchievementWatcher", Watcher)
+
+    def test_the_counts_follow_the_game_and_go_with_it(self):
+        self.answers = [(49, 60), (49, 60), (50, 60)]
+        self._run([self.GAME] * 5 + [None])
+        # Each poll reads what the poll before it gave.
+        self.assertEqual(self.seen,
+                         [None, (49, 60), (49, 60), (50, 60), (50, 60)])
+        self.assertFalse(os.path.exists(self.live),
+                         "the counts of a game that ended stay on the panel")
+
+    def test_nought_unlocked_is_left_to_the_page(self):
+        # A late load of the stats also reads as nought.
+        self.answers = [(0, 60), (0, 60), (49, 60)]
+        self._run([self.GAME] * 4)
+        self.assertEqual(self.seen, [None, None, None, (49, 60)])
+
+    def test_a_count_that_falls_to_nought_is_removed(self):
+        self.answers = [(5, 60), (0, 60)]
+        self._run([self.GAME] * 3)
+        self.assertEqual(self.seen, [None, (5, 60), None])
+
+    def test_the_counts_of_an_earlier_run_are_removed_at_the_start(self):
+        steamapps.publish_live(self.GAME, 3, 60)
+        self._run([self.GAME])
+        self.assertEqual(self.seen, [None])
+
+    def test_a_file_that_cannot_be_written_does_not_stop_the_flash(self):
+        self.answers = [(49, 60), (50, 60)]
+        missing = os.path.join(os.path.dirname(self.live), "gone", "file")
+        self._patch(steamapps, "live_path", lambda: missing)
+        with self.assertLogs(service.LOG, "WARNING"):
+            self.assertEqual(self._run([self.GAME] * 3 + [None]), 0)
+        self.assertEqual(self.flashes, ["achievement"])
+
+
 class _FakeStats:
     def __init__(self, app_id, opened, closed):
         self.app_id, self._opened, self._closed = app_id, opened, closed
@@ -444,6 +552,9 @@ class _FakeWatcher:
     def poll(self):
         self.polls += 1
         return ["FIRST_BLOOD"] if self.polls == 2 else []
+
+    def counts(self):
+        return None
 
 
 
@@ -1149,6 +1260,7 @@ class NothingToWatchForTest(unittest.TestCase):
     """
 
     def test_it_exits_without_even_looking_for_a_game(self):
+        private_live_file(self)
         settings = dict(config_module.DEFAULTS)
         settings.update({"NOTIFY_ACHIEVEMENTS": False,
                          "NOTIFY_MESSAGES": False,
