@@ -290,6 +290,7 @@
     X(TXT_GPU_LOAD,        "GPU load",              "GPU-Last") \
     X(TXT_GPU_VRAM,        "VRAM",                  "VRAM") \
     X(TXT_GPU_CLOCK,       "GPU clock",             "GPU-Takt") \
+    X(TXT_FAN_AUTO,        "Auto",                  "Auto") \
     X(TXT_HISTORY_EMPTY,   "No readings yet",       "Noch keine Werte") \
     X(TXT_HISTORY_NOW,     "now",                   "jetzt") \
     X(TXT_LED_DESKTOP,     "LED bar on the desktop", "LED-Leiste im Desktop-Modus") \

@@ -2399,13 +2399,15 @@ int main(void)
         g.online=true;
         panel_ui_update(&g);
         // The window: the 30 minutes of the history, and no button that
-        // chooses another. The one button of the card is Cooling Boost.
+        // chooses another. The buttons of the card are the three of the fan.
         assert(label(page,"-30 min"));
         lv_obj_t *history_card=lv_obj_get_parent(label(page,"-30 min"));
         lv_obj_t *chart=NULL;
         for(unsigned i=0;i<lv_obj_get_child_count(history_card);i++){
             lv_obj_t *o=lv_obj_get_child(history_card,i);
-            assert(!lv_obj_check_type(o,&lv_button_class)||image_of(o,&icon_snowflake));
+            assert(!lv_obj_check_type(o,&lv_button_class)||image_of(o,&icon_snowflake)||
+                   image_of(o,&icon_volume_1)||
+                   strcmp(lv_label_get_text(lv_obj_get_child(o,0)),panel_text(TXT_FAN_AUTO))==0);
             if(lv_obj_check_type(o,&lv_chart_class))chart=o;
         }
         // The chart takes no press, so a swipe over it moves the band.
@@ -2425,15 +2427,16 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
-    // The card of the history: the chart at the top with no title over it,
-    // the time under it, and one row under that with the legend and
-    // Cooling Boost. The legend stands flush with the left edge of the
-    // chart, with one gap between a name and the next dot, and in the
-    // middle of the height of the button. Cooling Boost is a square button
-    // with a snowflake and no words, at the right end of the row, there
-    // where the PC has LACT with a card. It sends where to go at a tap and
-    // asks nothing first. The snowflake and the edge take the accent when
-    // the status says on, and grey when it says off.
+    // The card of the history, as the owner drew it. On the left the chart
+    // with no title over it, the time under it and the legend under the
+    // time: from the left edge of the chart to its right edge, with one gap
+    // between a name and the next dot. On the right a column of three
+    // squares of one size for the fan of the card: quiet, Auto and Cooling
+    // Boost, from the top of the card to its foot, there where the PC has
+    // LACT with a card. Quiet and Auto do nothing yet. Cooling Boost sends
+    // where to go at a tap and asks nothing first. Its snowflake and its
+    // edge take the accent when the status says on, and grey when it says
+    // off.
     {
         panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
         for(int language=0;language<2;language++){
@@ -2443,53 +2446,68 @@ int main(void)
             panel_state_t t=base();
             t.pc.gpu_fan_rpm=2950;
             lv_obj_t *page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_CARD);
-            lv_obj_t *flake=image_of(page,&icon_snowflake);
-            assert(flake);
-            lv_obj_t *button=lv_obj_get_parent(flake);
-            assert(lv_obj_check_type(button,&lv_button_class));
+            lv_obj_t *flake=image_of(page,&icon_snowflake),*speaker=image_of(page,&icon_volume_1);
+            assert(flake&&speaker);
+            lv_obj_t *button=lv_obj_get_parent(flake),*quiet=lv_obj_get_parent(speaker);
+            assert(lv_obj_check_type(button,&lv_button_class)&&lv_obj_check_type(quiet,&lv_button_class));
+            lv_obj_t *card=lv_obj_get_parent(button);
             // A PC without LACT, or a service older than this firmware: no
-            // button.
+            // column.
             panel_ui_update(&t);
-            assert(lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
+            assert(lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN)&&lv_obj_has_flag(quiet,LV_OBJ_FLAG_HIDDEN));
+            assert(!label(card,panel_text(TXT_FAN_AUTO)));
             t.boost_here=true;t.answers++;
             panel_ui_update(&t);
-            assert(!lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
+            lv_obj_t *auto_caption=label(card,panel_text(TXT_FAN_AUTO));
+            assert(auto_caption);
+            lv_obj_t *automatic=lv_obj_get_parent(auto_caption);
+            assert(lv_obj_check_type(automatic,&lv_button_class));
+            lv_obj_t *column[3]={quiet,automatic,button};
+            for(int i=0;i<3;i++)assert(!lv_obj_has_flag(column[i],LV_OBJ_FLAG_HIDDEN));
             lv_obj_update_layout(page);
-            // No title, and no fan: only the button.
+            // No title, and no fan reading.
             char speed[24];
             snprintf(speed,sizeof speed,panel_text(TXT_RPM),2950);
             assert(!label(page,"History")&&!label(page,"Verlauf"));
             assert(!label(page,panel_text(TXT_PC_GPU_FAN))&&!label(page,speed));
-            // Square, only the snowflake in it, in the bottom right corner
-            // of the card: nothing else of the card is right of it or
-            // under it.
-            assert(lv_obj_get_width(button)==lv_obj_get_height(button));
-            assert(lv_obj_get_width(button)>=48&&lv_obj_get_child_count(button)==1);
-            lv_obj_t *card=lv_obj_get_parent(button);
-            lv_area_t at_button,at_card,at_chart,at_time;
-            lv_obj_get_coords(button,&at_button);lv_obj_get_coords(card,&at_card);
-            assert(at_card.x2-at_button.x2<=12&&at_card.y2-at_button.y2<=12);
+            // The column: three squares of one size, each with one thing in
+            // it, one gap between them, from 10 under the top of the card to
+            // 10 over its foot, at its right edge. Nothing else of the card
+            // is right of the column.
+            lv_area_t at_card,at[3];
+            lv_obj_get_coords(card,&at_card);
+            for(int i=0;i<3;i++){
+                lv_obj_get_coords(column[i],&at[i]);
+                assert(lv_area_get_width(&at[i])==lv_area_get_height(&at[i]));
+                assert(lv_area_get_width(&at[i])==lv_area_get_width(&at[0])&&at[i].x1==at[0].x1);
+                assert(lv_area_get_width(&at[i])>=48&&lv_obj_get_child_count(column[i])==1);
+            }
+            assert(at[1].y1-at[0].y2==at[2].y1-at[1].y2);
+            assert(at[0].y1-at_card.y1==at_card.y2-at[2].y2&&at[0].y1-at_card.y1<=12);
+            assert(at_card.x2-at[0].x2<=12);
             lv_obj_t *chart=NULL;
             for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
                 lv_obj_t *o=lv_obj_get_child(card,i);
                 if(lv_obj_check_type(o,&lv_chart_class))chart=o;
-                if(o==button)continue;
-                lv_area_t at;lv_obj_get_coords(o,&at);
-                assert(at.x2<at_button.x1||at.y2<at_button.y1);
+                if(o==quiet||o==automatic||o==button)continue;
+                lv_area_t at_o;lv_obj_get_coords(o,&at_o);
+                assert(at_o.x2<at[0].x1);
             }
-            // The chart at the top, and the time under it over the row.
+            // The chart at the top, the time under it, and the legend under
+            // the time, its foot on the foot of the column.
             assert(chart);
+            lv_area_t at_chart,at_time;
             lv_obj_get_coords(chart,&at_chart);
             assert(at_chart.y1-at_card.y1<=16);
             char ago[16];
             snprintf(ago,sizeof ago,"-%d %s",PANEL_HISTORY_MINUTES,panel_text(TXT_MINUTES));
             lv_obj_get_coords(label(card,ago),&at_time);
-            assert(at_time.y1>at_chart.y2&&at_time.y2<at_button.y1);
-            // The legend: three dots and three names in one line under the
-            // chart, the first dot flush with its left edge, and one gap
-            // from each name to the next dot.
+            assert(at_time.y1>at_chart.y2);
+            // The legend: three dots and three names in one line, the first
+            // dot on the left edge of the chart, the last name to its right
+            // edge, and one gap from each name to the next dot.
             const char *names[PANEL_HISTORY_SERIES]={"CPU °C","GPU °C","GPU W"};
-            int32_t gap=-1,next=at_chart.x1;
+            int32_t gaps[PANEL_HISTORY_SERIES]={0},next=at_chart.x1;
             for(int i=0;i<PANEL_HISTORY_SERIES;i++){
                 lv_obj_t *name=label(card,names[i]);
                 assert(name);
@@ -2497,19 +2515,23 @@ int main(void)
                 lv_area_t at_name,at_dot;
                 lv_obj_get_coords(name,&at_name);lv_obj_get_coords(dot,&at_dot);
                 assert(lv_area_get_width(&at_dot)==10&&lv_area_get_height(&at_dot)==10);
-                assert(abs((at_name.y1+at_name.y2)/2-(at_button.y1+at_button.y2)/2)<=1);
+                assert(at_name.y1>at_time.y2&&at_name.y2==at[2].y2);
                 assert(abs((at_dot.y1+at_dot.y2)/2-(at_name.y1+at_name.y2)/2)<=1);
                 assert(at_dot.x2<at_name.x1);
-                if(i==0)assert(at_dot.x1==next);
-                else if(gap<0)gap=at_dot.x1-next;
-                else assert(at_dot.x1-next==gap);
+                gaps[i]=at_dot.x1-next;
                 lv_point_t size;
                 lv_text_get_size(&size,names[i],lv_obj_get_style_text_font(name,0),0,0,LV_COORD_MAX,
                                  LV_TEXT_FLAG_NONE);
                 assert(size.x<=lv_obj_get_width(name));
                 next=at_name.x1+size.x;
             }
-            assert(gap>=16&&next<at_button.x1);
+            assert(gaps[0]==0&&gaps[1]>=16&&abs(gaps[2]-gaps[1])<=1);
+            assert(next==at_chart.x2+1);
+            // Quiet and Auto take a press and send nothing yet.
+            actions=0;
+            lv_obj_send_event(quiet,LV_EVENT_CLICKED,NULL);
+            lv_obj_send_event(automatic,LV_EVENT_CLICKED,NULL);
+            assert(actions==0);
             // Off: grey, and a tap asks for on, at once.
             assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.muted);
             assert(rgb_of(lv_obj_get_style_border_color(button,0))==colours.edge);
@@ -2525,12 +2547,14 @@ int main(void)
             assert(rgb_of(lv_obj_get_style_border_color(button,0))==colours.accent_text);
             lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
             assert(actions==2&&last_action==PANEL_GPU_BOOST_OFF);
-            // A PC that does not answer: the button stays, grey and dim,
+            // A PC that does not answer: the column stays, grey and dim,
             // and a tap sends nothing.
             t.online=false;
             panel_ui_update(&t);
-            assert(!lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
-            assert(lv_obj_has_state(button,LV_STATE_DISABLED));
+            for(int i=0;i<3;i++){
+                assert(!lv_obj_has_flag(column[i],LV_OBJ_FLAG_HIDDEN));
+                assert(lv_obj_has_state(column[i],LV_STATE_DISABLED));
+            }
             assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.muted);
             lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
             assert(actions==2);
@@ -2538,10 +2562,10 @@ int main(void)
             panel_ui_update(&t);
             assert(!lv_obj_has_state(button,LV_STATE_DISABLED));
             assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.accent_text);
-            // LACT gone from the PC: the button goes with it.
+            // LACT gone from the PC: the column goes with it.
             t.boost_here=false;t.boost_on=false;t.answers++;
             panel_ui_update(&t);
-            assert(lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
+            for(int i=0;i<3;i++)assert(lv_obj_has_flag(column[i],LV_OBJ_FLAG_HIDDEN));
             lv_refr_now(screen);
             assert(complaints==0);
         }

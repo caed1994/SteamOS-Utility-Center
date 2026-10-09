@@ -159,4 +159,5 @@ Notes for the checks:
 
 - Deep sleep of the panel, for a longer battery life. The owner put this off.
 - A Nanoleaf page on the panel. The owner put this off.
+- The fan column on the card page: quiet and Auto do nothing yet. The owner decides what they set in LACT. Cooling Boost sets a static fan speed of 100 % in LACT and puts back the old fan settings when it goes off.
 - A switch for a high touch sensitivity under a glass protector. The plan: lower GT911 thresholds, the old values kept in NVS, and a "keep?" question of 10 s. The owner said "not yet".

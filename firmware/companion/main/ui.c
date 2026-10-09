@@ -89,10 +89,11 @@ static uint32_t history_answers,history_drawn;
 static bool history_stale=true;
 static lv_obj_t *gpu_load_value,*gpu_load_track,*gpu_load_bar,*vram_value,*vram_track,*vram_bar;
 static lv_obj_t *gpu_clock_value,*gpu_clock_track,*gpu_clock_bar;
-/* Cooling Boost, in the top right corner of the history: the button and
- * the snowflake in it. boost_shown is what they show, -1 for nothing yet,
- * 0 off and 1 on, so that only a change goes to LVGL. */
-static lv_obj_t *boost_button,*boost_icon;
+/* The fan of the card, in a column at the right of the history: quiet,
+ * Auto and Cooling Boost. Quiet and Auto take a press and do nothing yet.
+ * boost_shown is what the button of Cooling Boost shows, -1 for nothing
+ * yet, 0 off and 1 on, so that only a change goes to LVGL. */
+static lv_obj_t *fan_quiet,*fan_auto,*boost_button,*boost_icon;
 static int boost_shown=-1;
 static lv_obj_t *history_chart,*history_empty,*history_axis[4];
 static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
@@ -115,21 +116,25 @@ static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
 #define GPU_ROOM_MIDDLE 168
 _Static_assert(2*GPU_BAR_X+2*GPU_PITCH+GPU_BAR_WIDTH==460-2,"the bars 16 from each side of the card");
 _Static_assert(GPU_BAR_X+GPU_BAR_WIDTH/2-GPU_ROOM_SIDE/2==8,"the outer rooms 8 from the side");
-/* The card of the history, from the top down: the chart, with the
- * degrees on the left of it and the watts on the right, the time under
- * it, and one row with the legend and Cooling Boost. The legend starts at
- * the left edge of the chart, with one gap between a name and the next
- * dot, in the middle of the height of the row. Cooling Boost is a square
- * at the right end of the row, as the alarm clock has one on the clock
- * page. The card is 192 high inside its border. */
+/* The card of the history, 192 high inside its border. On the left the
+ * chart, with the degrees on the left of it and the watts on the right,
+ * the time under it, and the legend under the time. The legend runs from
+ * the left edge of the chart to its right edge, with one gap between a
+ * name and the next dot. On the right a column of three squares for the
+ * fan of the card, as large as the alarm clock has on the clock page,
+ * from 10 under the top of the card to 10 over its foot. The foot of the
+ * legend is the foot of the column. */
+#define FAN_SIZE 52
+#define FAN_GAP 8
+#define FAN_X (460-10-FAN_SIZE)
+#define FAN_Y 10
 #define CHART_X 52
-#define CHART_Y 12
-#define CHART_WIDTH 356
-#define CHART_HEIGHT 92
-#define LEGEND_GAP 24
-#define BOOST_SIZE 52
-#define BOOST_X (460-10-BOOST_SIZE)
-#define BOOST_Y (194-2-10-BOOST_SIZE)
+#define CHART_Y 14
+#define CHART_WIDTH 288
+#define CHART_HEIGHT 120
+#define LEGEND_Y (FAN_Y+3*FAN_SIZE+2*FAN_GAP-16)
+_Static_assert(FAN_Y+3*FAN_SIZE+2*FAN_GAP+10==194-2,"the column from 10 under the top to 10 over the foot");
+_Static_assert(CHART_X+CHART_WIDTH+6+44+8<=FAN_X,"the watts left of the column");
 _Static_assert(TXT_SATURDAY==TXT_SUNDAY+6,"the days of the week in a row, from Sunday as tm_wday counts");
 _Static_assert(TXT_DECEMBER==TXT_JANUARY+11,"the months in a row");
 static panel_action_cb_t send_action;
@@ -1338,17 +1343,20 @@ static void history_show(void)
     else set_shown(history_empty,true);
     lv_chart_refresh(history_chart);
 }
-/* The button of Cooling Boost: there where the PC has LACT with a card, as
- * the last answer said, and usable while the PC answers. On, the snowflake
- * and the edge of the button are in the accent. Off, and while the PC is
+/* The column of the fan: there where the PC has LACT with a card, as the
+ * last answer said, and usable while the PC answers. On, the snowflake
+ * and the edge of its button are in the accent. Off, and while the PC is
  * gone, they are grey. */
 static void boost_show(const panel_state_t *s)
 {
     if(!boost_button)return;
-    set_shown(boost_button,s->boost_here);
-    if(s->online==lv_obj_has_state(boost_button,LV_STATE_DISABLED)){
-        if(s->online)lv_obj_remove_state(boost_button,LV_STATE_DISABLED);
-        else lv_obj_add_state(boost_button,LV_STATE_DISABLED);
+    lv_obj_t *column[3]={fan_quiet,fan_auto,boost_button};
+    for(int i=0;i<3;i++){
+        set_shown(column[i],s->boost_here);
+        if(s->online==lv_obj_has_state(column[i],LV_STATE_DISABLED)){
+            if(s->online)lv_obj_remove_state(column[i],LV_STATE_DISABLED);
+            else lv_obj_add_state(column[i],LV_STATE_DISABLED);
+        }
     }
     int on=s->online&&s->boost_on;
     if(on==boost_shown)return;
@@ -1370,6 +1378,9 @@ static void boost_clicked(lv_event_t *e)
     feedback();
     if(send_action)send_action(last_state.boost_on?PANEL_GPU_BOOST_OFF:PANEL_GPU_BOOST_ON);
 }
+/* Quiet and Auto: the place of the button is ready, and what it does is
+ * not yet. */
+static void fan_mode_clicked(lv_event_t *e){(void)e;}
 /* The load, the memory and the clock of the card. "--" where the service
  * sent nothing, as on the page of the PC, and for all of them while the
  * PC is gone: the last reading would read as current.
@@ -2805,7 +2816,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     gpu_load_value=NULL;gpu_load_track=NULL;gpu_load_bar=NULL;
     vram_value=NULL;vram_track=NULL;vram_bar=NULL;
     gpu_clock_value=NULL;gpu_clock_track=NULL;gpu_clock_bar=NULL;
-    boost_button=NULL;boost_icon=NULL;boost_shown=-1;
+    fan_quiet=NULL;fan_auto=NULL;boost_button=NULL;boost_icon=NULL;boost_shown=-1;
     history_chart=NULL;history_empty=NULL;
     for(int i=0;i<4;i++)history_axis[i]=NULL;
     for(int i=0;i<PANEL_HISTORY_SERIES;i++)history_series[i]=NULL;
@@ -3037,23 +3048,35 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     }
     gpu_load_value=gpu_values[0];vram_value=gpu_values[1];gpu_clock_value=gpu_values[2];
     lv_obj_t *history_card=panel(page[4],10,106,460,194,CARD,true);
-    /* Cooling Boost, with no name: see boost_show. Hidden until the PC
-     * says that it has LACT. */
-    boost_button=button(history_card,"",BOOST_X,BOOST_Y,BOOST_SIZE,BOOST_SIZE,boost_clicked,0);
-    boost_icon=icon(boost_button,&icon_snowflake,(BOOST_SIZE-26)/2,(BOOST_SIZE-26)/2,MUTED);
-    lv_obj_add_flag(boost_button,LV_OBJ_FLAG_HIDDEN);
-    /* The legend, one dot and one name for each curve. */
+    /* The column of the fan, with no names on the icons: see boost_show.
+     * Hidden until the PC says that it has LACT. */
+    fan_quiet=button(history_card,"",FAN_X,FAN_Y,FAN_SIZE,FAN_SIZE,fan_mode_clicked,0);
+    icon(fan_quiet,&icon_volume_1,(FAN_SIZE-26)/2,(FAN_SIZE-26)/2,MUTED);
+    fan_auto=button(history_card,panel_text(TXT_FAN_AUTO),FAN_X,FAN_Y+FAN_SIZE+FAN_GAP,FAN_SIZE,FAN_SIZE,
+                    fan_mode_clicked,0);
+    set_text_colour(fan_auto,MUTED);
+    boost_button=button(history_card,"",FAN_X,FAN_Y+2*(FAN_SIZE+FAN_GAP),FAN_SIZE,FAN_SIZE,boost_clicked,0);
+    boost_icon=icon(boost_button,&icon_snowflake,(FAN_SIZE-26)/2,(FAN_SIZE-26)/2,MUTED);
+    lv_obj_t *column[3]={fan_quiet,fan_auto,boost_button};
+    for(int i=0;i<3;i++)lv_obj_add_flag(column[i],LV_OBJ_FLAG_HIDDEN);
+    /* The legend, one dot and one name for each curve. The rest of the
+     * width of the chart goes in the two gaps, the odd pixel in the last. */
     const char *legend[PANEL_HISTORY_SERIES]={"CPU °C","GPU °C","GPU W"};
     const uint32_t curves[PANEL_HISTORY_SERIES]=CURVE_COLOURS;
-    int32_t legend_x=CHART_X,legend_y=BOOST_Y+(BOOST_SIZE-lv_font_get_line_height(&panel_font_12))/2;
+    int32_t legend_width[PANEL_HISTORY_SERIES],rest=CHART_WIDTH;
     for(int i=0;i<PANEL_HISTORY_SERIES;i++){
-        lv_obj_t *mark=panel(history_card,legend_x,legend_y+4,10,10,curves[i],false);
-        lv_obj_set_style_radius(mark,LV_RADIUS_CIRCLE,0);
-        lv_obj_remove_flag(mark,LV_OBJ_FLAG_CLICKABLE);
         lv_point_t size;
         lv_text_get_size(&size,legend[i],&panel_font_12,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
-        text_at(history_card,legend[i],legend_x+16,legend_y,size.x+1,&panel_font_12,MUTED);
-        legend_x+=16+size.x+LEGEND_GAP;
+        legend_width[i]=size.x;
+        rest-=16+size.x;
+    }
+    int32_t legend_x=CHART_X;
+    for(int i=0;i<PANEL_HISTORY_SERIES;i++){
+        lv_obj_t *mark=panel(history_card,legend_x,LEGEND_Y+4,10,10,curves[i],false);
+        lv_obj_set_style_radius(mark,LV_RADIUS_CIRCLE,0);
+        lv_obj_remove_flag(mark,LV_OBJ_FLAG_CLICKABLE);
+        text_at(history_card,legend[i],legend_x+16,LEGEND_Y,legend_width[i]+1,&panel_font_12,MUTED);
+        legend_x+=16+legend_width[i]+rest/(PANEL_HISTORY_SERIES-1)+(i==PANEL_HISTORY_SERIES-2?rest%(PANEL_HISTORY_SERIES-1):0);
     }
     history_chart=lv_chart_create(history_card);
     lv_obj_set_pos(history_chart,CHART_X,CHART_Y);lv_obj_set_size(history_chart,CHART_WIDTH,CHART_HEIGHT);
