@@ -849,6 +849,86 @@ class GraphicsCardTest(unittest.TestCase):
             ctl.set_values("gpu", {"power_cap": 120})
 
 
+class ZeroRpmTest(unittest.TestCase):
+    """The button of zero RPM, and the boost that keeps its setting.
+
+    LACT puts the setting of its config on the card while the card or a
+    curve drives the fan. For a static speed it holds zero RPM off on the
+    card, and after it LACT puts back only what its config says. Nothing
+    here speaks to a daemon.
+    """
+
+    def setUp(self):
+        from steamos_utility_center import lact
+        self.lact = lact
+        self.was = (lact.available, lact.state, lact.set_gpu_config,
+                    lact.confirm)
+        self.addCleanup(self._put_back)
+        self.sent = []
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self.config = {"power_cap": 100.0}
+        self.card = {"zero_rpm_enable": True}
+        lact.available = lambda path=None: True
+        lact.state = lambda path=None, ask=None: {
+            "gpu": "1002:7550", "name": "A card",
+            "config": dict(self.config), "clocks": {},
+            "stats": {"fan": {"pmfw_info": dict(self.card)}}}
+        lact.set_gpu_config = lambda gpu, config, path=None: (
+            self.sent.append((gpu, config)), 5)[1]
+        lact.confirm = lambda path=None, keep=True: self.sent.append(
+            ("confirm", keep))
+
+    def _put_back(self):
+        (self.lact.available, self.lact.state, self.lact.set_gpu_config,
+         self.lact.confirm) = self.was
+
+    def _options(self):
+        """The firmware fan settings of the last document to the daemon."""
+        return self.sent[0][1].get(self.lact.FIRMWARE_CONFIG, {})
+
+    def test_each_press_writes_the_setting_and_confirms_it(self):
+        for name, value in (("gpu-zero-rpm-off", False), ("gpu-zero-rpm-on", True)):
+            with self.subTest(name=name):
+                self.sent = []
+                ctl.action(name, home=self.home)
+                self.assertIs(self._options()["zero_rpm"], value)
+                self.assertEqual(self.sent[0][1]["power_cap"], 100.0)
+                self.assertEqual(self.sent[-1], ("confirm", True))
+
+    def test_a_card_without_zero_rpm_refuses_and_writes_nothing(self):
+        self.card = {}
+        with self.assertRaises(ctl.CtlError):
+            ctl.action("gpu-zero-rpm-on", home=self.home)
+        self.assertEqual(self.sent, [])
+
+    def test_the_boost_keeps_the_setting_for_after_it(self):
+        """The card says on, and LACT has no setting yet. The boost writes
+        the setting down, so the fan stops again on a cool card after it."""
+        ctl.action("gpu-boost-on", home=self.home)
+        self.assertIs(self._options()["zero_rpm"], True)
+        self.assertEqual(self.lact.fan(self.sent[0][1])["mode"],
+                         self.lact.FAN_STATIC)
+
+    def test_the_boost_keeps_a_setting_of_lact(self):
+        """A setting of LACT wins over the card, which can say off for the
+        static speed of another boost."""
+        self.config = {"power_cap": 100.0,
+                       self.lact.FIRMWARE_CONFIG: {"zero_rpm": False}}
+        ctl.action("gpu-boost-on", home=self.home)
+        self.assertIs(self._options()["zero_rpm"], False)
+
+    def test_a_second_boost_does_not_write_the_card_down(self):
+        """With the boost on, LACT holds zero RPM off on the card. A second
+        press that wrote that down would leave zero RPM off for ever."""
+        self.config = {"power_cap": 100.0, "fan_control_enabled": True,
+                       "fan_control_settings": {"mode": "static",
+                                                "static_speed": 1.0}}
+        self.card = {"zero_rpm_enable": False}
+        ctl.action("gpu-boost-on", home=self.home)
+        self.assertNotIn("zero_rpm", self._options())
+
+
 class CoolingBoostTest(unittest.TestCase):
     """The one switch that puts the fan of the card at its full speed.
 

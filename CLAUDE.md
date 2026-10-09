@@ -159,5 +159,6 @@ Notes for the checks:
 
 - Deep sleep of the panel, for a longer battery life. The owner put this off.
 - A Nanoleaf page on the panel. The owner put this off.
-- The fan column on the card page lights the profile that runs. Auto ends Cooling Boost. Quiet does nothing yet, and the owner decides what it sets in LACT. Cooling Boost sets a static fan speed of 100 % in LACT and puts back the old fan settings when it goes off.
+- The fan column on the card page: zero RPM on top, lit while it is on. Under it Auto and Cooling Boost, one lit for the profile that runs. Auto ends Cooling Boost. Cooling Boost sets a static fan speed of 100 % in LACT. When it goes off, it puts back the old fan settings.
+- LACT holds zero RPM off for a static speed, and after it puts back only what its config says. This comes from the source of LACT and is not measured. So Cooling Boost writes `pmfw_options.zero_rpm` first, and the status reports that setting.
 - A switch for a high touch sensitivity under a glass protector. The plan: lower GT911 thresholds, the old values kept in NVS, and a "keep?" question of 10 s. The owner said "not yet".

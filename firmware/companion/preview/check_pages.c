@@ -2431,12 +2431,10 @@ int main(void)
     // with no title over it, the time under it and the legend under the
     // time: from the left edge of the chart to its right edge, with one gap
     // between a name and the next dot. On the right a column of three
-    // squares of one size for the fan of the card: quiet, Auto and Cooling
-    // Boost, from the top of the card to its foot, there where the PC has
-    // LACT with a card. Quiet and Auto do nothing yet. Cooling Boost sends
-    // where to go at a tap and asks nothing first. Its snowflake and its
-    // edge take the accent when the status says on, and grey when it says
-    // off.
+    // squares of one size for the fan of the card: zero RPM, Auto and
+    // Cooling Boost, from the top of the card to its foot, there where the
+    // PC has LACT with a card. Each sends where to go at a tap and asks
+    // nothing first.
     {
         panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
         for(int language=0;language<2;language++){
@@ -2448,13 +2446,13 @@ int main(void)
             lv_obj_t *page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_CARD);
             lv_obj_t *flake=image_of(page,&icon_snowflake),*crossed=image_of(page,&icon_fan_off);
             assert(flake&&crossed);
-            lv_obj_t *button=lv_obj_get_parent(flake),*quiet=lv_obj_get_parent(crossed);
-            assert(lv_obj_check_type(button,&lv_button_class)&&lv_obj_check_type(quiet,&lv_button_class));
+            lv_obj_t *button=lv_obj_get_parent(flake),*zero=lv_obj_get_parent(crossed);
+            assert(lv_obj_check_type(button,&lv_button_class)&&lv_obj_check_type(zero,&lv_button_class));
             lv_obj_t *card=lv_obj_get_parent(button);
             // A PC without LACT, or a service older than this firmware: no
             // column.
             panel_ui_update(&t);
-            assert(lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN)&&lv_obj_has_flag(quiet,LV_OBJ_FLAG_HIDDEN));
+            assert(lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN)&&lv_obj_has_flag(zero,LV_OBJ_FLAG_HIDDEN));
             assert(!label(card,panel_text(TXT_FAN_AUTO)));
             t.boost_here=true;t.answers++;
             panel_ui_update(&t);
@@ -2462,7 +2460,7 @@ int main(void)
             assert(auto_caption);
             lv_obj_t *automatic=lv_obj_get_parent(auto_caption);
             assert(lv_obj_check_type(automatic,&lv_button_class));
-            lv_obj_t *column[3]={quiet,automatic,button};
+            lv_obj_t *column[3]={zero,automatic,button};
             for(int i=0;i<3;i++)assert(!lv_obj_has_flag(column[i],LV_OBJ_FLAG_HIDDEN));
             lv_obj_update_layout(page);
             // No title, and no fan reading.
@@ -2489,7 +2487,7 @@ int main(void)
             for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
                 lv_obj_t *o=lv_obj_get_child(card,i);
                 if(lv_obj_check_type(o,&lv_chart_class))chart=o;
-                if(o==quiet||o==automatic||o==button)continue;
+                if(o==zero||o==automatic||o==button)continue;
                 lv_area_t at_o;lv_obj_get_coords(o,&at_o);
                 assert(at_o.x2<at[0].x1);
             }
@@ -2527,41 +2525,66 @@ int main(void)
             }
             assert(gaps[0]==0&&gaps[1]>=16&&abs(gaps[2]-gaps[1])<=1);
             assert(next==at_chart.x2+1);
-            // One of the three is lit, the profile that the fan runs: its
-            // face and its edge in the accent, and the other two grey. With
-            // no boost the fan runs in Auto.
-            #define LIT(which) do{ \
+            // Of Auto and Cooling Boost one is lit, the profile that the
+            // fan runs. Zero RPM is lit while it is on, whatever the
+            // profile. Lit is the face and the edge in the accent, and the
+            // rest is grey. With no boost the fan runs in Auto. A card
+            // without zero RPM has its button dim, and a tap on it sends
+            // nothing.
+            #define LIT(profile,zero) do{ \
                 for(int k=0;k<3;k++){ \
-                    uint32_t want=k==(which)?colours.accent_text:colours.muted; \
+                    bool on=k?k==(profile):(zero); \
+                    uint32_t want=on?colours.accent_text:colours.muted; \
                     if(k==1)assert(rgb_of(lv_obj_get_style_text_color(auto_caption,0))==want); \
                     else assert(rgb_of(lv_obj_get_style_image_recolor(k?flake:crossed,0))==want); \
                     assert(rgb_of(lv_obj_get_style_border_color(column[k],0))== \
-                           (k==(which)?colours.accent_text:colours.edge)); \
+                           (on?colours.accent_text:colours.edge)); \
                 } \
             }while(0)
-            LIT(1);
-            // Quiet takes no tap yet, and a tap on the profile that runs
-            // asks for nothing.
+            LIT(1,false);
+            assert(lv_obj_has_state(zero,LV_STATE_DISABLED));
+            assert(!lv_obj_has_state(automatic,LV_STATE_DISABLED));
             actions=0;
-            lv_obj_send_event(quiet,LV_EVENT_CLICKED,NULL);
-            lv_obj_send_event(automatic,LV_EVENT_CLICKED,NULL);
+            lv_obj_send_event(zero,LV_EVENT_CLICKED,NULL);
             assert(actions==0);
+            // A card with zero RPM, and it is off: a tap asks for on.
+            t.zero_rpm_here=true;t.zero_rpm_on=false;t.answers++;
+            panel_ui_update(&t);
+            assert(!lv_obj_has_state(zero,LV_STATE_DISABLED));
+            LIT(1,false);
+            lv_obj_send_event(zero,LV_EVENT_CLICKED,NULL);
+            assert(actions==1&&last_action==PANEL_GPU_ZERO_RPM_ON);
+            // A tap on the profile that runs asks for nothing.
+            lv_obj_send_event(automatic,LV_EVENT_CLICKED,NULL);
+            assert(actions==1);
+            // The buttons change when the status says so, and not before.
+            LIT(1,false);
+            t.zero_rpm_on=true;t.answers++;
+            panel_ui_update(&t);
+            LIT(1,true);
             // The snowflake asks for Cooling Boost at once, with no question.
             lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
-            assert(actions==1&&last_action==PANEL_GPU_BOOST_ON);
+            assert(actions==2&&last_action==PANEL_GPU_BOOST_ON);
             assert(!label(lv_screen_active(),panel_text(TXT_CONFIRM)));
-            // The buttons change when the status says so, and not before.
-            LIT(1);
+            LIT(1,true);
             t.boost_on=true;t.answers++;
             panel_ui_update(&t);
-            LIT(2);
+            LIT(2,true);
             lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
-            lv_obj_send_event(quiet,LV_EVENT_CLICKED,NULL);
-            assert(actions==1);
+            assert(actions==2);
+            // Zero RPM goes off and on again under the boost, and the boost
+            // stays lit.
+            lv_obj_send_event(zero,LV_EVENT_CLICKED,NULL);
+            assert(actions==3&&last_action==PANEL_GPU_ZERO_RPM_OFF);
+            t.zero_rpm_on=false;t.answers++;
+            panel_ui_update(&t);
+            LIT(2,false);
             // Auto ends the boost.
             lv_obj_send_event(automatic,LV_EVENT_CLICKED,NULL);
-            assert(actions==2&&last_action==PANEL_GPU_BOOST_OFF);
-            LIT(2);
+            assert(actions==4&&last_action==PANEL_GPU_BOOST_OFF);
+            LIT(2,false);
+            t.zero_rpm_on=true;t.answers++;
+            panel_ui_update(&t);
             // A PC that does not answer: the column stays, grey and dim,
             // and a tap sends nothing.
             t.online=false;
@@ -2570,16 +2593,16 @@ int main(void)
                 assert(!lv_obj_has_flag(column[i],LV_OBJ_FLAG_HIDDEN));
                 assert(lv_obj_has_state(column[i],LV_STATE_DISABLED));
             }
-            LIT(3);
+            LIT(3,false);
             for(int i=0;i<3;i++)lv_obj_send_event(column[i],LV_EVENT_CLICKED,NULL);
-            assert(actions==2);
+            assert(actions==4);
             t.online=true;
             panel_ui_update(&t);
             assert(!lv_obj_has_state(button,LV_STATE_DISABLED));
-            LIT(2);
+            LIT(2,true);
             t.boost_on=false;t.answers++;
             panel_ui_update(&t);
-            LIT(1);
+            LIT(1,true);
             #undef LIT
             // LACT gone from the PC: the column goes with it.
             t.boost_here=false;t.boost_on=false;t.answers++;

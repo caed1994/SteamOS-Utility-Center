@@ -343,8 +343,9 @@ class AnswerSizeTest(unittest.TestCase):
                                                 "game": longest,
                                                 "desktop_color": "#ffffff",
                                                 "desktop_brightness": 255}), \
-                mock.patch.object(companion._boost, "read",
-                                  return_value=False), \
+                mock.patch.object(companion, "_boost", mock.Mock(
+                    read=mock.Mock(return_value=False),
+                    zero_rpm=mock.Mock(return_value=False))), \
                 mock.patch.object(companion, "cpu",
                                   return_value={
                                       "profile": "performance",
@@ -809,14 +810,20 @@ class ServiceTest(unittest.TestCase):
 
 
 class BoostTest(unittest.TestCase):
-    """Cooling Boost: its state in the status, and its two presses."""
+    """Cooling Boost and zero RPM: their state in the status, and their
+    presses."""
 
     BOOSTED = {"fan_control_enabled": True,
                "fan_control_settings": {"mode": "static",
                                         "static_speed": 1.0}}
     CARD = {"fan_control_enabled": False}
 
-    def daemon(self, config=None, devices=None, refuse=None):
+    @staticmethod
+    def stats(zero_rpm):
+        """What the card reports of its firmware fan settings."""
+        return {"fan": {"pmfw_info": {"zero_rpm_enable": zero_rpm}}}
+
+    def daemon(self, config=None, devices=None, refuse=None, stats=None):
         """A LACT daemon that answers each question, and the questions it
         got."""
         asked = []
@@ -827,6 +834,8 @@ class BoostTest(unittest.TestCase):
                 raise companion.lact.LactError(refuse)
             if name == "list_devices":
                 return [{"id": "1002:744C"}] if devices is None else devices
+            if name == "device_stats":
+                return {} if stats is None else stats
             return self.BOOSTED if config is None else config
 
         for patcher in (mock.patch.object(companion.lact, "available",
@@ -867,42 +876,87 @@ class BoostTest(unittest.TestCase):
         asked = self.daemon()
         companion.BoostState().read()
         self.assertEqual([wait for _, wait in asked],
-                         [companion.BOOST_WAIT] * 2)
-        self.assertLess(2 * companion.BOOST_WAIT, 4)
+                         [companion.BOOST_WAIT] * 3)
+        self.assertLess(3 * companion.BOOST_WAIT, 4)
 
-    def test_one_pair_of_questions_in_its_time_at_the_most(self):
+    def test_one_set_of_questions_in_its_time_at_the_most(self):
+        """For both answers: zero RPM comes from the same questions."""
         asked = self.daemon()
         now = [100.0]
         state = companion.BoostState(clock=lambda: now[0])
         state.read()
         now[0] += companion.BOOST_EVERY - 0.1
         state.read()
-        self.assertEqual(len(asked), 2)
+        state.zero_rpm()
+        self.assertEqual(len(asked), 3)
         now[0] += 0.1
+        state.zero_rpm()
         state.read()
-        self.assertEqual(len(asked), 4)
+        self.assertEqual(len(asked), 6)
 
     def test_a_press_makes_the_next_status_ask_again(self):
         asked = self.daemon()
         state = companion.BoostState(clock=lambda: 100.0)
         state.read()
         with mock.patch.object(companion, "_boost", state):
-            self.assertEqual(companion.boost_press("gpu-boost-on",
+            self.assertEqual(companion.boost_press("gpu-zero-rpm-on",
                                                    run=lambda: None)[0], 200)
         state.read()
-        self.assertEqual(len(asked), 4)
+        self.assertEqual(len(asked), 6)
+
+    def test_zero_rpm_is_the_setting_of_lact_or_the_card(self):
+        """LACT holds zero RPM off on the card for a static speed and puts
+        its setting back after it. So the setting is the answer, and the
+        card answers where LACT has none."""
+        self.daemon(config=self.CARD, stats=self.stats(True))
+        self.assertIs(companion.BoostState().zero_rpm(), True)
+        held = dict(self.BOOSTED, pmfw_options={"zero_rpm": True})
+        self.daemon(config=held, stats=self.stats(False))
+        self.assertIs(companion.BoostState().zero_rpm(), True)
+        self.daemon(config=dict(self.CARD, pmfw_options={"zero_rpm": False}),
+                    stats=self.stats(True))
+        self.assertIs(companion.BoostState().zero_rpm(), False)
+
+    def test_a_card_without_zero_rpm_has_no_button(self):
+        """The card reports the setting where its file exists. A setting in
+        the config of LACT does not make a card that has none."""
+        self.daemon(config=dict(self.CARD, pmfw_options={"zero_rpm": True}))
+        self.assertIsNone(companion.BoostState().zero_rpm())
+
+    def test_no_stats_take_zero_rpm_away_and_not_the_boost(self):
+        asked = []
+
+        def talk(name, path=None, args=None, timeout=None):
+            asked.append(name)
+            if name == "list_devices":
+                return [{"id": "1002:744C"}]
+            if name == "device_stats":
+                raise companion.lact.LactError("no stats")
+            return self.BOOSTED
+
+        with mock.patch.object(companion.lact, "available", return_value=True), \
+                mock.patch.object(companion.lact, "talk", side_effect=talk):
+            state = companion.BoostState()
+            self.assertIs(state.read(), True)
+            self.assertIsNone(state.zero_rpm())
+        self.assertEqual(asked, ["list_devices", "get_gpu_config", "device_stats"])
 
     def test_each_press_names_where_to_go(self):
         """Not a toggle: the status the panel has is up to three seconds
         old."""
         ran = []
         actions = {name: (lambda name=name: ran.append(name))
-                   for name in ("gpu-boost-on", "gpu-boost-off")}
+                   for name in ("gpu-boost-on", "gpu-boost-off",
+                                "gpu-zero-rpm-on", "gpu-zero-rpm-off")}
         with mock.patch.dict(companion.ctl.ACTION, actions):
             self.assertEqual(companion.press("gpu_boost_on"), (200, {"ok": True}))
             self.assertEqual(companion.press("gpu_boost_off")[0], 200)
-        self.assertEqual(ran, ["gpu-boost-on", "gpu-boost-off"])
+            self.assertEqual(companion.press("gpu_zero_rpm_on")[0], 200)
+            self.assertEqual(companion.press("gpu_zero_rpm_off")[0], 200)
+        self.assertEqual(ran, ["gpu-boost-on", "gpu-boost-off",
+                               "gpu-zero-rpm-on", "gpu-zero-rpm-off"])
         self.assertEqual(companion.press("gpu_boost"), (400, {"error": "unsupported action"}))
+        self.assertEqual(companion.press("gpu_zero_rpm"), (400, {"error": "unsupported action"}))
 
     def test_a_refusal_comes_back_as_its_own_code(self):
         def refuse(error):
@@ -918,8 +972,17 @@ class BoostTest(unittest.TestCase):
                     code, error)
 
     def test_the_status_carries_it(self):
-        with mock.patch.object(companion._boost, "read", return_value=True):
-            self.assertIs(companion.status("127.0.0.1", TOKEN)["boost"], True)
+        with mock.patch.object(companion._boost, "read", return_value=True), \
+                mock.patch.object(companion._boost, "zero_rpm", return_value=False):
+            said = companion.status("127.0.0.1", TOKEN)
+        self.assertIs(said["boost"], True)
+        self.assertIs(said["zero_rpm"], False)
+
+    def test_a_refusal_of_zero_rpm_says_why(self):
+        def run():
+            raise companion.ctl.CtlError("the card has no zero RPM")
+        self.assertEqual(companion.boost_press("gpu-zero-rpm-on", run=run),
+                         (501, {"error": "the card has no zero RPM"}))
 
     def test_every_press_the_panel_sends_is_one_the_service_knows(self):
         """Two ends of one wire. A press with a name only the panel knows
@@ -932,6 +995,8 @@ class BoostTest(unittest.TestCase):
         names = re.findall(r'"([a-z_]+)"', table.group(1))
         self.assertIn("gpu_boost_on", names)
         self.assertIn("gpu_boost_off", names)
+        self.assertIn("gpu_zero_rpm_on", names)
+        self.assertIn("gpu_zero_rpm_off", names)
         for name in names:
             self.assertTrue(name in companion.ACTIONS
                             or name in companion.BOOST_PRESSES, name)

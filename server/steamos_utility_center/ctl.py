@@ -770,6 +770,12 @@ def _gpu_boost(on):
             # write down the boost itself as the state to come back to.
             if not boosting(fan):
                 _remember_fan(fan, home)
+                # LACT holds zero RPM off for a static speed, and after the
+                # boost it puts back only what its config says. So the
+                # setting goes into the config first.
+                held = lact.zero_rpm(config, found.get("stats"))
+                if held is not None:
+                    config = lact.with_firmware(config, {"zero_rpm": held})
             config = lact.with_fan(config, enabled=True,
                                    mode=lact.FAN_STATIC,
                                    static_speed=BOOST_SPEED)
@@ -781,6 +787,27 @@ def _gpu_boost(on):
             _forget_fan(home)
         return ("the fan is at full speed" if on
                 else "the card has its fan back")
+    return action
+
+
+def _gpu_zero_rpm(on):
+    """Builds the action behind the button of zero RPM on the panel.
+
+    It writes the setting into the config of LACT, which puts it on the
+    card, and again after a static speed. It confirms the change itself, as
+    the boost does: a fan that stops on a cool card hangs nothing.
+    """
+    def action(may_prompt=False, run=None, home=None):
+        found = lact.state()
+        if not found or not found.get("gpu"):
+            raise CtlError("no graphics card that LACT reports")
+        config = found.get("config") or {}
+        if lact.zero_rpm(config, found.get("stats")) is None:
+            raise CtlError("the card has no zero RPM")
+        lact.set_gpu_config(found["gpu"],
+                            lact.with_firmware(config, {"zero_rpm": on}))
+        lact.confirm(keep=True)
+        return "zero RPM is on" if on else "zero RPM is off"
     return action
 
 
@@ -799,6 +826,8 @@ def gpu_revert(may_prompt=False, run=None, home=None):
 ACTION = {
     "gpu-boost-on": _gpu_boost(True),
     "gpu-boost-off": _gpu_boost(False),
+    "gpu-zero-rpm-on": _gpu_zero_rpm(True),
+    "gpu-zero-rpm-off": _gpu_zero_rpm(False),
     "gpu-keep": gpu_keep,
     "gpu-revert": gpu_revert,
     "cec-wake": _cec_action("wake"),

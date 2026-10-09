@@ -27,10 +27,12 @@ typedef enum {
      * means "switch" would now and then switch to the side it is already
      * on. companion.py carries the same reasoning at its end. */
     PANEL_DESKTOP_MODE, PANEL_GAME_MODE,
-    /* Cooling Boost of the card, on and off, for the same reason. Its
-     * switch on the page of the card sends these at a tap and asks
-     * nothing first: a fan at full speed interrupts nothing. */
+    /* Cooling Boost of the card, on and off, for the same reason, and
+     * zero RPM of its fan. Their buttons on the page of the card send these
+     * at a tap and ask nothing first: a fan at full speed interrupts
+     * nothing, and nor does a fan that stops on a cool card. */
     PANEL_GPU_BOOST_ON, PANEL_GPU_BOOST_OFF,
+    PANEL_GPU_ZERO_RPM_ON, PANEL_GPU_ZERO_RPM_OFF,
     PANEL_SETUP,
     /* After PANEL_SETUP on purpose. Everything below it is a name that
      * main.c sends to the service, and the dispatch there reads that table
@@ -165,8 +167,11 @@ typedef struct {
     uint64_t vram_used, vram_total;
     /* Cooling Boost: boost_here where the PC has LACT with a card in it,
      * and boost_on where the boost has the fan. A PC without LACT, and a
-     * service older than this firmware, have no switch. */
+     * service older than this firmware, have no switch. Zero RPM the same
+     * way: zero_rpm_here where the card has it, and zero_rpm_on where it
+     * is on. */
     bool boost_here, boost_on;
+    bool zero_rpm_here, zero_rpm_on;
     /* Counts the answers of the PC. The history takes a point from an
      * answer, and the readings above stay as they were while the PC is
      * gone: the count is what tells a new reading from the last one. */

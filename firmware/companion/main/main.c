@@ -963,6 +963,9 @@ static int request(const char *path, const char *body, int wait_ms)
     cJSON *boost=cJSON_GetObjectItemCaseSensitive(root,"boost");
     state.boost_here=cJSON_IsBool(boost);
     state.boost_on=cJSON_IsTrue(boost);
+    cJSON *zero_rpm=cJSON_GetObjectItemCaseSensitive(root,"zero_rpm");
+    state.zero_rpm_here=cJSON_IsBool(zero_rpm);
+    state.zero_rpm_on=cJSON_IsTrue(zero_rpm);
     state.answers++;
     state.cpu_sensor_count=sensors_read(state.cpu_sensors,
         cJSON_GetObjectItemCaseSensitive(telemetry,"cpu_sensors"));
@@ -1314,7 +1317,7 @@ static void network_task(void *arg)
      * lengths equal. */
     const char *names[]={"volume_down","mute","volume_up","suspend","reboot",
                          "poweroff","desktop_mode","game_mode","gpu_boost_on",
-                         "gpu_boost_off"};
+                         "gpu_boost_off","gpu_zero_rpm_on","gpu_zero_rpm_off"};
     TickType_t last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
     TickType_t feedback_until=0;
     TickType_t last_health=xTaskGetTickCount();

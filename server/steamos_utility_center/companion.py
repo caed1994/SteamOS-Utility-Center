@@ -142,15 +142,19 @@ ACTIONS = {
     "game_mode": ("steamos-session-select", "gamescope"),
 }
 
-# Cooling Boost: the fan of the graphics card at full speed, the switch on the
-# page of the card. Two presses and not one, for the reason that desktop_mode
-# and game_mode give above: where to go, and not "the other one".
+# The fan of the graphics card, the column on the page of the card: Cooling
+# Boost, which holds the fan at full speed, and zero RPM, which lets it stop
+# on a cool card. Two presses for each and not one, for the reason that
+# desktop_mode and game_mode give above: where to go, and not "the other
+# one".
 #
 # Each one is a call of ctl and not a command: the call that the plugin in
 # Game Mode makes. It speaks to the LACT daemon over its socket as this user,
 # and the socket is open to the group of the desktop user. See lact.py.
 BOOST_PRESSES = {"gpu_boost_on": "gpu-boost-on",
-                 "gpu_boost_off": "gpu-boost-off"}
+                 "gpu_boost_off": "gpu-boost-off",
+                 "gpu_zero_rpm_on": "gpu-zero-rpm-on",
+                 "gpu_zero_rpm_off": "gpu-zero-rpm-off"}
 
 # How old the answer about the boost in the status can be, and how long one
 # question to LACT can take. The panel waits four seconds for the whole
@@ -1067,6 +1071,8 @@ def status(address=None, token=None, offer=None):
         # Whether Cooling Boost has the fan of the card, or None for no
         # switch. See BoostState.
         "boost": _boost.read(),
+        # Whether zero RPM is on, or None for a card without it.
+        "zero_rpm": _boost.zero_rpm(),
         # The energy profile of the CPU for its page, or None where this
         # machine has no power module. See cpu.
         "cpu": cpu(),
@@ -1107,33 +1113,46 @@ def press(name):
 
 
 class BoostState:
-    """Whether Cooling Boost has the fan of the card: True, False or None.
+    """Whether Cooling Boost has the fan of the card, and whether zero RPM is
+    on: True, False or None for each.
 
     None where this machine has no LACT, no card in it, or no answer in
-    BOOST_WAIT. The panel shows no switch for None.
+    BOOST_WAIT. The panel shows no switch for None. Zero RPM is also None
+    for a card without it.
 
-    Two questions to the daemon, and one pair in BOOST_EVERY seconds at the
+    Three questions to the daemon, and one set in BOOST_EVERY seconds at the
     most, because the status comes every three seconds. A press makes the
     next status ask again, so the switch shows the press at once. The answer
-    is the card and not a flag of ours, as for the plugin: somebody can set
-    the same speed in LACT. See ctl.boosting.
+    is the card and LACT and not a flag of ours, as for the plugin: somebody
+    can set the same speed in LACT. See ctl.boosting and lact.zero_rpm.
     """
 
     def __init__(self, path=None, clock=time.monotonic):
         self.path = path
         self.clock = clock
         self._value = None
+        self._zero_rpm = None
         self._at = None
         # ThreadingHTTPServer answers each request in a thread of its own.
         self._lock = threading.Lock()
 
     def read(self):
+        """Whether Cooling Boost has the fan."""
         with self._lock:
-            now = self.clock()
-            if self._at is None or now - self._at >= BOOST_EVERY:
-                self._value = self._ask()
-                self._at = now
+            self._fresh()
             return self._value
+
+    def zero_rpm(self):
+        """Whether zero RPM is on, from the same answers as read."""
+        with self._lock:
+            self._fresh()
+            return self._zero_rpm
+
+    def _fresh(self):
+        now = self.clock()
+        if self._at is None or now - self._at >= BOOST_EVERY:
+            self._value, self._zero_rpm = self._ask()
+            self._at = now
 
     def forget(self):
         """The next read asks the daemon again."""
@@ -1142,26 +1161,34 @@ class BoostState:
 
     def _ask(self):
         if not lact.available(self.path):
-            return None
+            return None, None
         try:
             devices = lact.talk("list_devices", self.path, timeout=BOOST_WAIT)
             first = devices[0] if isinstance(devices, list) and devices else {}
             gpu = first.get("id", "") if isinstance(first, dict) else ""
             if not gpu:
-                return None
+                return None, None
             config = lact.talk("get_gpu_config", self.path, {"id": gpu},
                                timeout=BOOST_WAIT)
         except lact.LactError:
-            return None
-        return ctl.boosting(lact.fan(config if isinstance(config, dict)
-                                     else {}))
+            return None, None
+        config = config if isinstance(config, dict) else {}
+        # The stats only for zero RPM. A daemon that does not give them
+        # takes the button of zero RPM away, and not the boost.
+        try:
+            stats = lact.talk("device_stats", self.path, {"id": gpu},
+                              timeout=BOOST_WAIT)
+        except lact.LactError:
+            stats = None
+        return (ctl.boosting(lact.fan(config)),
+                lact.zero_rpm(config, stats if isinstance(stats, dict) else {}))
 
 
 _boost = BoostState()
 
 
 def boost_press(action, run=None):
-    """Runs one press of Cooling Boost. Returns (HTTP code, body).
+    """Runs one press of the fan of the card. Returns (HTTP code, body).
 
     The plugin in Game Mode holds its own switch while a change of the card
     waits for Keep it, because the boost keeps whatever waits. The panel
@@ -1170,10 +1197,10 @@ def boost_press(action, run=None):
     """
     try:
         (ctl.ACTION[action] if run is None else run)()
-    except ctl.CtlError:
-        return 501, {"error": "no graphics card that LACT reports"}
+    except ctl.CtlError as exc:
+        return 501, {"error": str(exc)}
     except (lact.LactError, ValueError) as exc:
-        sys.stderr.write("Cooling Boost was refused: %s\n" % exc)
+        sys.stderr.write("%s was refused: %s\n" % (action, exc))
         return 503, {"error": "LACT did not take the change"}
     finally:
         _boost.forget()

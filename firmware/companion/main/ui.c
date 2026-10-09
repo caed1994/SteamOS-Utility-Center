@@ -89,13 +89,13 @@ static uint32_t history_answers,history_drawn;
 static bool history_stale=true;
 static lv_obj_t *gpu_load_value,*gpu_load_track,*gpu_load_bar,*vram_value,*vram_track,*vram_bar;
 static lv_obj_t *gpu_clock_value,*gpu_clock_track,*gpu_clock_bar;
-/* The fan of the card, in a column at the right of the history: quiet,
- * Auto and Cooling Boost, from the top down. The face of a button is its
- * icon or its word, which takes the colour. fan_lit is the profile that
- * is lit, FAN_NONE while the PC is gone and -1 for nothing yet, so that
- * only a change goes to LVGL. */
-enum{FAN_QUIET,FAN_AUTO,FAN_BOOST,FAN_MODES,FAN_NONE=FAN_MODES};
-static lv_obj_t *fan_buttons[FAN_MODES],*fan_faces[FAN_MODES];
+/* The fan of the card, in a column at the right of the history: zero
+ * RPM, Auto and Cooling Boost, from the top down. The face of a button is
+ * its icon or its word, which takes the colour. fan_lit has a bit for each
+ * button that is lit, and -1 for nothing yet, so that only a change goes
+ * to LVGL. */
+enum{FAN_ZERO_RPM,FAN_AUTO,FAN_BOOST,FAN_BUTTONS};
+static lv_obj_t *fan_buttons[FAN_BUTTONS],*fan_faces[FAN_BUTTONS];
 static int fan_lit=-1;
 static lv_obj_t *history_chart,*history_empty,*history_axis[4];
 static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
@@ -1346,48 +1346,60 @@ static void history_show(void)
     lv_chart_refresh(history_chart);
 }
 /* The profile that the fan of the card runs. Auto is the fan that the PC
- * has when Cooling Boost does not have it. Quiet is not a profile yet. */
+ * has when Cooling Boost does not have it. */
 static int fan_running(const panel_state_t *s){return s->boost_on?FAN_BOOST:FAN_AUTO;}
 /* The column of the fan: there where the PC has LACT with a card, as the
- * last answer said, and usable while the PC answers. One button is lit,
- * the one of the profile that runs: its face and its edge in the accent.
- * The rest, and all three while the PC is gone, are grey. */
+ * last answer said, and usable while the PC answers. Of Auto and Cooling
+ * Boost one is lit, the profile that runs. Zero RPM is lit while it is on,
+ * whatever the profile, and is usable only on a card that has it. Lit is
+ * the face and the edge in the accent. The rest, and all three while the
+ * PC is gone, are grey. */
 static void fan_show(const panel_state_t *s)
 {
     if(!fan_buttons[FAN_BOOST])return;
-    for(int i=0;i<FAN_MODES;i++){
+    for(int i=0;i<FAN_BUTTONS;i++){
         set_shown(fan_buttons[i],s->boost_here);
-        if(s->online==lv_obj_has_state(fan_buttons[i],LV_STATE_DISABLED)){
-            if(s->online)lv_obj_remove_state(fan_buttons[i],LV_STATE_DISABLED);
+        bool usable=s->online&&(i!=FAN_ZERO_RPM||s->zero_rpm_here);
+        if(usable==lv_obj_has_state(fan_buttons[i],LV_STATE_DISABLED)){
+            if(usable)lv_obj_remove_state(fan_buttons[i],LV_STATE_DISABLED);
             else lv_obj_add_state(fan_buttons[i],LV_STATE_DISABLED);
         }
     }
-    int lit=s->online?fan_running(s):FAN_NONE;
+    int lit=0;
+    if(s->online)lit=(1<<fan_running(s))|((s->zero_rpm_here&&s->zero_rpm_on)<<FAN_ZERO_RPM);
     if(lit==fan_lit)return;
     fan_lit=lit;
-    for(int i=0;i<FAN_MODES;i++){
-        lv_color_t face=lv_color_hex(i==lit?ACCENT_TEXT:MUTED);
+    for(int i=0;i<FAN_BUTTONS;i++){
+        bool on=lit>>i&1;
+        lv_color_t face=lv_color_hex(on?ACCENT_TEXT:MUTED);
         if(lv_obj_check_type(fan_faces[i],&lv_image_class))lv_obj_set_style_image_recolor(fan_faces[i],face,0);
         else lv_obj_set_style_text_color(fan_faces[i],face,0);
-        lv_obj_set_style_border_color(fan_buttons[i],lv_color_hex(i==lit?ACCENT_TEXT:EDGE),0);
+        lv_obj_set_style_border_color(fan_buttons[i],lv_color_hex(on?ACCENT_TEXT:EDGE),0);
     }
 }
-/* A tap asks for the profile of its button. Auto asks for the end of the
- * boost, which gives the fan back to the settings that it had before. The
- * button lights when the next status says so, which comes at once after
- * the press: a button that lit before the PC took it would show a fan that
- * is not. A tap on the profile that runs asks for nothing, as on the page
- * of the CPU, and quiet takes no tap yet.
+/* A tap on Auto or on Cooling Boost asks for the profile of its button.
+ * Auto asks for the end of the boost, which gives the fan back to the
+ * settings that it had before. A tap on the profile that runs asks for
+ * nothing, as on the page of the CPU. A tap on zero RPM asks for the other
+ * state than the one it shows. A button changes when the next status says
+ * so, which comes at once after the press: a button that changed before
+ * the PC took it would show a fan that is not.
  *
- * Not through clicked, whose range asks first and holds these two: a fan at
- * full speed interrupts nothing. */
+ * Not through clicked, whose range asks first and holds these: a fan at
+ * full speed interrupts nothing, and nor does a fan that stops. */
 static void fan_clicked(lv_event_t *e)
 {
-    int profile=(int)(intptr_t)lv_event_get_user_data(e);
-    if(profile==FAN_QUIET||!last_state_valid||!last_state.online||!last_state.boost_here)return;
+    int button=(int)(intptr_t)lv_event_get_user_data(e);
+    if(!last_state_valid||!last_state.online||!last_state.boost_here)return;
+    if(button==FAN_ZERO_RPM){
+        if(!last_state.zero_rpm_here)return;
+        feedback();
+        if(send_action)send_action(last_state.zero_rpm_on?PANEL_GPU_ZERO_RPM_OFF:PANEL_GPU_ZERO_RPM_ON);
+        return;
+    }
     feedback();
-    if(profile==fan_running(&last_state))return;
-    if(send_action)send_action(profile==FAN_BOOST?PANEL_GPU_BOOST_ON:PANEL_GPU_BOOST_OFF);
+    if(button==fan_running(&last_state))return;
+    if(send_action)send_action(button==FAN_BOOST?PANEL_GPU_BOOST_ON:PANEL_GPU_BOOST_OFF);
 }
 /* The load, the memory and the clock of the card. "--" where the service
  * sent nothing, as on the page of the PC, and for all of them while the
@@ -2824,7 +2836,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     gpu_load_value=NULL;gpu_load_track=NULL;gpu_load_bar=NULL;
     vram_value=NULL;vram_track=NULL;vram_bar=NULL;
     gpu_clock_value=NULL;gpu_clock_track=NULL;gpu_clock_bar=NULL;
-    for(int i=0;i<FAN_MODES;i++){fan_buttons[i]=NULL;fan_faces[i]=NULL;}
+    for(int i=0;i<FAN_BUTTONS;i++){fan_buttons[i]=NULL;fan_faces[i]=NULL;}
     fan_lit=-1;
     history_chart=NULL;history_empty=NULL;
     for(int i=0;i<4;i++)history_axis[i]=NULL;
@@ -3059,14 +3071,14 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_t *history_card=panel(page[4],10,106,460,194,CARD,true);
     /* The column of the fan, with no names on the icons: see fan_show.
      * Hidden until the PC says that it has LACT. */
-    for(int i=0;i<FAN_MODES;i++){
+    for(int i=0;i<FAN_BUTTONS;i++){
         fan_buttons[i]=button(history_card,i==FAN_AUTO?panel_text(TXT_FAN_AUTO):"",FAN_X,
                               FAN_Y+i*(FAN_SIZE+FAN_GAP),FAN_SIZE,FAN_SIZE,fan_clicked,i);
         if(i==FAN_AUTO){
             fan_faces[i]=lv_obj_get_child(fan_buttons[i],0);
             lv_obj_set_style_text_color(fan_faces[i],lv_color_hex(MUTED),0);
         }else{
-            fan_faces[i]=icon(fan_buttons[i],i==FAN_QUIET?&icon_fan_off:&icon_snowflake,
+            fan_faces[i]=icon(fan_buttons[i],i==FAN_ZERO_RPM?&icon_fan_off:&icon_snowflake,
                               (FAN_SIZE-26)/2,(FAN_SIZE-26)/2,MUTED);
         }
         lv_obj_add_flag(fan_buttons[i],LV_OBJ_FLAG_HIDDEN);
