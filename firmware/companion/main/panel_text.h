@@ -355,6 +355,8 @@
                            "Spiegel läuft: %d fps, CPU %d,%d %%") \
     X(TXT_MIRROR_RUNS,     "Mirror runs",           "Spiegel läuft") \
     X(TXT_MIRROR_STARTING, "Mirror starts ...",     "Spiegel startet ...") \
+    X(TXT_MIRROR_WAITING,  "Mirror waits for a picture", \
+                           "Spiegel wartet auf ein Bild") \
     X(TXT_MIRROR_NO_SCREEN,"Mirror waits for Game Mode", \
                            "Spiegel wartet auf den Spielmodus") \
     X(TXT_MIRROR_BUSY,     "Mirror paused: %s reads the screen", \

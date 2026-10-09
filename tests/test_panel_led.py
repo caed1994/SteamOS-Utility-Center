@@ -357,6 +357,11 @@ class HarnessTest(unittest.TestCase):
         self.assertEqual(self.mirror("running", 9, 0),
                          "Mirror runs: 9 fps, CPU 0.0 %")
 
+    def test_a_still_screen_is_a_wait_and_no_error(self):
+        self.assertEqual(self.mirror("waiting"), "Mirror waits for a picture")
+        self.assertEqual(self.mirror("waiting", language=1),
+                         "Spiegel wartet auf ein Bild")
+
     def test_a_running_mirror_with_no_numbers_says_only_that(self):
         self.assertEqual(self.mirror("running"), "Mirror runs")
 
@@ -365,8 +370,9 @@ class HarnessTest(unittest.TestCase):
                          "Mirror paused: steam reads the screen")
         self.assertEqual(self.mirror("no-plugin", detail="pipewiresrc"),
                          "Mirror: the PC has no GStreamer pipewiresrc")
-        self.assertEqual(self.mirror("failed", detail="no picture"),
-                         "Mirror error: no picture")
+        self.assertEqual(self.mirror("failed",
+                                     detail="pipewiresrc: target not found"),
+                         "Mirror error: pipewiresrc: target not found")
         self.assertEqual(self.mirror("failed"), "Mirror error: ?")
 
     def test_a_state_this_firmware_does_not_know_gets_the_usual_line(self):

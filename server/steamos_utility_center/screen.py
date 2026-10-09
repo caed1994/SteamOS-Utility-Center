@@ -60,6 +60,10 @@ FRAME = WIDTH * HEIGHT * 3
 COARSE = 4
 
 # The pictures each second. The bar eases between them at its frame rate.
+# gamescope sends up to one picture for each frame of the game. The memory of
+# each picture is mapped again, so each row that the first step reads costs
+# a page fault. Measured at 1080p with a stream like that of gamescope: 6 %
+# of one core at 60 pictures each second, and 2.5 % at 15.
 RATE = 15
 
 # The pipe from Watcher to the LED service. It is in the runtime directory of
@@ -85,11 +89,12 @@ NO_PLUGIN = "no-plugin"         # an element of the pipeline is not there
 NO_SCREEN = "no-screen"         # no stream of gamescope: no Game Mode
 BUSY = "busy"                   # a different program reads the screen
 STARTING = "starting"           # the capture runs and has no picture yet
+WAITING = "waiting"             # it is connected, and the screen is still
 RUNNING = "running"
 FAILED = "failed"
 GONE = "gone"                   # no recent status: Watcher does not run
 STATES = (OFF, IDLE, NO_GSTREAMER, NO_PLUGIN, NO_SCREEN, BUSY, STARTING,
-          RUNNING, FAILED, GONE)
+          WAITING, RUNNING, FAILED, GONE)
 
 # The longest detail in the status. The panel has one line for it.
 DETAIL_CHARS = 40
@@ -467,31 +472,43 @@ CHECK_SECONDS = 5.0
 # up to the maximum.
 RETRY_SECONDS = 5.0
 RETRY_MOST = 60.0
-# How long a new capture can take for its first picture.
-FIRST_PICTURE_SECONDS = 10.0
-# gamescope sends no picture while the screen does not change, and the bar
-# keeps a picture for HOLD seconds. So Watcher sends the last colours again
-# after this time.
+# How long a new capture can take to connect to the stream of gamescope.
+LINK_SECONDS = 10.0
+# gamescope sends a picture only when the game or Steam changes the screen.
+# It sends none at the start of a capture either. A still screen thus gives
+# no picture, and that is not a failure. The bar keeps a picture for HOLD
+# seconds, so Watcher sends the last colours again after this time.
 REPEAT_SECONDS = 1.0
 # How often Watcher writes the status file, and the age at which a reader
 # calls it GONE.
 STATUS_SECONDS = 2.0
 STATUS_STALE = 15.0
 
+# The error lines that Pipeline keeps, and writes into the log at the end.
+ERROR_LINES = 20
+
 TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
 
 
-def command(target, by_id=False):
+def command(target, by_id=False, rate=True):
     """Returns the argument list of the pipeline.
 
     GStreamer before 1.22 has no target-object. A pipeline for that version
     names the node by its id with path=.
+
+    videorate drops the pictures that come too soon. Its output must have a
+    fixed rate: the stream of gamescope has the rate 0/1 and no duration on
+    its pictures, and on such a stream videorate with max-rate stops the
+    program with a failed assertion. With rate=False, the pipeline has no
+    videorate, and Watcher drops the pictures itself.
     """
     source = ["pipewiresrc", ("path=%s" if by_id else "target-object=%s")
               % target, "client-name=" + CLIENT, "do-timestamp=true"]
+    if rate:
+        source += ["!", "videorate", "drop-only=true",
+                   "!", "video/x-raw,framerate=%d/1" % RATE]
     return ([GST_LAUNCH, "-q"] + source
-            + ["!", "videorate", "drop-only=true", "max-rate=%d" % RATE,
-               "!", "queue", "leaky=downstream", "max-size-buffers=1",
+            + ["!", "queue", "leaky=downstream", "max-size-buffers=1",
                "!", "videoscale", "method=nearest-neighbour",
                "!", "video/x-raw,width=%d,height=%d"
                % (COARSE * WIDTH, COARSE * HEIGHT),
@@ -556,12 +573,12 @@ def _same(first, second):
     return first is not None and str(first) == str(second)
 
 
-def readers(objects, node, own_pid=None):
-    """Returns the names of the programs that read the stream `node`.
+def _links(objects, node):
+    """Gives (link info, process id, name) for each reader of `node`.
 
     The reader of a link is a node, and its client says which process it
     is. PipeWire sets pipewire.sec.pid itself, so a client cannot give a
-    false one. The readers of `own_pid` are not in the list.
+    false one.
     """
     nodes = {}
     clients = {}
@@ -570,7 +587,6 @@ def readers(objects, node, own_pid=None):
             nodes[one.get("id")] = _props(one)
         elif one.get("type") == "PipeWire:Interface:Client":
             clients[one.get("id")] = _props(one)
-    names = []
     for one in objects:
         info = _info(one)
         if (one.get("type") != "PipeWire:Interface:Link"
@@ -583,12 +599,31 @@ def readers(objects, node, own_pid=None):
                 client = value
         pid = client.get("pipewire.sec.pid",
                          client.get("application.process.id"))
-        if own_pid is not None and _same(pid, own_pid):
-            continue
-        names.append(_name(reader.get("application.name")
-                           or client.get("application.name")
-                           or reader.get("node.name") or "unknown"))
-    return names
+        yield info, pid, (reader.get("application.name")
+                          or client.get("application.name")
+                          or reader.get("node.name") or "unknown")
+
+
+def readers(objects, node, own_pid=None):
+    """Returns the names of the programs that read the stream `node`.
+
+    The readers of `own_pid` are not in the list.
+    """
+    return [_name(name) for _info, pid, name in _links(objects, node)
+            if own_pid is None or not _same(pid, own_pid)]
+
+
+def own_link(objects, node, own_pid):
+    """Returns (state, error) of the link from `node` to `own_pid`.
+
+    The state is "active" while the link can carry pictures, also while
+    gamescope sends none. None means no link.
+    """
+    for info, pid, _name in _links(objects, node):
+        if _same(pid, own_pid):
+            return (_short(str(info.get("state") or "unknown")),
+                    _short(str(info.get("error") or "")))
+    return None
 
 
 def _name(text):
@@ -639,8 +674,70 @@ def _short(line):
     # "from element /GstPipeline:pipeline0/...: text" keeps the text.
     if line.startswith("from element"):
         line = line.split(": ", 1)[-1]
-    line = line.replace("erroneous pipeline: ", "")
+    for words in ("erroneous pipeline: ", "stream error: "):
+        line = line.replace(words, "")
+    # A path keeps its last part: the name of the file.
+    line = re.sub(r"(?<!\S)\.{0,2}/(?:[^\s/]+/)*", "", line)
     return re.sub(r"[^\x20-\x7e]", "", line)[:DETAIL_CHARS]
+
+
+# gst-launch-1.0 gives an error of an element in four lines:
+#   ERROR: from element /GstPipeline:pipeline0/GstVideoRate:videorate0: text
+#   Additional debug info:
+#   ../gst/videorate/gstvideorate.c(1699): function (): /GstPipeline:...:
+#   a text for a developer
+_FROM = re.compile(r"(?:ERROR|WARNING): from element (\S+): (.*)")
+_PLACE = re.compile(r"\S+\(\d+\): \S+ \(\): ")
+_REASON = re.compile(r"reason (\S+)")
+# A failed check in the code stops the program with one line:
+#   ERROR:../gst/videorate/gstvideorate.c:757:function: assertion failed: (...)
+_CHECK = re.compile(r"(?:ERROR|CRITICAL):(\S+?\.c):\d+:\w+: (.*)")
+# The texts that say only that an element stopped. The text for a developer
+# says more.
+_GENERAL = ("Internal data stream error.",
+            "GStreamer encountered a general stream error.")
+
+
+def _element(name):
+    """Returns the element from a path of GStreamer or a file of its code."""
+    name = re.split(r"[/:]", name)[-1]
+    if name.endswith(".c"):
+        name = name[:-2]
+        if name.startswith("gst"):
+            name = name[3:]
+    return re.sub(r"\d+$", "", name) or "?"
+
+
+def describe(lines):
+    """Returns the most useful short line from the last error lines."""
+    lines = [line.strip() for line in lines if line.strip()]
+    for line in reversed(lines):
+        found = _CHECK.fullmatch(line)
+        if found:
+            return _short("%s: %s" % (_element(found.group(1)),
+                                      found.group(2)))
+    for index in range(len(lines) - 1, -1, -1):
+        found = _FROM.fullmatch(lines[index])
+        if not found:
+            continue
+        text = found.group(2)
+        more = []
+        for line in lines[index + 1:]:
+            if line.startswith(("ERROR", "WARNING")):
+                break
+            if line != "Additional debug info:" and not _PLACE.match(line):
+                more.append(line)
+        reasons = [_REASON.search(line) for line in more]
+        reasons = [reason.group(1) for reason in reasons if reason]
+        if reasons:
+            text = reasons[0]
+        elif more and text in _GENERAL:
+            text = " ".join(more)
+        return _short("%s: %s" % (_element(found.group(1)), text))
+    for line in reversed(lines):
+        if line.startswith(("ERROR", "WARNING")):
+            return _short(line)
+    return _short(lines[-1]) if lines else ""
 
 
 class Pipeline:
@@ -653,6 +750,7 @@ class Pipeline:
         self.ended = False
         self._buffer = bytearray()
         self._errors = []
+        self._part = ""
 
     @property
     def pid(self):
@@ -701,30 +799,36 @@ class Pipeline:
         return picture
 
     def _read_errors(self):
+        """Reads what stderr has. Returns the number of bytes."""
         try:
             chunk = os.read(self.process.stderr.fileno(), 4096)
         except OSError:
-            return
-        for line in chunk.decode("utf-8", "replace").splitlines():
-            if line.strip():
-                self._errors = (self._errors + [line])[-6:]
+            return 0
+        # A line can come in two reads. The part after the last line end
+        # waits for the next read.
+        text = self._part + chunk.decode("utf-8", "replace")
+        lines = text.split("\n")
+        self._part = "" if not chunk else lines.pop()[-1024:]
+        for line in lines:
+            line = re.sub(r"[^\x20-\x7e]", "", line).strip()
+            if line:
+                self._errors = (self._errors + [line])[-ERROR_LINES:]
+        return len(chunk)
 
     def alive(self):
         return self.process is not None and self.process.poll() is None
 
+    def said(self):
+        """Returns the last lines that gst-launch-1.0 wrote as errors."""
+        for _read in range(64):
+            if not self._read_errors():
+                break
+        return self._errors + ([self._part.strip()] if self._part.strip()
+                               else [])
+
     def error(self):
         """Returns the most useful of the last error lines, or ""."""
-        self._read_errors()
-        lines = self._errors
-        for line in reversed(lines):
-            # GStreamer gives the reason of a stop in a line of its own.
-            found = re.search(r"reason (\S+)", line)
-            if found:
-                return _short(found.group(1))
-        for line in reversed(lines):
-            if line.lstrip().startswith(("ERROR", "WARNING")):
-                return _short(line)
-        return _short(lines[-1]) if lines else ""
+        return describe(self.said())
 
     def stop(self):
         if self.process is None:
@@ -809,6 +913,9 @@ class Watcher:
         self.pipeline = None
         self.picture = Picture()
         self.by_id = False
+        self.rate = True
+        self.pending = None
+        self.used_at = -math.inf
         self.tools = False
         self.retry_at = 0.0
         self.retry = RETRY_SECONDS
@@ -946,7 +1053,8 @@ class Watcher:
             self.retry_at = now + CHECK_SECONDS
             return LOOK_SECONDS
         pipeline = Pipeline(command(node if self.by_id else SCREEN_NODE,
-                                    self.by_id), launch=self.launch)
+                                    self.by_id, self.rate),
+                            launch=self.launch)
         try:
             pipeline.start()
         except (OSError, ValueError) as exc:
@@ -954,6 +1062,8 @@ class Watcher:
             return LOOK_SECONDS
         self.pipeline = pipeline
         self.picture = Picture()
+        self.pending = None
+        self.used_at = -math.inf
         self.started = now
         self.next_check = now + CHECK_SECONDS
         self.sent = None
@@ -966,17 +1076,23 @@ class Watcher:
 
     def _watch(self):
         pipeline = self.pipeline
-        picture = pipeline.frame(0.25)
+        # At most RATE pictures each second go to the bar. A picture that
+        # comes too soon waits, so the last picture of a change is not lost.
+        due = self.used_at + 1.0 / RATE
+        wait = 0.25
+        if self.pending is not None:
+            wait = min(wait, max(0.0, due - self.clock()))
+        picture = pipeline.frame(wait)
         now = self.clock()
         if picture is not None:
-            self._send(encode(self.picture.colours(picture, now)), now)
-            self.frames += 1
-            if self.state != RUNNING:
-                self._set(RUNNING)
-                self.retry = RETRY_SECONDS
+            self.pending = picture
+        if self.pending is not None and now >= due:
+            self._use(now)
         elif self.sent is not None and now - self.sent_at >= REPEAT_SECONDS:
             self._send(self.sent, now)
         if not pipeline.alive() or pipeline.ended:
+            for line in pipeline.said():
+                LOG.warning("mirror: %s said: %s", GST_LAUNCH, line)
             detail = pipeline.error()
             if not self.by_id and "target-object" in detail:
                 # An older GStreamer. Try again at once, with the id.
@@ -984,17 +1100,36 @@ class Watcher:
                 self._stop()
                 self._set(STARTING)
                 return
+            if self.rate and detail.startswith("videorate"):
+                # This videorate cannot drop the pictures. Try again at
+                # once with no videorate.
+                self.rate = False
+                self._stop()
+                self._set(STARTING)
+                return
             self._fail(now, detail or "gst-launch-1.0 stopped")
-            return
-        if self.state == STARTING and now - self.started > FIRST_PICTURE_SECONDS:
-            self._fail(now, "no picture")
             return
         if now >= self.next_check:
             self.next_check = now + CHECK_SECONDS
             self._check(now)
 
+    def _use(self, now):
+        """Sends the colours of the waiting picture to the bar."""
+        self._send(encode(self.picture.colours(self.pending, now)), now)
+        self.pending = None
+        self.used_at = now
+        self.frames += 1
+        if self.state != RUNNING:
+            self._set(RUNNING)
+            self.retry = RETRY_SECONDS
+
     def _check(self, now):
-        """Stops the capture when a different program reads the screen."""
+        """Stops the capture when a different program reads the screen.
+
+        It also looks at the link of a capture with no picture. An active
+        link with no picture is a still screen. A link that does not become
+        active is a failure.
+        """
         objects = self.dump()
         if objects is None:
             return
@@ -1013,6 +1148,17 @@ class Watcher:
             self.retry_at = now + CHECK_SECONDS
             return
         self.source = screen_size(objects, node)
+        if self.state not in (STARTING, WAITING):
+            return
+        link = own_link(objects, node, self.pipeline.pid)
+        if link is not None and link[0] == "active":
+            self._set(WAITING)
+        elif now - self.started >= LINK_SECONDS:
+            if link is None:
+                self._fail(now, "no link to gamescope")
+            else:
+                self._fail(now, "link " + ": ".join(part for part in link
+                                                    if part))
 
     def _fail(self, now, detail):
         self._stop()

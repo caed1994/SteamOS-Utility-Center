@@ -186,6 +186,10 @@ recording of Steam. The wall panel and the Status page of the control panel
 show what it does. The log is
 `journalctl --user -u steamos-utility-center-mirror -f`.
 
+gamescope sends a picture only when the screen changes. On a still screen the
+bar keeps the last picture. A capture that starts on a still screen waits for
+the first change, and the panel shows "Mirror waits for a picture".
+
 ### Desktop Mode
 
 Steam sets the LEDs in Game Mode only. The panel's **Desktop mode** page gives

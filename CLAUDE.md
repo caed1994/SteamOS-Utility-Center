@@ -77,7 +77,9 @@ clone of the source in `/var/lib/steamos-utility-center/source`.
 | Mirror effect | `screen.py`, `RAINBOW_SHOWS=mirror`, Game Mode only. The LED service cannot see `/run/user` (`ProtectHome=yes`). So the user unit `steamos-utility-center-mirror` (`--mirror`) reads the PipeWire node `gamescope` with gst-launch-1.0 |
 | Mirror pipe | `/run/steamos-utility-center/mirror`, mode 0622, messages of 52 bytes. The LED service opens it only while the bar shows the mirror, and that starts the capture |
 | Mirror status | `$XDG_RUNTIME_DIR/steamos-utility-center-mirror.json`, read by `companion.py` (`led.mirror`) and the Status page of the control panel |
-| Mirror cost | measured with GStreamer 1.24 and a test source: two scale steps cost less than 0.3 ms for each picture, and Python 0.46 ms for each picture |
+| Mirror cost | measured with GStreamer 1.24 and a test source: two scale steps cost less than 0.3 ms for each picture, and Python 0.46 ms for each picture. With a stream like that of gamescope (memfd, 1080p, 60 fps) in the container: 6 % of one core with no videorate, 2.5 % at 15 fps. Each picture is mapped again, so the cost is page faults |
+| Mirror stream | gamescope gives BGRx in a memfd, rate 0/1, no duration on the buffers, and a picture only when the screen changes (none at the start of a capture). `videorate max-rate=` stops on it with a failed assertion (GStreamer 1.24 and 1.26), so the pipeline has `videorate drop-only=true ! video/x-raw,framerate=15/1`. If videorate fails, Watcher starts again without it |
+| Mirror test stream | `tools/gamescope-stream.c`: a PipeWire stream like that of gamescope (build and run steps in its head). It needs PipeWire, WirePlumber and a D-Bus session, and a short `XDG_RUNTIME_DIR`. `videotestsrc ... framerate=0/1` gives the videorate failure with no PipeWire |
 
 ## 5. The wall panel firmware
 
@@ -165,7 +167,7 @@ Notes for the checks:
 ## 10. Open items
 
 - Deep sleep of the panel, for a longer battery life. The owner put this off.
-- The mirror is not measured on the PC. Open: GStreamer and `pipewiresrc` on SteamOS, and the node name `gamescope`. Also open: the cost in gamescope at full size, and a second reader during a recording of Steam. The status on the panel names each case. Plan B is a PipeWire client with ctypes that asks gamescope for a small picture.
+- The mirror on the PC: GStreamer, `pipewiresrc` and the node `gamescope` are there. The fix of the videorate failure is not measured on the PC yet. Open: the cost in gamescope at full size (it copies each picture), and a second reader during a recording of Steam. Plan B is a PipeWire client with ctypes that asks gamescope for a small picture (`requested_size`).
 - The mirror on the desktop needs the screen portal of KDE. That is a later step.
 - A Nanoleaf page on the panel. The owner put this off.
 - The fan column on the card page: zero RPM on top, lit while it is on. Under it Auto and Cooling Boost, one lit for the profile that runs. Auto ends Cooling Boost. Cooling Boost sets a static fan speed of 100 % in LACT. When it goes off, it puts back the old fan settings.

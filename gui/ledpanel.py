@@ -361,6 +361,8 @@ def led_part(checks, installed=True):
 MIRROR_SAYS = {
     screen_module.RUNNING: (True, "Runs."),
     screen_module.STARTING: (True, "Starts."),
+    screen_module.WAITING: (True, "Waits for a picture. gamescope sends one "
+                                  "when the screen changes."),
     screen_module.IDLE: (True, "Ready. It runs when the LED menu of Steam is "
                                "on Rainbow."),
     screen_module.NO_SCREEN: (True, "Ready. It runs in Game Mode."),

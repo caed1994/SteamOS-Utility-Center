@@ -56,6 +56,7 @@ static const struct {
     {"no-screen", TXT_MIRROR_NO_SCREEN},
     {"busy", TXT_MIRROR_BUSY},
     {"starting", TXT_MIRROR_STARTING},
+    {"waiting", TXT_MIRROR_WAITING},
     {"running", TXT_MIRROR_RUNNING},
     {"failed", TXT_MIRROR_FAILED},
     {"gone", TXT_MIRROR_GONE},

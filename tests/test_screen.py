@@ -347,9 +347,25 @@ elif mode == "error":
     sys.stderr.write("ERROR: from element /GstPipeline:pipeline0/"
                      "GstPipeWireSrc:pipewiresrc0: Internal data stream error.\n"
                      "Additional debug info:\n"
-                     "gstbasesrc.c(3132): gst_base_src_loop (): "
+                     "../libs/gst/base/gstbasesrc.c(3132): gst_base_src_loop "
+                     "(): /GstPipeline:pipeline0/GstPipeWireSrc:pipewiresrc0:\n"
                      "streaming stopped, reason not-negotiated (-4)\n")
     sys.exit(1)
+elif mode == "videorate":
+    # What GStreamer 1.24 does on the stream of gamescope: GLib writes the
+    # failed check into both streams and stops the program.
+    if "videorate" in sys.argv[2:]:
+        os.write(1, b"Bail out! ERROR:../gst/videorate/gstvideorate.c:757:"
+                    b"gst_video_rate_push_buffer: assertion failed\n")
+        sys.stderr.write("**\nERROR:../gstreamer/subprojects/gst-plugins-base/"
+                         "gst/videorate/gstvideorate.c:757:"
+                         "gst_video_rate_push_buffer: assertion failed: "
+                         "(GST_BUFFER_DURATION_IS_VALID (outbuf))\n")
+        sys.stderr.flush()
+        os.abort()
+    while True:
+        os.write(1, frame)
+        time.sleep(0.02)
 elif mode == "old":
     sys.stderr.write('WARNING: erroneous pipeline: no property '
                      '"target-object" in element "pipewiresrc0"\n')
@@ -359,8 +375,11 @@ else:
 """ % (screen.WIDTH * screen.HEIGHT)
 
 
-def objects(readers=(), size=None):
-    """What pw-dump says: the stream of gamescope and who reads it."""
+def objects(readers=(), size=None, own=None):
+    """What pw-dump says: the stream of gamescope and who reads it.
+
+    `own` is the link of the capture: (process id, state, error).
+    """
     found = [{"id": 40, "type": "PipeWire:Interface:Node",
               "info": {"props": {"node.name": "gamescope",
                                  "media.class": "Video/Source"}}}]
@@ -380,6 +399,18 @@ def objects(readers=(), size=None):
         found.append({"id": 300 + index, "type": "PipeWire:Interface:Link",
                       "info": {"output-node-id": 40,
                                "input-node-id": 200 + index}})
+    if own is not None:
+        pid, state, error = own
+        found.append({"id": 150, "type": "PipeWire:Interface:Client",
+                      "info": {"props": {"pipewire.sec.pid": pid,
+                                         "application.name":
+                                         "gst-launch-1.0"}}})
+        found.append({"id": 250, "type": "PipeWire:Interface:Node",
+                      "info": {"props": {"client.id": 150,
+                                         "node.name": screen.CLIENT}}})
+        found.append({"id": 350, "type": "PipeWire:Interface:Link",
+                      "info": {"output-node-id": 40, "input-node-id": 250,
+                               "state": state, "error": error}})
     return found
 
 
@@ -402,8 +433,8 @@ class WatcherCase(PipeCase):
 
     def launch(self, argv, **options):
         self.argvs.append(argv)
-        return subprocess.Popen([sys.executable, "-c", FAKE, self.mode],
-                                **options)
+        return subprocess.Popen([sys.executable, "-c", FAKE, self.mode]
+                                + argv, **options)
 
     def written(self):
         with open(self.status, encoding="utf-8") as handle:
@@ -545,8 +576,12 @@ class WatcherTest(WatcherCase):
     def test_a_failure_names_the_reason_and_waits_longer_each_time(self):
         self.mirror.colours()
         self.mode = "error"
-        self.until(screen.FAILED)
-        self.assertEqual(self.watcher.detail, "not-negotiated")
+        with self.assertLogs(screen.LOG, "WARNING") as logged:
+            self.until(screen.FAILED)
+        self.assertEqual(self.watcher.detail, "pipewiresrc: not-negotiated")
+        # The log has each line, for a person who looks for the cause.
+        self.assertTrue(any("reason not-negotiated (-4)" in line
+                            for line in logged.output))
         self.assertEqual(self.watcher.retry_at,
                          self.clock.now + screen.RETRY_SECONDS)
         self.clock.now = self.watcher.retry_at
@@ -566,14 +601,85 @@ class WatcherTest(WatcherCase):
         self.assertIn("path=40", self.argvs[1])
         self.assertNotIn("target-object=gamescope", self.argvs[1])
 
-    def test_a_capture_with_no_picture_is_a_failure(self):
+    def test_a_still_screen_at_the_start_is_no_failure(self):
+        """gamescope sends no picture until the screen changes."""
         self.mirror.colours()
         self.mode = "silent"
         self.until(screen.STARTING)
-        self.clock.now += screen.FIRST_PICTURE_SECONDS + 1
+        child = self.watcher.pipeline.process
+        self.dumped = objects(own=(child.pid, "active", None))
+        for _check in range(4):
+            self.clock.now += screen.CHECK_SECONDS
+            self.watcher.step()
+            self.assertEqual(self.watcher.state, screen.WAITING)
+        self.assertIs(self.watcher.pipeline.process, child)
+        self.assertEqual(self.written()["state"], "waiting")
+
+    def test_a_link_that_does_not_become_active_is_a_failure(self):
+        for own, detail in (((None, "negotiating", None),
+                             "link negotiating"),
+                            ((None, "error", "no more input formats"),
+                             "link error: no more input formats"),
+                            (None, "no link to gamescope")):
+            with self.subTest(detail=detail):
+                self.watcher.close()
+                self.watcher.state = None
+                self.watcher.retry_at = 0.0
+                self.mirror.colours()
+                self.mode = "silent"
+                self.dumped = objects()
+                self.until(screen.STARTING)
+                pid = self.watcher.pipeline.pid
+                self.dumped = objects(own=None if own is None
+                                      else (pid,) + own[1:])
+                self.clock.now += screen.CHECK_SECONDS
+                self.watcher.step()
+                self.assertEqual(self.watcher.state, screen.STARTING)
+                self.clock.now += screen.LINK_SECONDS
+                self.watcher.step()
+                self.assertEqual(self.watcher.state, screen.FAILED)
+                self.assertEqual(self.watcher.detail, detail)
+
+    def test_at_most_rate_pictures_each_second_reach_the_bar(self):
+        self.mirror.colours()
+        self.until(screen.RUNNING)
+        self.assertEqual(self.watcher.frames, 1)
+        # The fake gives a picture each 20 ms, but the clock stands.
+        deadline = time.monotonic() + 0.3
+        while time.monotonic() < deadline:
+            self.watcher.step()
+        self.assertEqual(self.watcher.frames, 1)
+        self.assertIsNotNone(self.watcher.pending)
+        self.clock.now += 1.0 / screen.RATE
         self.watcher.step()
-        self.assertEqual(self.watcher.state, screen.FAILED)
-        self.assertEqual(self.watcher.detail, "no picture")
+        self.assertEqual(self.watcher.frames, 2)
+
+    def test_the_last_picture_of_a_change_is_not_lost(self):
+        self.mirror.colours()
+        self.until(screen.RUNNING)
+        deadline = time.monotonic() + 0.1
+        while self.watcher.pending is None and time.monotonic() < deadline:
+            self.watcher.step()
+        self.assertIsNotNone(self.watcher.pending)
+        # Then the screen stops: no picture comes after this one.
+        self.watcher.pipeline.frame = lambda timeout: None
+        self.clock.now += 1.0 / screen.RATE
+        self.watcher.step()
+        self.assertIsNone(self.watcher.pending)
+        self.assertEqual(self.watcher.frames, 2)
+
+    def test_a_videorate_that_stops_gives_way_to_watcher(self):
+        """GStreamer 1.24 and 1.26 stop on the stream of gamescope when
+        videorate has max-rate. This is the line that the panel showed."""
+        self.mirror.colours()
+        self.mode = "videorate"
+        with self.assertLogs(screen.LOG, "WARNING") as logged:
+            self.until(screen.RUNNING)
+        self.assertEqual(len(self.argvs), 2)
+        self.assertIn("videorate", self.argvs[0])
+        self.assertNotIn("videorate", self.argvs[1])
+        self.assertTrue(any("assertion failed" in line
+                            for line in logged.output))
 
     def test_the_status_goes_away_with_the_watcher(self):
         self.watcher.step()
@@ -600,20 +706,40 @@ class CommandTest(unittest.TestCase):
                       % (screen.WIDTH, screen.HEIGHT), argv)
         self.assertIn("method=nearest-neighbour", argv)
         self.assertIn("method=bilinear2", argv)
-        self.assertIn("max-rate=%d" % screen.RATE, argv)
         self.assertEqual(argv[-3:], ["fdsink", "fd=1", "sync=false"])
+
+    def test_videorate_gives_a_fixed_rate(self):
+        """videorate with max-rate and no fixed rate stops on a stream with
+        the rate 0/1, and the stream of gamescope has that rate."""
+        argv = screen.command("gamescope")
+        at = argv.index("videorate")
+        self.assertEqual(argv[at:at + 4],
+                         ["videorate", "drop-only=true", "!",
+                          "video/x-raw,framerate=%d/1" % screen.RATE])
+        self.assertFalse([word for word in argv if "max-rate" in word])
+        self.assertNotIn("videorate", screen.command("gamescope", rate=False))
 
     @unittest.skipUnless(shutil.which(screen.GST_LAUNCH),
                          "GStreamer is not on this machine")
     def test_a_real_gstreamer_accepts_the_pipeline(self):
         """With a test source in place of the stream of gamescope."""
-        argv = screen.command("gamescope")
+        for rate in ("30/1", "0/1"):
+            for videorate in (True, False):
+                with self.subTest(rate=rate, videorate=videorate):
+                    self.check_real(rate, videorate)
+
+    def check_real(self, rate, videorate):
+        # The stream of gamescope has the rate 0/1. A test source with that
+        # rate gives one picture, with no duration, as gamescope does.
+        argv = screen.command("gamescope", rate=videorate)
         tail = argv[argv.index("!"):]
         source = [screen.GST_LAUNCH, "-q", "videotestsrc", "num-buffers=4",
                   "pattern=red", "!",
-                  "video/x-raw,format=BGRx,width=1280,height=800"]
+                  "video/x-raw,format=BGRx,width=1280,height=800,"
+                  "framerate=" + rate]
         done = subprocess.run(source + tail, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, timeout=60, check=False)
+                              stderr=subprocess.PIPE, timeout=60, check=False,
+                              env=dict(os.environ, LC_ALL="C"))
         self.assertEqual(done.returncode, 0, done.stderr[-300:])
         self.assertGreater(len(done.stdout), 0)
         self.assertEqual(len(done.stdout) % screen.FRAME, 0)
@@ -699,11 +825,64 @@ class ErrorTest(unittest.TestCase):
 
     def test_the_reason_of_a_stop_is_the_detail(self):
         pipeline = screen.Pipeline([])
-        pipeline._errors = ["ERROR: from element /a/b: Internal data stream "
-                            "error.", "streaming stopped, reason "
-                            "not-negotiated (-4)"]
-        pipeline._read_errors = lambda: None
-        self.assertEqual(pipeline.error(), "not-negotiated")
+        pipeline._errors = [
+            "ERROR: from element /GstPipeline:pipeline0/GstPipeWireSrc:"
+            "pipewiresrc0: Internal data stream error.",
+            "Additional debug info:",
+            "../gstreamer/subprojects/gstreamer/libs/gst/base/gstbasesrc.c"
+            "(3177): gst_base_src_loop (): /GstPipeline:pipeline0/"
+            "GstPipeWireSrc:pipewiresrc0:",
+            "streaming stopped, reason not-negotiated (-4)"]
+        pipeline._read_errors = lambda: 0
+        self.assertEqual(pipeline.error(), "pipewiresrc: not-negotiated")
+
+    def test_a_failed_assertion_names_the_element(self):
+        """The line that the panel showed as "../gstreamer/subprojects/
+        gst-plugins-bas"."""
+        self.assertEqual(screen.describe([
+            "**", "ERROR:../gstreamer/subprojects/gst-plugins-base/gst/"
+            "videorate/gstvideorate.c:757:gst_video_rate_push_buffer: "
+            "assertion failed: (GST_BUFFER_DURATION_IS_VALID (outbuf))"]),
+            "videorate: assertion failed: (GST_BUFFER")
+
+    def test_a_general_error_takes_the_text_for_a_developer(self):
+        self.assertEqual(screen.describe([
+            "ERROR: from element /GstPipeline:pipeline0/GstVideoRate:"
+            "videorate0: GStreamer encountered a general stream error.",
+            "Additional debug info:",
+            "../gst/videorate/gstvideorate.c(1699): gst_video_rate_transform"
+            "_ip (): /GstPipeline:pipeline0/GstVideoRate:videorate0:",
+            "videorate requires a non-variable framerate",
+            "ERROR: pipeline doesn't want to preroll."]),
+            "videorate: videorate requires a non-vari")
+
+    def test_an_error_of_the_stream_keeps_what_went_wrong(self):
+        self.assertEqual(screen.describe([
+            "ERROR: from element /GstPipeline:pipeline0/GstPipeWireSrc:"
+            "pipewiresrc0: stream error: target not found",
+            "Additional debug info:",
+            "../src/gst/gstpipewiresrc.c(692): on_state_changed (): "
+            "/GstPipeline:pipeline0/GstPipeWireSrc:pipewiresrc0"]),
+            "pipewiresrc: target not found")
+
+    def test_a_path_keeps_its_file_name(self):
+        self.assertEqual(screen._short("at ../a/b/file.c(12) and "
+                                       "video/x-raw"),
+                         "at file.c(12) and video/x-raw")
+
+    def test_a_line_in_two_reads_is_one_line(self):
+        read, write = os.pipe()
+        os.set_blocking(read, False)
+        pipeline = screen.Pipeline([])
+        pipeline.process = unittest.mock.Mock(stderr=os.fdopen(read, "rb"))
+        self.addCleanup(pipeline.process.stderr.close)
+        os.write(write, b"ERROR: from element /a/b0: tar")
+        pipeline._read_errors()
+        os.write(write, b"get not found\nthe end")
+        os.close(write)
+        self.assertEqual(pipeline.said(),
+                         ["ERROR: from element /a/b0: target not found",
+                          "the end"])
 
     def test_an_error_line_loses_its_element_path(self):
         self.assertEqual(screen._short("ERROR: from element /GstPipeline:"
@@ -926,6 +1105,11 @@ class StatusPageTest(unittest.TestCase):
                                                "detail": "pipewiresrc"})
         self.assertFalse(part.ok)
         self.assertIn("pipewiresrc", part.verdict)
+
+    def test_a_still_screen_is_no_fault(self):
+        part = ledpanel.mirror_part("mirror", {"state": "waiting"})
+        self.assertTrue(part.ok)
+        self.assertIn("screen changes", part.verdict)
 
     def test_no_capture_service_is_a_fault(self):
         part = ledpanel.mirror_part("mirror", {"state": "gone"})
