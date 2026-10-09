@@ -236,8 +236,6 @@ int main(int argc,char **argv)
     if(argc>2&&strncmp(argv[2],"card",4)==0){
         s.boost_here=true;
         s.boost_on=strcmp(argv[2],"card-boost")==0;
-        /* The fan of the card, faster with the boost. */
-        s.pc.gpu_fan_rpm=s.boost_on?2950:1450;
         if(strcmp(argv[2],"card-empty")!=0){
             uint32_t seed=7;
             panel_state_t t=s;

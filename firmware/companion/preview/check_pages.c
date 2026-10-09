@@ -2417,7 +2417,7 @@ int main(void)
         panel_settings_t german=chosen;german.language=PANEL_GERMAN;
         panel_ui_create(action,setting,sound,&german);
         page=lv_obj_get_child(find_band(lv_screen_active()),4);
-        assert(label(page,"GPU-Last")&&label(page,"Verlauf"));
+        assert(label(page,"GPU-Last")&&!label(page,"Verlauf"));
         assert(label(page,"80 °C")&&label(page,"-30 Min"));
         assert(!label(page,"Noch keine Werte"));
         lv_refr_now(screen);
@@ -2425,12 +2425,15 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
-    // Cooling Boost on the page of the card: a square button with a
-    // snowflake and no words, in the top right corner of the history,
-    // there where the PC has LACT with a card. It sends where to go at a
-    // tap and asks nothing first. The snowflake and the edge take the
-    // accent when the status says on, and grey when it says off. The fan
-    // of the card stands left of it, where the PC reads one.
+    // The card of the history: the chart at the top with no title over it,
+    // the time under it, and one row under that with the legend and
+    // Cooling Boost. The legend stands flush with the left edge of the
+    // chart, with one gap between a name and the next dot, and in the
+    // middle of the height of the button. Cooling Boost is a square button
+    // with a snowflake and no words, at the right end of the row, there
+    // where the PC has LACT with a card. It sends where to go at a tap and
+    // asks nothing first. The snowflake and the edge take the accent when
+    // the status says on, and grey when it says off.
     {
         panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
         for(int language=0;language<2;language++){
@@ -2438,54 +2441,75 @@ int main(void)
             panel_ui_create(action,setting,sound,&in_it);
             panel_palette_t colours=panel_palette(in_it.theme,in_it.accent);
             panel_state_t t=base();
-            t.pc.gpu_fan_rpm=-1;
+            t.pc.gpu_fan_rpm=2950;
             lv_obj_t *page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_CARD);
             lv_obj_t *flake=image_of(page,&icon_snowflake);
             assert(flake);
             lv_obj_t *button=lv_obj_get_parent(flake);
             assert(lv_obj_check_type(button,&lv_button_class));
             // A PC without LACT, or a service older than this firmware: no
-            // button. A PC that reads no fan of the card: no fan.
+            // button.
             panel_ui_update(&t);
             assert(lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
-            assert(!label(page,panel_text(TXT_PC_GPU_FAN)));
-            t.boost_here=true;t.pc.gpu_fan_rpm=1450;t.answers++;
+            t.boost_here=true;t.answers++;
             panel_ui_update(&t);
             assert(!lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
-            lv_obj_t *fan_name=label(page,panel_text(TXT_PC_GPU_FAN));
-            assert(fan_name);
-            lv_obj_t *fan=lv_obj_get_parent(fan_name);
-            char speed[24];
-            snprintf(speed,sizeof speed,panel_text(TXT_RPM),1450);
-            assert(label(fan,speed));
             lv_obj_update_layout(page);
-            // Square, only the snowflake in it, in the top right corner of
-            // the card: nothing else of the card is right of it or over it.
+            // No title, and no fan: only the button.
+            char speed[24];
+            snprintf(speed,sizeof speed,panel_text(TXT_RPM),2950);
+            assert(!label(page,"History")&&!label(page,"Verlauf"));
+            assert(!label(page,panel_text(TXT_PC_GPU_FAN))&&!label(page,speed));
+            // Square, only the snowflake in it, in the bottom right corner
+            // of the card: nothing else of the card is right of it or
+            // under it.
             assert(lv_obj_get_width(button)==lv_obj_get_height(button));
             assert(lv_obj_get_width(button)>=48&&lv_obj_get_child_count(button)==1);
             lv_obj_t *card=lv_obj_get_parent(button);
-            assert(lv_obj_get_parent(fan)==card);
-            lv_area_t at_button,at_card,at_fan,at_title;
+            lv_area_t at_button,at_card,at_chart,at_time;
             lv_obj_get_coords(button,&at_button);lv_obj_get_coords(card,&at_card);
-            lv_obj_get_coords(fan,&at_fan);
-            lv_obj_get_coords(label(card,panel_text(TXT_HISTORY)),&at_title);
-            assert(at_card.x2-at_button.x2<=12&&at_button.y1-at_card.y1<=12);
+            assert(at_card.x2-at_button.x2<=12&&at_card.y2-at_button.y2<=12);
+            lv_obj_t *chart=NULL;
             for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
                 lv_obj_t *o=lv_obj_get_child(card,i);
+                if(lv_obj_check_type(o,&lv_chart_class))chart=o;
                 if(o==button)continue;
                 lv_area_t at;lv_obj_get_coords(o,&at);
-                assert(at.x2<at_button.x1||at.y1>at_button.y2);
+                assert(at.x2<at_button.x1||at.y2<at_button.y1);
             }
-            // The fan left of the button, its name on the line of the
-            // title, and its words whole.
-            assert(at_fan.x2<at_button.x1&&at_fan.y1==at_title.y1);
-            lv_obj_t *fan_words[2]={label(fan,panel_text(TXT_PC_GPU_FAN)),label(fan,speed)};
-            for(int i=0;i<2;i++){
+            // The chart at the top, and the time under it over the row.
+            assert(chart);
+            lv_obj_get_coords(chart,&at_chart);
+            assert(at_chart.y1-at_card.y1<=16);
+            char ago[16];
+            snprintf(ago,sizeof ago,"-%d %s",PANEL_HISTORY_MINUTES,panel_text(TXT_MINUTES));
+            lv_obj_get_coords(label(card,ago),&at_time);
+            assert(at_time.y1>at_chart.y2&&at_time.y2<at_button.y1);
+            // The legend: three dots and three names in one line under the
+            // chart, the first dot flush with its left edge, and one gap
+            // from each name to the next dot.
+            const char *names[PANEL_HISTORY_SERIES]={"CPU °C","GPU °C","GPU W"};
+            int32_t gap=-1,next=at_chart.x1;
+            for(int i=0;i<PANEL_HISTORY_SERIES;i++){
+                lv_obj_t *name=label(card,names[i]);
+                assert(name);
+                lv_obj_t *dot=lv_obj_get_child(card,lv_obj_get_index(name)-1);
+                lv_area_t at_name,at_dot;
+                lv_obj_get_coords(name,&at_name);lv_obj_get_coords(dot,&at_dot);
+                assert(lv_area_get_width(&at_dot)==10&&lv_area_get_height(&at_dot)==10);
+                assert(abs((at_name.y1+at_name.y2)/2-(at_button.y1+at_button.y2)/2)<=1);
+                assert(abs((at_dot.y1+at_dot.y2)/2-(at_name.y1+at_name.y2)/2)<=1);
+                assert(at_dot.x2<at_name.x1);
+                if(i==0)assert(at_dot.x1==next);
+                else if(gap<0)gap=at_dot.x1-next;
+                else assert(at_dot.x1-next==gap);
                 lv_point_t size;
-                lv_text_get_size(&size,lv_label_get_text(fan_words[i]),lv_obj_get_style_text_font(fan_words[i],0),
-                                 0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
-                assert(size.x<=lv_obj_get_width(fan_words[i]));
+                lv_text_get_size(&size,names[i],lv_obj_get_style_text_font(name,0),0,0,LV_COORD_MAX,
+                                 LV_TEXT_FLAG_NONE);
+                assert(size.x<=lv_obj_get_width(name));
+                next=at_name.x1+size.x;
             }
+            assert(gap>=16&&next<at_button.x1);
             // Off: grey, and a tap asks for on, at once.
             assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.muted);
             assert(rgb_of(lv_obj_get_style_border_color(button,0))==colours.edge);
@@ -2495,22 +2519,19 @@ int main(void)
             assert(!label(lv_screen_active(),panel_text(TXT_CONFIRM)));
             // The button changes when the status says so, and not before.
             assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.muted);
-            t.boost_on=true;t.pc.gpu_fan_rpm=2950;t.answers++;
+            t.boost_on=true;t.answers++;
             panel_ui_update(&t);
             assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.accent_text);
             assert(rgb_of(lv_obj_get_style_border_color(button,0))==colours.accent_text);
-            snprintf(speed,sizeof speed,panel_text(TXT_RPM),2950);
-            assert(label(fan,speed));
             lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
             assert(actions==2&&last_action==PANEL_GPU_BOOST_OFF);
             // A PC that does not answer: the button stays, grey and dim,
-            // and a tap sends nothing. The fan says "--".
+            // and a tap sends nothing.
             t.online=false;
             panel_ui_update(&t);
             assert(!lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
             assert(lv_obj_has_state(button,LV_STATE_DISABLED));
             assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.muted);
-            assert(label(fan,"--")&&!label(fan,speed));
             lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
             assert(actions==2);
             t.online=true;
