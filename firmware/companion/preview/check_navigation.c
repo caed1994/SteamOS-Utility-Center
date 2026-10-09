@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "lvgl.h"
+#include "src/misc/lv_area_private.h"
 #include "ui.h"
 #include "panel_taps.h"
 static unsigned actions, settings, sounds;
@@ -284,6 +285,66 @@ static void press_in(lv_obj_t *root,const char *text)
     assert(lv_obj_has_flag(b,LV_OBJ_FLAG_CLICKABLE));
     lv_obj_send_event(b,LV_EVENT_CLICKED,NULL);
 }
+// Each frame of a slide, drawn as the panel draws it: the band only beside
+// the page and never under it, and at the end the screen that a draw of
+// all of it shows. A frame that draws the band under the page draws that
+// place twice, and on the panel such a frame comes late.
+static uint32_t frame[480*480];
+static lv_area_t page_area;
+static unsigned band_draws,band_under;
+static void flush(lv_display_t *d,const lv_area_t *a,uint8_t *p){(void)a;(void)p;lv_display_flush_ready(d);}
+static void band_drawn(lv_event_t *e)
+{
+    lv_layer_t *layer=lv_event_get_layer(e);
+    lv_area_t both;
+    band_draws++;
+    if(lv_area_intersect(&both,&layer->_clip_area,&page_area))band_under++;
+}
+// Frames 10 ms apart until the page stands still or is gone.
+static void frames(lv_obj_t *page)
+{
+    lv_display_t *d=lv_display_get_default();
+    band_draws=band_under=0;
+    bool moving=true;
+    for(int i=0;i<100&&moving;i++){
+        lv_tick_inc(10);
+        lv_anim_refr_now();
+        moving=lv_obj_is_valid(page);
+        if(moving)lv_obj_get_coords(page,&page_area);
+        else page_area=(lv_area_t){0,0,-1,-1};
+        lv_refr_now(d);
+        moving=moving&&lv_anim_get(page,NULL);
+    }
+    assert(!moving);
+    static uint32_t shown[480*480];
+    memcpy(shown,frame,sizeof frame);
+    lv_obj_invalidate(lv_screen_active());
+    lv_refr_now(d);
+    assert(memcmp(shown,frame,sizeof frame)==0);
+}
+static void drawn_slides(void)
+{
+    lv_display_t *d=lv_display_get_default();
+    lv_display_set_color_format(d,LV_COLOR_FORMAT_XRGB8888);
+    lv_display_set_buffers(d,frame,NULL,sizeof frame,LV_DISPLAY_RENDER_MODE_DIRECT);
+    lv_display_set_flush_cb(d,flush);
+    lv_obj_t *band=find_band(lv_screen_active());assert(band);
+    lv_obj_add_event_cb(band,band_drawn,LV_EVENT_DRAW_MAIN_BEGIN,NULL);
+    lv_obj_invalidate(lv_screen_active());
+    lv_refr_now(d);
+    static void (*const opens[])(void)={panel_ui_settings_open,panel_ui_pads_open,
+                                        panel_ui_pc_open,panel_ui_self_open};
+    for(int i=0;i<4;i++){
+        opens[i]();
+        lv_obj_t *page=top();
+        frames(page);
+        assert(band_under==0);
+        assert(panel_ui_home());
+        frames(page);
+        assert(band_under==0&&band_draws>0);
+    }
+    lv_obj_remove_event_cb(band,band_drawn);
+}
 static void slides(void)
 {
     panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
@@ -361,6 +422,7 @@ static void slides(void)
     panel_ui_create(action,setting,sound,&english);
     settle();
     assert(!at("the PC"));
+    drawn_slides();
     panel_ui_slides(false);
 }
 int main(void)

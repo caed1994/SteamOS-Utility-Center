@@ -91,7 +91,7 @@ PC for its status over Wi-Fi and has no cable to the PC in normal use.
 | Keys | one task, every 15 ms; settle 20 ms; short press 40 to 1000 ms (`panel_key.c`, `panel_power.c`) |
 | Touch | GT911, read by LVGL every 15 ms; its INT line (EXIO6) is not used. Each place that takes a tap is 48 px each way, 44 at the edge of the screen (`BUTTON_REACH`, `check_touch`) |
 | Standby | a black cover with a clock (`panel_ui_sleep.c`), one draw a minute. The key standby turns Wi-Fi off |
-| Pages | settings, order, controllers, PC and panel slide in from the right and out again, 200 ms (`slide_in`, `slide_out`). The screen checks run with the slides off; `check_navigation` checks them |
+| Pages | settings, order, controllers, PC and panel slide in from the right in 250 ms and out again in 220 ms (`slide_in`, `slide_out`). A page is built hidden, and its slide starts after the build. A frame draws the band only beside the page (`slide_step`). The screen checks run with the slides off; `check_navigation` checks them and draws their frames |
 | Alarm clock | one alarm on the clock page (`panel_alarm.c`, NVS key `alarm`): weekdays or one time, snooze 5 min, rings 5 min. Both keys snooze, Off by touch only. The cover shows the next ring |
 | Settings | NVS namespace `panel`: Wi-Fi, server, token, page order, theme, accent, language and more |
 | Update | the PC offers `firmware/companion/prebuilt/` through `/v1/firmware`; two slots, boot on trial |

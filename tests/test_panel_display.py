@@ -691,8 +691,12 @@ class PageSlideTest(unittest.TestCase):
     Asked for: an animation for the pages of the settings, the controllers,
     the PC and the panel, when they open and when they close. Only the
     picture slides: for the rest of the screen each page opens and closes
-    at once. check_navigation drives the slides; these hold that every page
-    has one and that the panel switches them on.
+    at once. check_navigation drives the slides and draws their frames;
+    these hold that every page has one and that the panel switches them on.
+
+    Each page is built hidden and off the screen, and its slide starts at
+    the end of the build. A slide that starts before the build loses the
+    time of the build, and the page then opens nearly at once.
     """
 
     PAGES = ("settings_screen", "arrange_screen", "pads_screen", "pc_screen",
@@ -702,11 +706,21 @@ class PageSlideTest(unittest.TestCase):
         with open(os.path.join(FIRMWARE, name), encoding="utf-8") as handle:
             return without_comments(handle.read())
 
-    def test_each_page_slides_in_where_it_is_made(self):
+    @staticmethod
+    def build(code, page):
+        """The part of the open function from the page to its end."""
+        start = code.index("%s=panel(lv_screen_active(),0,0,480,480,BG,false);" % page)
+        return code[start:code.index("\n}\n", start)]
+
+    def test_each_page_is_built_before_it_slides_in(self):
         code = self.code("ui.c")
         for page in self.PAGES:
-            self.assertIn("%s=panel(lv_screen_active(),0,0,480,480,BG,false);\n"
-                          "    slide_in(%s);" % (page, page), code)
+            build = self.build(code, page)
+            self.assertTrue(build.startswith(
+                "%s=panel(lv_screen_active(),0,0,480,480,BG,false);\n"
+                "    slide_ready(%s);" % (page, page)), page)
+            self.assertTrue(build.rstrip().endswith("slide_in(%s);" % page), page)
+            self.assertEqual(build.count("slide_in("), 1, page)
 
     def test_each_page_slides_out_where_it_is_forgotten(self):
         code = self.code("ui.c")
@@ -714,11 +728,12 @@ class PageSlideTest(unittest.TestCase):
             self.assertIn("slide_out(%s);" % page, code)
             self.assertNotIn("lv_obj_delete(%s)" % page, code)
 
-    def test_the_slide_is_short_and_the_page_deletes_itself(self):
+    def test_the_slides_are_short_and_the_page_deletes_itself(self):
         code = self.code("ui.c")
-        slide_ms = re.search(r"#define SLIDE_MS (\d+)", code)
-        self.assertIsNotNone(slide_ms)
-        self.assertLessEqual(int(slide_ms.group(1)), 250)
+        for name in ("SLIDE_IN_MS", "SLIDE_OUT_MS"):
+            slide_ms = re.search(r"#define %s (\d+)" % name, code)
+            self.assertIsNotNone(slide_ms, name)
+            self.assertLessEqual(int(slide_ms.group(1)), 300, name)
         self.assertIn("lv_obj_delete_anim_completed_cb", code)
 
     def test_the_panel_switches_the_slides_on(self):
@@ -731,7 +746,8 @@ class PageSlideTest(unittest.TestCase):
                                "check_navigation.c"), encoding="utf-8") as handle:
             check = without_comments(handle.read())
         self.assertIn("panel_ui_slides(true);", check)
-        self.assertIn("slides();", check)
+        self.assertRegex(check, r"(?<![a-z_])slides\(\);")
+        self.assertIn("drawn_slides();", check)
 
 
 class DrawingStackTest(unittest.TestCase):

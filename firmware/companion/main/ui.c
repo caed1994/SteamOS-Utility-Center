@@ -302,31 +302,80 @@ static void set_shown(lv_obj_t *o,bool shown)
  *
  * Asked for: an animation for the pages of the settings, the controllers,
  * the PC and the panel. The slide moves the page and changes no pixel of
- * it, so a frame of it costs what a frame of the swipe of the band costs.
+ * it. A frame draws the page where it stands and the strip of the band
+ * that it left, and no place twice: see slide_step.
  *
  * For the rest of the screen a page opens and closes at once: its pointer
  * is set when it opens and forgotten when it closes. Only the picture
  * slides. main.c switches the slides on. The checks of the screen leave
  * them off and get each page at once where it ends, and check_navigation
  * switches them on to check the slides. */
-#define SLIDE_MS 200
+/* In a little slower than out: the eye follows what comes, and lets go of
+ * what goes. */
+#define SLIDE_IN_MS 250
+#define SLIDE_OUT_MS 220
 static bool slides;
 void panel_ui_slides(bool on){slides=on;}
-static void slide(lv_obj_t *page,int32_t from,int32_t to,lv_anim_path_cb_t path,bool then_delete)
+/* One step of a slide.
+ *
+ * lv_obj_set_x marks the place that the page leaves and the place that it
+ * reaches, and LVGL joins the two into one area. On the way out that area
+ * is wider than the page, and a frame then draws the band and the whole
+ * page over it. This marks the two apart: the page where it stands, which
+ * LVGL draws alone, and the strip of the band that the page left. */
+static void slide_step(void *var,int32_t x)
+{
+    lv_obj_t *page=var;
+    lv_display_t *display=lv_obj_get_display(page);
+    /* Anything else that waits for its layout gets it first, and marks what
+     * it changes as it always does. */
+    lv_obj_update_layout(page);
+    lv_area_t was,now;
+    lv_obj_get_coords(page,&was);
+    lv_display_enable_invalidation(display,false);
+    lv_obj_set_x(page,x);
+    lv_obj_update_layout(page);
+    lv_display_enable_invalidation(display,true);
+    lv_obj_get_coords(page,&now);
+    if(now.x1==was.x1)return;
+    lv_obj_invalidate(page);
+    if(now.x1>was.x1){
+        lv_area_t left={was.x1,was.y1,now.x1-1,was.y2};
+        lv_obj_invalidate_area(lv_obj_get_parent(page),&left);
+    }
+}
+static void slide(lv_obj_t *page,int32_t from,int32_t to,uint32_t ms,lv_anim_path_cb_t path,
+                  bool then_delete)
 {
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a,page);
-    lv_anim_set_exec_cb(&a,(lv_anim_exec_xcb_t)lv_obj_set_x);
+    lv_anim_set_exec_cb(&a,slide_step);
     lv_anim_set_values(&a,from,to);
-    lv_anim_set_duration(&a,SLIDE_MS);
+    lv_anim_set_duration(&a,ms);
     lv_anim_set_path_cb(&a,path);
     if(then_delete)lv_anim_set_completed_cb(&a,lv_obj_delete_anim_completed_cb);
     lv_anim_start(&a);
 }
+/* A new page waits off the screen and hidden while it is built. LVGL
+ * gives a new object its size where its parent starts, and only then
+ * moves it: a page that shows, at that moment, marks the whole screen,
+ * and the first frame of its slide draws the band again under it. */
+static void slide_ready(lv_obj_t *page)
+{
+    if(!slides||!page)return;
+    lv_obj_add_flag(page,LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(page,480);
+}
+/* At the end of the build. An animation counts its time from its start,
+ * and a slide that starts before the build loses the time of the build
+ * and opens the page nearly at once. */
 static void slide_in(lv_obj_t *page)
 {
-    if(slides&&page)slide(page,480,0,lv_anim_path_ease_out,false);
+    if(!slides||!page)return;
+    lv_obj_update_layout(page);
+    lv_obj_remove_flag(page,LV_OBJ_FLAG_HIDDEN);
+    slide(page,480,0,SLIDE_IN_MS,lv_anim_path_ease_out,false);
 }
 /* A page on its way out takes no press: everything on it is forgotten
  * already, and a button on it would act on nothing. */
@@ -343,7 +392,7 @@ static void slide_out(lv_obj_t *page)
     if(!slides){lv_obj_delete(page);return;}
     inert(page);
     lv_anim_delete(page,NULL);
-    slide(page,lv_obj_get_style_x(page,LV_PART_MAIN),480,lv_anim_path_ease_in,true);
+    slide(page,lv_obj_get_style_x(page,LV_PART_MAIN),480,SLIDE_OUT_MS,lv_anim_path_ease_in_out,true);
 }
 static lv_obj_t *panel(lv_obj_t *parent,int x,int y,int w,int h,uint32_t color,bool border)
 {
@@ -758,7 +807,7 @@ void panel_ui_arrange_open(void)
 {
     if(arrange_screen||!settings_screen)return;
     arrange_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
-    slide_in(arrange_screen);
+    slide_ready(arrange_screen);
     button(arrange_screen,panel_text(TXT_BACK),12,8,112,44,arrange_close,0);
     text_at(arrange_screen,panel_text(TXT_PAGES_TITLE),136,20,320,&panel_font_20,TEXT);
     line(arrange_screen,0,62,480,1);
@@ -779,6 +828,7 @@ void panel_ui_arrange_open(void)
         arrange_down[place]=button(row,LV_SYMBOL_DOWN,378,button_y,48,44,arrange_move,place*2+1);
     }
     arrange_show();
+    slide_in(arrange_screen);
 }
 static void arrange_clicked(lv_event_t *e){(void)e;feedback();panel_ui_arrange_open();}
 /* The card of the appearance: as high as the card of the sound under it.
@@ -797,7 +847,7 @@ void panel_ui_settings_open(void)
     if(settings_screen)return;
     last_state_valid=false;
     settings_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
-    slide_in(settings_screen);
+    slide_ready(settings_screen);
     button(settings_screen,panel_text(TXT_BACK),12,8,112,44,settings_close,0);
     text_at(settings_screen,panel_text(TXT_SETTINGS_TITLE),136,20,200,&panel_font_20,TEXT);
     // The name of the other language, written in that language. Somebody
@@ -906,6 +956,7 @@ void panel_ui_settings_open(void)
     text_at(link,panel_text(TXT_SETUP_WHAT),20,44,240,&panel_font_12,MUTED);
     button(link,panel_text(TXT_SETUP),276,20,144,44,clicked,PANEL_SETUP);
     text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,1048,440,&panel_font_12,MUTED);
+    slide_in(settings_screen);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
 /* What a controller says in the head and on its card: the battery, the
@@ -1037,7 +1088,7 @@ void panel_ui_pads_open(void)
 {
     if(pads_screen||pc_screen||self_screen||settings_screen||setup_screen)return;
     pads_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
-    slide_in(pads_screen);
+    slide_ready(pads_screen);
     button(pads_screen,panel_text(TXT_BACK),12,8,112,44,pads_close,0);
     text_at(pads_screen,panel_text(TXT_CONTROLLERS),136,20,200,&panel_font_20,TEXT);
     line(pads_screen,0,62,480,1);
@@ -1066,6 +1117,7 @@ void panel_ui_pads_open(void)
     /* What the last update said, at once. panel_ui_update draws nothing
      * for a state it saw before, so the page waits for no change. */
     if(last_state_valid)pads_show(&last_state);
+    slide_in(pads_screen);
 }
 static void pads_clicked(lv_event_t *e){(void)e;feedback();panel_ui_pads_open();}
 /* A place of the head that opens a page: no face of its own, and a shade
@@ -1164,7 +1216,7 @@ void panel_ui_pc_open(void)
 {
     if(pc_screen||pads_screen||self_screen||settings_screen||setup_screen)return;
     pc_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
-    slide_in(pc_screen);
+    slide_ready(pc_screen);
     button(pc_screen,panel_text(TXT_BACK),12,8,112,44,pc_close,0);
     text_at(pc_screen,panel_text(TXT_PC_DETAILS),136,20,320,&panel_font_20,TEXT);
     line(pc_screen,0,62,480,1);
@@ -1201,6 +1253,7 @@ void panel_ui_pc_open(void)
         top+=height+PC_CARD_GAP;
     }
     if(last_state_valid)pc_show(&last_state);
+    slide_in(pc_screen);
 }
 static void pc_clicked(lv_event_t *e){(void)e;feedback();panel_ui_pc_open();}
 uint32_t panel_sensor_key(const char *id)
@@ -1687,7 +1740,7 @@ void panel_ui_self_open(void)
     if(self_screen||pc_screen||pads_screen||settings_screen||setup_screen||sensor_layer||look_layer
        ||alarm_clock_layer)return;
     self_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
-    slide_in(self_screen);
+    slide_ready(self_screen);
     button(self_screen,panel_text(TXT_BACK),12,8,112,44,self_close,0);
     text_at(self_screen,panel_text(TXT_SELF_TITLE),136,20,320,&panel_font_20,TEXT);
     line(self_screen,0,62,480,1);
@@ -1760,6 +1813,7 @@ void panel_ui_self_open(void)
     panel_taps_hold(&panel_taps,true);
     self_taps_show();
     if(last_state_valid)self_show(&last_state);
+    slide_in(self_screen);
 }
 static void self_clicked(lv_event_t *e){(void)e;feedback();panel_ui_self_open();}
 /* The screen of an update that writes, over everything, with its share
