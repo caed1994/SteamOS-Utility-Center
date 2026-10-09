@@ -611,6 +611,21 @@ static void settings_forget(void)
     slide_out(settings_screen);
     settings_drop();
 }
+/* The screen built again, for new words or new colours, with the person
+ * where they were: on the settings, and as far down them as they had
+ * scrolled. Nothing opens or closes for them, so no page slides. */
+static void settings_again(void)
+{
+    int32_t scrolled=settings_screen?lv_obj_get_scroll_y(settings_screen):0;
+    bool sliding=slides;
+    slides=false;
+    settings_forget();
+    panel_ui_create(send_action,save_setting,play_sound,&local);
+    panel_ui_settings_open();
+    slides=sliding;
+    lv_obj_update_layout(settings_screen);
+    lv_obj_scroll_to_y(settings_screen,scrolled,LV_ANIM_OFF);
+}
 static void language_clicked(lv_event_t *e)
 {
     (void)e;feedback();
@@ -619,27 +634,14 @@ static void language_clicked(lv_event_t *e)
     if(save_setting)save_setting(PANEL_LANGUAGE,(int)next,true);
     // Both screens are built one time, with the words of the language that
     // was current then. Every one of them is now wrong, so both are built
-    // again. The person stays where they were, on the settings page.
-    settings_forget();
-    panel_ui_create(send_action,save_setting,play_sound,&local);
-    panel_ui_settings_open();
+    // again.
+    settings_again();
 }
 /* The colours of the screen, from the card of the appearance.
  *
  * Every object took its colours when it was built, so a new theme or a new
- * accent builds the screen again, the way a new language does. The person
- * stays where they were: on the settings, and as far down them as they had
- * scrolled, which is where the card is. A tap on the choice that is there
- * already changes nothing and builds nothing. */
-static void appearance_again(void)
-{
-    int32_t scrolled=settings_screen?lv_obj_get_scroll_y(settings_screen):0;
-    settings_forget();
-    panel_ui_create(send_action,save_setting,play_sound,&local);
-    panel_ui_settings_open();
-    lv_obj_update_layout(settings_screen);
-    lv_obj_scroll_to_y(settings_screen,scrolled,LV_ANIM_OFF);
-}
+ * accent builds the screen again, the way a new language does. A tap on the
+ * choice that is there already changes nothing and builds nothing. */
 static void theme_clicked(lv_event_t *e)
 {
     panel_theme_t theme=(panel_theme_t)(intptr_t)lv_event_get_user_data(e);
@@ -647,7 +649,7 @@ static void theme_clicked(lv_event_t *e)
     if(theme==local.theme)return;
     local.theme=theme;
     if(save_setting)save_setting(PANEL_THEME,(int)theme,true);
-    appearance_again();
+    settings_again();
 }
 static void accent_clicked(lv_event_t *e)
 {
@@ -656,7 +658,7 @@ static void accent_clicked(lv_event_t *e)
     if(accent==local.accent)return;
     local.accent=accent;
     if(save_setting)save_setting(PANEL_ACCENT,(int)accent,true);
-    appearance_again();
+    settings_again();
 }
 static void settings_close(lv_event_t *e)
 {
@@ -901,7 +903,7 @@ void panel_ui_settings_open(void)
     /* The colours of the screen, under the display they are on: the
      * theme, and the accent in the eight colours of panel_theme.h. Each
      * colour is a round button in the tone it has in this theme, and the
-     * one chosen has a tick and a ring. See appearance_again for a tap. */
+     * one chosen has a tick and a ring. See settings_again for a tap. */
     lv_obj_t *appearance=panel(settings_screen,20,392,440,APPEARANCE_HIGH,CARD,true);
     text_at(appearance,panel_text(TXT_APPEARANCE),20,16,248,&panel_font_18,TEXT);
     text_at(appearance,panel_text(TXT_APPEARANCE_WHAT),20,44,248,&panel_font_12,MUTED);

@@ -345,6 +345,43 @@ static void drawn_slides(void)
     }
     lv_obj_remove_event_cb(band,band_drawn);
 }
+// A new theme, accent or language builds the screen again, and the
+// settings stand where they stood: no page slides out, and none slides in.
+static bool sliding(void)
+{
+    for(uint32_t i=0;i<lv_obj_get_child_count(lv_screen_active());i++)
+        if(lv_anim_get(lv_obj_get_child(lv_screen_active(),i),NULL))return true;
+    return false;
+}
+static void in_place(uint32_t base)
+{
+    assert(at("the settings")&&x_of(top())==0&&!sliding());
+    assert(lv_obj_get_child_count(lv_screen_active())==base+1);
+}
+static void rebuilt_in_place(void)
+{
+    panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+    panel_ui_create(action,setting,sound,&english);
+    uint32_t base=lv_obj_get_child_count(lv_screen_active());
+    panel_ui_settings_open();settle();
+    press_in(top(),panel_text(TXT_THEME_LIGHT));
+    in_place(base);
+    // An accent: a round button of the card with nothing in it, which is
+    // one that is not chosen.
+    lv_obj_t *card=lv_obj_get_parent(lv_obj_get_parent(label(top(),panel_text(TXT_THEME_DARK))));
+    lv_obj_t *swatch=NULL;
+    for(uint32_t i=0;i<lv_obj_get_child_count(card)&&!swatch;i++){
+        lv_obj_t *o=lv_obj_get_child(card,i);
+        if(lv_obj_check_type(o,&lv_button_class)&&lv_obj_get_child_count(o)==0)swatch=o;
+    }
+    assert(swatch);
+    lv_obj_send_event(swatch,LV_EVENT_CLICKED,NULL);
+    in_place(base);
+    press_in(top(),panel_language_name(PANEL_GERMAN));
+    in_place(base);
+    // A clean screen in English for what comes after.
+    panel_ui_create(action,setting,sound,&english);
+}
 static void slides(void)
 {
     panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
@@ -423,6 +460,7 @@ static void slides(void)
     settle();
     assert(!at("the PC"));
     drawn_slides();
+    rebuilt_in_place();
     panel_ui_slides(false);
 }
 int main(void)

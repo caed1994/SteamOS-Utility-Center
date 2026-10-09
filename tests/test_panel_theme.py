@@ -306,7 +306,7 @@ class StorageTest(unittest.TestCase):
             self.assertIsNotNone(body, handler)
             self.assertIn("local.%s=%s;" % (field, field), body.group(1))
             self.assertIn("save_setting(%s,(int)%s,true)" % (key, field), body.group(1))
-            self.assertIn("appearance_again();", body.group(1))
+            self.assertIn("settings_again();", body.group(1))
 
 
 class ScreenTest(unittest.TestCase):
