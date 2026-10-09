@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 caed1994
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""The Wall Panel page: the service, the secret, and the board.
+"""The Steam Companion page: the service, the secret, and the board.
 
 The panel is a Waveshare ESP32-S3 with a touch screen, somewhere on a wall.
 It reaches this machine over the network and nothing else, so this page has

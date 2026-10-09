@@ -5747,7 +5747,7 @@ class CompanionPageTest(unittest.TestCase):
 
     def test_the_page_is_there_and_named(self):
         panel = self._panel()
-        self.assertEqual(str(panel.section_title.cget("text")), "Wall Panel")
+        self.assertEqual(str(panel.section_title.cget("text")), "Steam Companion")
 
     def test_with_no_image_the_button_runs_nothing(self):
         """The one that matters. A flash from an incomplete build leaves a

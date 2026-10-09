@@ -487,8 +487,9 @@ SECTIONS = (
     ("cec", "HDMI CEC Mods", "screen"),
     # The panel on the wall. It is a device of this machine like the two
     # above, and it is not a page of settings: everything on it is a state
-    # of the machine or a step a person takes one time.
-    ("companion", "Wall Panel", "screen"),
+    # of the machine or a step a person takes one time. Its name is Steam
+    # Companion, and its symbol is the front of a Companion Cube.
+    ("companion", "Steam Companion", "cube"),
     # It was "Keyboard Layout". The drives are here too now, and both are
     # settings of the machine rather than of the bar. The key stays "keyboard",
     # because the code refers to a section by that key and a rename of it is a
@@ -1519,10 +1520,10 @@ class SidebarEntry:
     def _draw_icon(self, name):
         """Draws a small symbol from simple shapes.
 
-        There are four shapes and one letter, and none of them is a font
-        glyph. The symbols for these subjects are a lightning bolt and a
-        television, and they are in emoji fonts. A machine can have no such
-        font. An absent glyph gives an empty box beside each entry.
+        None of them is a font glyph. The symbols for these subjects are a
+        lightning bolt and a television, and they are in emoji fonts. A
+        machine can have no such font. An absent glyph gives an empty box
+        beside each entry.
         """
         left, middle = SIDEBAR_ICON_X, SIDEBAR_ENTRY_HEIGHT // 2
         colour = self.roles["on_surface_variant"]
@@ -1558,6 +1559,27 @@ class SidebarEntry:
                                           middle + 8, fill=colour, width=1.6))
             solid(self.canvas.create_line(left + 9, middle + 4, left + 9,
                                           middle + 8, fill=colour, width=1.6))
+        elif name == "cube":                    # a Companion Cube
+            # Its front: a pad at each corner, the cross between the pads,
+            # and a heart in the middle.
+            drawn(self.canvas.create_rectangle(left, middle - 9, left + 18,
+                                               middle + 9, outline=colour,
+                                               width=1.6))
+            for across in (left, left + 13):
+                for down in (middle - 9, middle + 4):
+                    solid(self.canvas.create_rectangle(
+                        across, down, across + 5, down + 5, outline="",
+                        fill=colour))
+            # A spline through these points. A point that is there two
+            # times is a corner: the tip and the dip of the heart.
+            heart = ((0, 2.6), (0, 2.6), (-2.8, -0.3), (-2.6, -2.4),
+                     (-1.2, -2.8), (0, -1.4), (0, -1.4), (1.2, -2.8),
+                     (2.6, -2.4), (2.8, -0.3))
+            points = []
+            for across, down in heart:
+                points += [left + 9 + across * 1.45, middle + 0.3 + down * 1.45]
+            solid(self.canvas.create_polygon(*points, smooth=True, outline="",
+                                             fill=colour))
         elif name == "keys":                    # a keyboard
             drawn(self.canvas.create_rectangle(left, middle - 6, left + 18,
                                                middle + 6, outline=colour,

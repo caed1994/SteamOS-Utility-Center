@@ -208,7 +208,7 @@ class SystemPage:
         explain = ttk.Label(
             row,
             text="Tells the wired card to listen while this machine is off, "
-                 "so the wall panel can wake it. It needs a cable: waking "
+                 "so the Steam Companion can wake it. It needs a cable: waking "
                  "over radio is not something these cards do.",
             style="Muted.TLabel", justify="left",
             wraplength=CARD_WRAP - CEC_INDENT)

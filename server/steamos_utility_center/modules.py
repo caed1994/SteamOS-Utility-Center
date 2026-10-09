@@ -108,7 +108,7 @@ SAYS = {
         "needs": "a CEC adapter, and a television that answers on it.",
     },
     COMPANION: {
-        "title": "Wall panel",
+        "title": "Steam Companion",
         "does": "Answers a Smart 86 Box on the network. The panel shows the "
                 "battery of your controller, the volume and the two "
                 "temperatures, and its buttons reach the volume, standby, "
