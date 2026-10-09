@@ -465,6 +465,7 @@ class TelemetryTest(unittest.TestCase):
                          {"cpu_c": None, "gpu_c": None, "gpu_w": None,
                           "gpu_load": None, "vram_used": None,
                           "vram_total": None, "gpu_mhz": None,
+                          "gpu_mhz_max": None,
                           "cpu_sensors": [], "gpu_sensors": []})
 
     # The board: an RX 9070 XT at work, with 9.8 of 16 GB in use and the
@@ -474,14 +475,33 @@ class TelemetryTest(unittest.TestCase):
             "freq2_input": 1258000000, "freq2_label": "mclk",
             "device/gpu_busy_percent": 87,
             "device/mem_info_vram_used": 10522460160,
-            "device/mem_info_vram_total": 17163091968}
+            "device/mem_info_vram_total": 17163091968,
+            "device/pp_dpm_sclk": "0: 500Mhz\n1: 2450Mhz *\n2: 2970Mhz"}
 
     def test_the_load_the_memory_and_the_clock_of_the_card(self):
         said = companion.telemetry(self.machine([("amdgpu", self.CARD)]))
         self.assertEqual({key: said[key] for key in
-                          ("gpu_load", "vram_used", "vram_total", "gpu_mhz")},
+                          ("gpu_load", "vram_used", "vram_total", "gpu_mhz",
+                           "gpu_mhz_max")},
                          {"gpu_load": 87, "vram_used": 10522460160,
-                          "vram_total": 17163091968, "gpu_mhz": 2450})
+                          "vram_total": 17163091968, "gpu_mhz": 2450,
+                          "gpu_mhz_max": 2970})
+
+    def test_the_top_of_the_clock_is_its_highest_level(self):
+        """The level in use has a star, and a card in deep sleep reports a
+        level "S" under the numbered ones. Neither changes the top."""
+        levels = "S: 19Mhz\n0: 500Mhz *\n1: 3100Mhz\n2: 2615Mhz"
+        card = dict(self.CARD, **{"device/pp_dpm_sclk": levels})
+        said = companion.telemetry(self.machine([("amdgpu", card)]))
+        self.assertEqual(said["gpu_mhz_max"], 3100)
+        for levels in ("", "S: 19Mhz *", "0: fast"):
+            card = dict(self.CARD, **{"device/pp_dpm_sclk": levels})
+            said = companion.telemetry(self.machine([("amdgpu", card)]))
+            self.assertIsNone(said["gpu_mhz_max"], levels)
+        card = {key: value for key, value in self.CARD.items()
+                if key != "device/pp_dpm_sclk"}
+        said = companion.telemetry(self.machine([("amdgpu", card)]))
+        self.assertIsNone(said["gpu_mhz_max"])
 
     def test_they_come_from_the_card_and_not_the_graphics_part(self):
         """The Ryzen has its own amdgpu chip, busy with nothing. The values
@@ -509,11 +529,13 @@ class TelemetryTest(unittest.TestCase):
     def test_what_cannot_be_is_no_reading(self):
         card = dict(self.CARD, **{"device/gpu_busy_percent": 140,
                                   "device/mem_info_vram_used": 17163091969,
-                                  "freq1_input": 20000000000})
+                                  "freq1_input": 20000000000,
+                                  "device/pp_dpm_sclk": "0: 20000Mhz"})
         said = companion.telemetry(self.machine([("amdgpu", card)]))
         self.assertEqual((said["gpu_load"], said["vram_used"],
-                          said["vram_total"], said["gpu_mhz"]),
-                         (None, None, None, None))
+                          said["vram_total"], said["gpu_mhz"],
+                          said["gpu_mhz_max"]),
+                         (None, None, None, None, None))
 
     def test_a_reading_outside_the_possible_is_no_reading(self):
         root = self.machine([("k10temp", {"temp1_input": 4000000})])

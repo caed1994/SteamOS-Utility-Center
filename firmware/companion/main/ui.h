@@ -158,10 +158,10 @@ typedef struct {
      * worse than no button. */
     bool can_wake;
     int volume, cpu_temp, gpu_temp, gpu_watts;
-    /* The rest of the card, for its page: how busy it is in per cent and
-     * its clock in MHz, or -1; its memory in bytes, and a total of nought
-     * for none. */
-    int gpu_load, gpu_mhz;
+    /* The rest of the card, for its page: how busy it is in per cent, its
+     * clock and the highest level of its clock in MHz, or -1; its memory
+     * in bytes, and a total of nought for none. */
+    int gpu_load, gpu_mhz, gpu_mhz_max;
     uint64_t vram_used, vram_total;
     /* Cooling Boost: boost_here where the PC has LACT with a card in it,
      * and boost_on where the boost has the fan. A PC without LACT, and a

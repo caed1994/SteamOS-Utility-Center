@@ -951,6 +951,7 @@ static int request(const char *path, const char *body, int wait_ms)
      * an int, so it is read off the double, both or neither. */
     state.gpu_load=metric(telemetry,"gpu_load",100);
     state.gpu_mhz=metric(telemetry,"gpu_mhz",10000);
+    state.gpu_mhz_max=metric(telemetry,"gpu_mhz_max",10000);
     cJSON *vram_used=cJSON_GetObjectItemCaseSensitive(telemetry,"vram_used");
     cJSON *vram_total=cJSON_GetObjectItemCaseSensitive(telemetry,"vram_total");
     bool vram=cJSON_IsNumber(vram_used)&&cJSON_IsNumber(vram_total)&&vram_total->valuedouble>0
@@ -1629,7 +1630,7 @@ void app_main(void)
     actions=xQueueCreate(1,sizeof(panel_action_t));
     assert(lock && actions);
     state.volume=-1; state.cpu_temp=-1; state.gpu_temp=-1; state.gpu_watts=-1;
-    state.gpu_load=-1; state.gpu_mhz=-1;
+    state.gpu_load=-1; state.gpu_mhz=-1; state.gpu_mhz_max=-1;
     state.esp_detail=(panel_power_detail_t){.vbat_mv=-1,.vbus_mv=-1,.vsys_mv=-1,
         .die_c=PANEL_NO_DEGREES,.phase=-1,.charge_ma=-1,.charge_mv=-1,.input_ma=-1};
     state.setup=config.ssid[0]==0;

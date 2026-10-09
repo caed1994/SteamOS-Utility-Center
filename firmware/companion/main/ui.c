@@ -87,12 +87,15 @@ static uint32_t hold_counted;
 static panel_history_t *history;
 static uint32_t history_answers,history_drawn;
 static bool history_stale=true;
-static lv_obj_t *gpu_load_value,*gpu_load_track,*gpu_load_bar,*vram_value,*vram_track,*vram_bar,*gpu_clock_value;
-/* Cooling Boost, under the clock of the card: the field that takes the tap,
- * and the track and the knob of its switch. boost_shown is what they show,
- * -1 for nothing yet, 0 off and 1 on, so that only a change goes to LVGL. */
-static lv_obj_t *boost_field,*boost_track,*boost_knob;
+static lv_obj_t *gpu_load_value,*gpu_load_track,*gpu_load_bar,*vram_value,*vram_track,*vram_bar;
+static lv_obj_t *gpu_clock_value,*gpu_clock_track,*gpu_clock_bar;
+/* Cooling Boost, in the top right corner of the history: the button and
+ * the snowflake in it. boost_shown is what they show, -1 for nothing yet,
+ * 0 off and 1 on, so that only a change goes to LVGL. */
+static lv_obj_t *boost_button,*boost_icon;
 static int boost_shown=-1;
+/* The fan of the card, beside the button: its name and its speed. */
+static lv_obj_t *gpu_fan,*gpu_fan_value;
 static lv_obj_t *history_chart,*history_empty,*history_axis[4];
 static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
 /* The colours of the three curves, and the legend that names them: the
@@ -100,29 +103,32 @@ static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
  * apart from each other. Not in the accent, which can be the orange of the
  * card. Each theme has its own three: see panel_theme.h. */
 #define CURVE_COLOURS {palette.curve_cpu,palette.curve_gpu,palette.curve_watts}
-/* The card of the GPU: three columns, each a name, a value and, for the
- * load and the memory, a bar. The room of each value is its longest at
- * 24 px, which check_pages measures: "100 %", the 162 px of "23.9 / 24.0
- * GB" and "2450 MHz". The chart under it: its place in its card, with the
- * degrees on the left of it and the watts on the right. */
-#define GPU_COLUMN_X0 16
-#define GPU_COLUMN_X1 146
-#define GPU_COLUMN_X2 326
+/* The card of the GPU: three columns at one pitch, each a name, a value
+ * and a bar, and the three in the middle of the bar. Inside its border the
+ * card is 458 wide, and the bars stand 16 from each side of that. The
+ * value of the middle column is the longest, the 162 px of "23.9 / 24.0
+ * GB" at 24 px, and has the most room. The rooms of the outer two, for
+ * "100 %" and the 126 px of "4000 MHz", end 8 from the side. check_pages
+ * measures all three. */
+#define GPU_BAR_X 16
 #define GPU_BAR_WIDTH 116
-/* The row of Cooling Boost under the clock of the card: from 62 down to the
- * border, around the line of the bars at 72, and its switch. "Cooling Boost"
- * takes 85 of the 126 of the column in the 12 point font, and the switch
- * takes the rest but a gap of 5. */
-#define BOOST_Y 62
-#define BOOST_HEIGHT 30
-#define BOOST_TRACK_WIDTH 36
-#define BOOST_TRACK_HEIGHT 20
-#define BOOST_KNOB_OFF 2
-#define BOOST_KNOB_ON (BOOST_TRACK_WIDTH-BOOST_TRACK_HEIGHT+2)
-/* The row is 30 high and stands 3 above the foot of its card, which stops
- * a press below that. So the room past its edges is above it: 15 there
- * and 3 below are 48. */
-#define BOOST_REACH 15
+#define GPU_PITCH 155
+#define GPU_ROOM_SIDE 132
+#define GPU_ROOM_MIDDLE 168
+_Static_assert(2*GPU_BAR_X+2*GPU_PITCH+GPU_BAR_WIDTH==460-2,"the bars 16 from each side of the card");
+_Static_assert(GPU_BAR_X+GPU_BAR_WIDTH/2-GPU_ROOM_SIDE/2==8,"the outer rooms 8 from the side");
+/* Cooling Boost: a square in the top right corner of the history, as the
+ * alarm clock has on the clock page. The fan of the card stands left of
+ * it: its name on the line of the title of the card, and its speed under
+ * the name. Its room holds the 98 px of "4000 U/min". The chart under
+ * them: its place in its card, with the degrees on the left of it and the
+ * watts on the right. */
+#define HISTORY_TITLE_Y 14
+#define BOOST_SIZE 52
+#define BOOST_X (460-10-BOOST_SIZE)
+#define BOOST_Y 10
+#define GPU_FAN_ROOM 98
+#define GPU_FAN_X (BOOST_X-12-GPU_FAN_ROOM)
 #define CHART_X 52
 #define CHART_Y 66
 #define CHART_WIDTH 356
@@ -1335,32 +1341,28 @@ static void history_show(void)
     else set_shown(history_empty,true);
     lv_chart_refresh(history_chart);
 }
-/* The load, the memory and the clock of the card. "--" where the
- * service sent nothing, as on the page of the PC, and for all of them
- * while the PC is gone: the last reading would read as current. */
-/* The switch of Cooling Boost: there where the PC has LACT with a card, as
- * the last answer said, and usable while the PC answers. On is blue with the
- * knob at the right, as the switch of the audio. */
+/* The button of Cooling Boost: there where the PC has LACT with a card, as
+ * the last answer said, and usable while the PC answers. On, the snowflake
+ * and the edge of the button are in the accent. Off, and while the PC is
+ * gone, they are grey. */
 static void boost_show(const panel_state_t *s)
 {
-    if(!boost_field)return;
-    if(s->boost_here==lv_obj_has_flag(boost_field,LV_OBJ_FLAG_HIDDEN)){
-        if(s->boost_here)set_shown(boost_field,true);
-        else set_shown(boost_field,false);
-    }
-    if(s->online==lv_obj_has_state(boost_field,LV_STATE_DISABLED)){
-        if(s->online)lv_obj_remove_state(boost_field,LV_STATE_DISABLED);
-        else lv_obj_add_state(boost_field,LV_STATE_DISABLED);
+    if(!boost_button)return;
+    set_shown(boost_button,s->boost_here);
+    if(s->online==lv_obj_has_state(boost_button,LV_STATE_DISABLED)){
+        if(s->online)lv_obj_remove_state(boost_button,LV_STATE_DISABLED);
+        else lv_obj_add_state(boost_button,LV_STATE_DISABLED);
     }
     int on=s->online&&s->boost_on;
     if(on==boost_shown)return;
     boost_shown=on;
-    set_bg(boost_track,on?ACCENT:EDGE);
-    lv_obj_set_x(boost_knob,on?BOOST_KNOB_ON:BOOST_KNOB_OFF);
+    lv_obj_set_style_image_recolor(boost_icon,lv_color_hex(on?ACCENT_TEXT:MUTED),0);
+    lv_obj_set_style_border_color(boost_button,lv_color_hex(on?ACCENT_TEXT:EDGE),0);
 }
-/* A tap asks for the other state than the one the switch shows. The switch
- * moves when the next status says so, which comes at once after the press:
- * a switch that moved before the PC took it would show a fan that is not.
+/* A tap asks for the other state than the one the button shows. The button
+ * changes when the next status says so, which comes at once after the
+ * press: a button that changed before the PC took it would show a fan that
+ * is not.
  *
  * Not through clicked, whose range asks first and holds these two: a fan at
  * full speed interrupts nothing. */
@@ -1371,6 +1373,10 @@ static void boost_clicked(lv_event_t *e)
     feedback();
     if(send_action)send_action(last_state.boost_on?PANEL_GPU_BOOST_OFF:PANEL_GPU_BOOST_ON);
 }
+/* The load, the memory and the clock of the card, and the fan of it. "--"
+ * where the service sent nothing, as on the page of the PC, and for all
+ * of them while the PC is gone: the last reading would read as current.
+ * The bar of the clock is its share of the highest level of the clock. */
 static void card_show(const panel_state_t *s)
 {
     if(!gpu_load_value)return;
@@ -1399,6 +1405,17 @@ static void card_show(const panel_state_t *s)
     }
     if(s->online&&s->gpu_mhz>=0)set_textf(gpu_clock_value,"%d MHz",s->gpu_mhz);
     else set_text(gpu_clock_value,"--");
+    if(s->online&&s->gpu_mhz>=0&&s->gpu_mhz_max>0){
+        int mhz=s->gpu_mhz>s->gpu_mhz_max?s->gpu_mhz_max:s->gpu_mhz;
+        set_shown(gpu_clock_track,true);
+        lv_obj_set_width(gpu_clock_bar,GPU_BAR_WIDTH*mhz/s->gpu_mhz_max);
+    }else{
+        set_shown(gpu_clock_track,false);
+    }
+    /* The fan where the PC reads one on the card. */
+    set_shown(gpu_fan,s->pc.gpu_fan_rpm>=0);
+    if(s->online&&s->pc.gpu_fan_rpm>=0)set_textf(gpu_fan_value,panel_text(TXT_RPM),s->pc.gpu_fan_rpm);
+    else set_text(gpu_fan_value,"--");
     boost_show(s);
 }
 static void sensor_close(void){if(sensor_layer){lv_obj_delete(sensor_layer);sensor_layer=NULL;}}
@@ -2793,8 +2810,9 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     timer_go=NULL;timer_go_label=NULL;timer_reset=NULL;alarm_layer=NULL;
     alarm_clock_button=NULL;alarm_clock_icon=NULL;alarm_clock_ring_layer=NULL;alarm_clock_forget();
     gpu_load_value=NULL;gpu_load_track=NULL;gpu_load_bar=NULL;
-    vram_value=NULL;vram_track=NULL;vram_bar=NULL;gpu_clock_value=NULL;
-    boost_field=NULL;boost_track=NULL;boost_knob=NULL;boost_shown=-1;
+    vram_value=NULL;vram_track=NULL;vram_bar=NULL;
+    gpu_clock_value=NULL;gpu_clock_track=NULL;gpu_clock_bar=NULL;
+    boost_button=NULL;boost_icon=NULL;boost_shown=-1;gpu_fan=NULL;gpu_fan_value=NULL;
     history_chart=NULL;history_empty=NULL;
     for(int i=0;i<4;i++)history_axis[i]=NULL;
     for(int i=0;i<PANEL_HISTORY_SERIES;i++)history_series[i]=NULL;
@@ -3000,24 +3018,23 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     if(alarm_clock.phase==PANEL_ALARM_RINGING)alarm_clock_ring_show();
     /* The fifth page: the card, and the history under it.
      *
-     * Three columns over the card: its load and its memory, each with a
-     * bar, and its clock. Under them the history of the two temperatures
-     * and the power, with the degrees on the left and the watts on the
-     * right, and the choice of the window over it. */
+     * Three columns over the card: its load, its memory and its clock,
+     * each with a bar. Under them the history of the two temperatures and
+     * the power, with the degrees on the left and the watts on the right,
+     * and Cooling Boost and the fan of the card over it. */
     lv_obj_t *gpu_card=panel(page[4],10,0,460,96,CARD,true);
     const panel_text_id_t gpu_names[3]={TXT_GPU_LOAD,TXT_GPU_VRAM,TXT_GPU_CLOCK};
-    const int gpu_x[3]={GPU_COLUMN_X0,GPU_COLUMN_X1,GPU_COLUMN_X2};
-    const int gpu_room[3]={GPU_COLUMN_X1-GPU_COLUMN_X0-12,GPU_COLUMN_X2-GPU_COLUMN_X1-10,460-8-GPU_COLUMN_X2};
     lv_obj_t *gpu_values[3];
+    lv_obj_t **tracks[3]={&gpu_load_track,&vram_track,&gpu_clock_track};
+    lv_obj_t **bars[3]={&gpu_load_bar,&vram_bar,&gpu_clock_bar};
     for(int i=0;i<3;i++){
-        text_at(gpu_card,panel_text(gpu_names[i]),gpu_x[i],12,gpu_room[i],&panel_font_14,MUTED);
-        gpu_values[i]=text_at(gpu_card,"--",gpu_x[i],34,gpu_room[i],&panel_font_24,TEXT);
+        int bar_x=GPU_BAR_X+i*GPU_PITCH,room=i==1?GPU_ROOM_MIDDLE:GPU_ROOM_SIDE;
+        int text_x=bar_x+GPU_BAR_WIDTH/2-room/2;
+        center_text(text_at(gpu_card,panel_text(gpu_names[i]),text_x,12,room,&panel_font_14,MUTED));
+        gpu_values[i]=text_at(gpu_card,"--",text_x,34,room,&panel_font_24,TEXT);
         lv_obj_set_height(gpu_values[i],lv_font_get_line_height(&panel_font_24));
-    }
-    gpu_load_value=gpu_values[0];vram_value=gpu_values[1];gpu_clock_value=gpu_values[2];
-    lv_obj_t **tracks[2]={&gpu_load_track,&vram_track},**bars[2]={&gpu_load_bar,&vram_bar};
-    for(int i=0;i<2;i++){
-        *tracks[i]=panel(gpu_card,gpu_x[i],72,GPU_BAR_WIDTH,8,EDGE,false);
+        center_text(gpu_values[i]);
+        *tracks[i]=panel(gpu_card,bar_x,72,GPU_BAR_WIDTH,8,EDGE,false);
         lv_obj_set_style_radius(*tracks[i],LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(*tracks[i],LV_OBJ_FLAG_CLICKABLE);
         *bars[i]=panel(*tracks[i],0,0,0,8,ACCENT,false);
@@ -3025,31 +3042,27 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
         lv_obj_remove_flag(*bars[i],LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(*tracks[i],LV_OBJ_FLAG_HIDDEN);
     }
-    /* Cooling Boost, under the clock, where the other two columns have
-     * their bars: its name and a switch, and the whole row one place to
-     * tap. See boost_show. */
-    boost_field=lv_obj_create(gpu_card);lv_obj_remove_style_all(boost_field);
-    lv_obj_set_pos(boost_field,GPU_COLUMN_X2-6,BOOST_Y);lv_obj_set_size(boost_field,gpu_room[2]+6,BOOST_HEIGHT);
-    lv_obj_remove_flag(boost_field,LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_radius(boost_field,5,0);
-    lv_obj_set_style_bg_color(boost_field,lv_color_hex(BUTTON),LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(boost_field,LV_OPA_COVER,LV_STATE_PRESSED);
-    lv_obj_set_style_opa(boost_field,LV_OPA_40,LV_STATE_DISABLED);
-    lv_obj_add_event_cb(boost_field,boost_clicked,LV_EVENT_CLICKED,NULL);
-    lv_obj_set_ext_click_area(boost_field,BOOST_REACH);
-    lv_obj_t *boost_name=text_at(boost_field,panel_text(TXT_GPU_BOOST),6,
-                                 (BOOST_HEIGHT-lv_font_get_line_height(&panel_font_12))/2,
-                                 gpu_room[2]-BOOST_TRACK_WIDTH-4,&panel_font_12,MUTED);
-    lv_obj_set_height(boost_name,lv_font_get_line_height(&panel_font_12));
-    lv_obj_remove_flag(boost_name,LV_OBJ_FLAG_CLICKABLE);
-    boost_track=panel(boost_field,gpu_room[2]+6-BOOST_TRACK_WIDTH,(BOOST_HEIGHT-BOOST_TRACK_HEIGHT)/2,
-                      BOOST_TRACK_WIDTH,BOOST_TRACK_HEIGHT,EDGE,false);
-    lv_obj_set_style_radius(boost_track,LV_RADIUS_CIRCLE,0);
-    lv_obj_remove_flag(boost_track,LV_OBJ_FLAG_CLICKABLE);
-    boost_knob=knob_in(boost_track,BOOST_KNOB_OFF,2,BOOST_TRACK_HEIGHT-4);
-    lv_obj_add_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
+    gpu_load_value=gpu_values[0];vram_value=gpu_values[1];gpu_clock_value=gpu_values[2];
     lv_obj_t *history_card=panel(page[4],10,106,460,194,CARD,true);
-    text_at(history_card,panel_text(TXT_HISTORY),16,14,120,&panel_font_14,MUTED);
+    text_at(history_card,panel_text(TXT_HISTORY),16,HISTORY_TITLE_Y,120,&panel_font_14,MUTED);
+    /* Cooling Boost, with no name: see boost_show. Hidden until the PC
+     * says that it has LACT. */
+    boost_button=button(history_card,"",BOOST_X,BOOST_Y,BOOST_SIZE,BOOST_SIZE,boost_clicked,0);
+    boost_icon=icon(boost_button,&icon_snowflake,(BOOST_SIZE-26)/2,(BOOST_SIZE-26)/2,MUTED);
+    lv_obj_add_flag(boost_button,LV_OBJ_FLAG_HIDDEN);
+    /* The fan of the card: hidden until the PC reads one. The two fonts of
+     * the title and of the name have one line height and one baseline. */
+    int fan_name=lv_font_get_line_height(&panel_font_12),fan_speed=lv_font_get_line_height(&panel_font_16);
+    gpu_fan=lv_obj_create(history_card);lv_obj_remove_style_all(gpu_fan);
+    lv_obj_set_pos(gpu_fan,GPU_FAN_X,HISTORY_TITLE_Y);
+    lv_obj_set_size(gpu_fan,GPU_FAN_ROOM,fan_name+fan_speed);
+    lv_obj_remove_flag(gpu_fan,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(gpu_fan,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *fan_label=text_at(gpu_fan,panel_text(TXT_PC_GPU_FAN),0,0,GPU_FAN_ROOM,&panel_font_12,MUTED);
+    gpu_fan_value=text_at(gpu_fan,"--",0,fan_name,GPU_FAN_ROOM,&panel_font_16,TEXT);
+    lv_obj_set_style_text_align(fan_label,LV_TEXT_ALIGN_RIGHT,0);
+    lv_obj_set_style_text_align(gpu_fan_value,LV_TEXT_ALIGN_RIGHT,0);
+    lv_obj_add_flag(gpu_fan,LV_OBJ_FLAG_HIDDEN);
     /* The legend, one dot and one name for each curve. */
     const char *legend[PANEL_HISTORY_SERIES]={"CPU °C","GPU °C","GPU W"};
     const uint32_t curves[PANEL_HISTORY_SERIES]=CURVE_COLOURS;

@@ -9,9 +9,11 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "lvgl.h"
 #include "ui.h"
+#include "icons.h"
 #include "panel_fonts.h"
 #include "panel_frames.h"
 #include "panel_taps.h"
@@ -112,6 +114,22 @@ static lv_obj_t *button_with(lv_obj_t *row,const char *caption)
         if(lv_obj_check_type(c,&lv_button_class)&&label(c,caption))return c;
     }
     return NULL;
+}
+// The image under root that shows that picture, or NULL.
+static lv_obj_t *image_of(lv_obj_t *root,const lv_image_dsc_t *picture)
+{
+    if(lv_obj_check_type(root,&lv_image_class)&&lv_image_get_src(root)==picture)return root;
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++){
+        lv_obj_t *found=image_of(lv_obj_get_child(root,i),picture);
+        if(found)return found;
+    }
+    return NULL;
+}
+static int32_t middle_of(lv_obj_t *o)
+{
+    lv_area_t at;
+    lv_obj_get_coords(o,&at);
+    return (at.x1+at.x2)/2;
 }
 // Whether the knob of a switch stands in the right half of its track: on.
 static bool knob_right(lv_obj_t *knob)
@@ -2233,38 +2251,84 @@ int main(void)
         lv_obj_update_layout(screen_now);
         assert(strcmp(panel_ui_where(),"the card")==0);
         panel_state_t g=base();
-        g.gpu_load=87;g.gpu_mhz=2450;g.vram_used=10522460160ULL;g.vram_total=17163091968ULL;
+        g.gpu_load=87;g.gpu_mhz=2450;g.gpu_mhz_max=2970;
+        g.vram_used=10522460160ULL;g.vram_total=17163091968ULL;
         panel_ui_update(&g);
-        assert(label(page,"GPU load")&&label(page,"VRAM")&&label(page,"GPU clock"));
-        assert(label(page,"87 %")&&label(page,"9.8 / 16.0 GB")&&label(page,"2450 MHz"));
-        // Each bar as long as its share: 87 of 100, and 9.8 of 16.0 GB.
+        const char *names[3]={"GPU load","VRAM","GPU clock"},*values[3]={"87 %","9.8 / 16.0 GB","2450 MHz"};
+        for(int i=0;i<3;i++)assert(label(page,names[i])&&label(page,values[i]));
+        // Each bar as long as its share: 87 of 100, 9.8 of 16.0 GB, and 2450
+        // of the 2970 MHz of the highest level of the clock. The three are
+        // one length with one gap between them, as far from each side of
+        // the card. The name and the value of each stand in the middle
+        // over it.
         lv_obj_update_layout(screen_now);
         lv_obj_t *gpu_card=lv_obj_get_parent(label(page,"87 %"));
+        const uint64_t share[3][2]={{87,100},{10522460160ULL,17163091968ULL},{2450,2970}};
+        lv_area_t inside,at[3];
+        lv_obj_get_content_coords(gpu_card,&inside);
         int bars=0;
         for(unsigned i=0;i<lv_obj_get_child_count(gpu_card);i++){
             lv_obj_t *track=lv_obj_get_child(gpu_card,i);
             if(lv_obj_get_height(track)!=8||lv_obj_get_child_count(track)!=1)continue;
+            assert(bars<3&&!lv_obj_has_flag(track,LV_OBJ_FLAG_HIDDEN));
             int32_t full=lv_obj_get_width(track),filled=lv_obj_get_width(lv_obj_get_child(track,0));
-            assert(bars==0?filled==full*87/100:filled==(int32_t)(full*10522460160ULL/17163091968ULL));
+            assert(filled==(int32_t)(full*share[bars][0]/share[bars][1]));
+            lv_obj_get_coords(track,&at[bars]);
+            lv_obj_t *over[2]={label(page,names[bars]),label(page,values[bars])};
+            for(int k=0;k<2;k++){
+                assert(lv_obj_get_style_text_align(over[k],0)==LV_TEXT_ALIGN_CENTER);
+                assert(abs(middle_of(over[k])-middle_of(track))<=1);
+            }
             bars++;
         }
-        assert(bars==2);
+        assert(bars==3);
+        assert(lv_area_get_width(&at[0])==lv_area_get_width(&at[1])&&
+               lv_area_get_width(&at[1])==lv_area_get_width(&at[2]));
+        assert(at[1].x1-at[0].x2==at[2].x1-at[1].x2);
+        assert(at[0].x1-inside.x1==inside.x2-at[2].x2);
+        // A clock past its highest level fills its bar, and no more.
+        g.gpu_mhz=3100;
+        panel_ui_update(&g);
+        lv_obj_update_layout(screen_now);
+        lv_obj_t *clock_track=lv_obj_get_child(gpu_card,-1);
+        assert(lv_obj_get_width(lv_obj_get_child(clock_track,0))==lv_obj_get_width(clock_track));
+        // A service older than this firmware sends no highest level: the
+        // clock, and no bar under it.
+        g.gpu_mhz_max=-1;
+        panel_ui_update(&g);
+        assert(label(page,"3100 MHz")&&lv_obj_has_flag(clock_track,LV_OBJ_FLAG_HIDDEN));
         // The longest of each fits its room, with no dots: a full card, the
-        // memory of a card of 24 GB, and a clock past three thousand.
-        g.gpu_load=100;g.gpu_mhz=3100;g.vram_used=25662623334ULL;g.vram_total=25769803776ULL;
+        // memory of a card of 24 GB, and the widest clock of four digits.
+        // Each stays clear of the next and inside the card.
+        int widest_mhz=1000;
+        lv_coord_t widest=0;
+        for(int mhz=1000;mhz<=9999;mhz++){
+            char said[16];
+            snprintf(said,sizeof said,"%d MHz",mhz);
+            lv_point_t size;
+            lv_text_get_size(&size,said,&panel_font_24,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+            if(size.x>widest){widest=size.x;widest_mhz=mhz;}
+        }
+        g.gpu_load=100;g.gpu_mhz=widest_mhz;g.gpu_mhz_max=widest_mhz;
+        g.vram_used=25662623334ULL;g.vram_total=25769803776ULL;
         panel_ui_update(&g);
         lv_obj_update_layout(screen_now);
         lv_refr_now(screen);
-        const char *longest[]={"100 %","23.9 / 24.0 GB","3100 MHz"};
+        char clock_said[16];
+        snprintf(clock_said,sizeof clock_said,"%d MHz",widest_mhz);
+        const char *longest[]={"100 %","23.9 / 24.0 GB",clock_said};
+        int32_t end=inside.x1+8-6;
         for(int i=0;i<3;i++){
             lv_obj_t *value=label(page,longest[i]);
             assert(value);
             lv_point_t size;
             lv_text_get_size(&size,longest[i],&panel_font_24,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
             assert(size.x<=lv_obj_get_width(value));
-            // And inside the card.
-            assert(lv_obj_get_x(value)+size.x<=lv_obj_get_width(gpu_card)-8);
+            int32_t start=middle_of(value)-size.x/2;
+            assert(start>=end+6);
+            end=start+size.x;
         }
+        assert(end<=inside.x2-8);
         // What the service did not send is "--", and so is all of it while
         // the PC is gone; the bars go.
         g.gpu_load=-1;g.gpu_mhz=-1;g.vram_used=0;g.vram_total=0;
@@ -2335,13 +2399,13 @@ int main(void)
         g.online=true;
         panel_ui_update(&g);
         // The window: the 30 minutes of the history, and no button that
-        // chooses another.
+        // chooses another. The one button of the card is Cooling Boost.
         assert(label(page,"-30 min"));
         lv_obj_t *history_card=lv_obj_get_parent(label(page,"-30 min"));
         lv_obj_t *chart=NULL;
         for(unsigned i=0;i<lv_obj_get_child_count(history_card);i++){
             lv_obj_t *o=lv_obj_get_child(history_card,i);
-            assert(!lv_obj_check_type(o,&lv_button_class));
+            assert(!lv_obj_check_type(o,&lv_button_class)||image_of(o,&icon_snowflake));
             if(lv_obj_check_type(o,&lv_chart_class))chart=o;
         }
         // The chart takes no press, so a swipe over it moves the band.
@@ -2361,81 +2425,102 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
-    // Cooling Boost on the page of the card: a switch under the clock,
-    // there where the PC has LACT with a card, that sends where to go at a
-    // tap and asks nothing first. It shows what the status says.
+    // Cooling Boost on the page of the card: a square button with a
+    // snowflake and no words, in the top right corner of the history,
+    // there where the PC has LACT with a card. It sends where to go at a
+    // tap and asks nothing first. The snowflake and the edge take the
+    // accent when the status says on, and grey when it says off. The fan
+    // of the card stands left of it, where the PC reads one.
     {
         panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
         for(int language=0;language<2;language++){
             panel_settings_t in_it=english;in_it.language=language?PANEL_GERMAN:PANEL_ENGLISH;
             panel_ui_create(action,setting,sound,&in_it);
+            panel_palette_t colours=panel_palette(in_it.theme,in_it.accent);
             panel_state_t t=base();
+            t.pc.gpu_fan_rpm=-1;
             lv_obj_t *page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_CARD);
-            // A PC without LACT, or a service older than this firmware:
-            // no switch.
+            lv_obj_t *flake=image_of(page,&icon_snowflake);
+            assert(flake);
+            lv_obj_t *button=lv_obj_get_parent(flake);
+            assert(lv_obj_check_type(button,&lv_button_class));
+            // A PC without LACT, or a service older than this firmware: no
+            // button. A PC that reads no fan of the card: no fan.
             panel_ui_update(&t);
-            assert(!label(page,panel_text(TXT_GPU_BOOST)));
-            t.boost_here=true;t.answers++;
+            assert(lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
+            assert(!label(page,panel_text(TXT_PC_GPU_FAN)));
+            t.boost_here=true;t.pc.gpu_fan_rpm=1450;t.answers++;
             panel_ui_update(&t);
-            lv_obj_t *name=label(page,panel_text(TXT_GPU_BOOST));
-            assert(name);
+            assert(!lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
+            lv_obj_t *fan_name=label(page,panel_text(TXT_PC_GPU_FAN));
+            assert(fan_name);
+            lv_obj_t *fan=lv_obj_get_parent(fan_name);
+            char speed[24];
+            snprintf(speed,sizeof speed,panel_text(TXT_RPM),1450);
+            assert(label(fan,speed));
             lv_obj_update_layout(page);
-            // The name whole on one line, left of its switch, and the row
-            // under the clock of the card.
-            lv_point_t size;
-            lv_text_get_size(&size,lv_label_get_text(name),lv_obj_get_style_text_font(name,0),
-                             0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
-            assert(size.x<=lv_obj_get_width(name));
-            assert(lv_obj_get_height(name)==lv_font_get_line_height(lv_obj_get_style_text_font(name,0)));
-            lv_obj_t *field=lv_obj_get_parent(name),*track=NULL;
-            for(unsigned i=0;i<lv_obj_get_child_count(field);i++)
-                if(lv_obj_get_child(field,i)!=name)track=lv_obj_get_child(field,i);
-            assert(track&&lv_obj_get_child_count(track)==1);
-            lv_obj_t *knob=lv_obj_get_child(track,0);
-            lv_area_t at_name,at_track,at_field,at_clock;
-            lv_obj_get_coords(name,&at_name);lv_obj_get_coords(track,&at_track);
-            lv_obj_get_coords(field,&at_field);
-            lv_obj_get_coords(label(page,panel_text(TXT_GPU_CLOCK)),&at_clock);
-            assert(at_name.x1+size.x<at_track.x1);
-            assert(at_name.x1==at_clock.x1);
-            assert(at_field.y1>at_clock.y2);
-            lv_obj_t *card=lv_obj_get_parent(field);
-            lv_area_t at_card;lv_obj_get_coords(card,&at_card);
-            assert(at_field.y2<at_card.y2&&at_track.x2<at_card.x2);
-            // Off: the knob at the left, and a tap asks for on, at once.
-            assert(knob_right(knob)==false);
-            lv_color_t off_colour=lv_obj_get_style_bg_color(track,0);
+            // Square, only the snowflake in it, in the top right corner of
+            // the card: nothing else of the card is right of it or over it.
+            assert(lv_obj_get_width(button)==lv_obj_get_height(button));
+            assert(lv_obj_get_width(button)>=48&&lv_obj_get_child_count(button)==1);
+            lv_obj_t *card=lv_obj_get_parent(button);
+            assert(lv_obj_get_parent(fan)==card);
+            lv_area_t at_button,at_card,at_fan,at_title;
+            lv_obj_get_coords(button,&at_button);lv_obj_get_coords(card,&at_card);
+            lv_obj_get_coords(fan,&at_fan);
+            lv_obj_get_coords(label(card,panel_text(TXT_HISTORY)),&at_title);
+            assert(at_card.x2-at_button.x2<=12&&at_button.y1-at_card.y1<=12);
+            for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+                lv_obj_t *o=lv_obj_get_child(card,i);
+                if(o==button)continue;
+                lv_area_t at;lv_obj_get_coords(o,&at);
+                assert(at.x2<at_button.x1||at.y1>at_button.y2);
+            }
+            // The fan left of the button, its name on the line of the
+            // title, and its words whole.
+            assert(at_fan.x2<at_button.x1&&at_fan.y1==at_title.y1);
+            lv_obj_t *fan_words[2]={label(fan,panel_text(TXT_PC_GPU_FAN)),label(fan,speed)};
+            for(int i=0;i<2;i++){
+                lv_point_t size;
+                lv_text_get_size(&size,lv_label_get_text(fan_words[i]),lv_obj_get_style_text_font(fan_words[i],0),
+                                 0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+                assert(size.x<=lv_obj_get_width(fan_words[i]));
+            }
+            // Off: grey, and a tap asks for on, at once.
+            assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.muted);
+            assert(rgb_of(lv_obj_get_style_border_color(button,0))==colours.edge);
             actions=0;
-            lv_obj_send_event(field,LV_EVENT_CLICKED,NULL);
+            lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
             assert(actions==1&&last_action==PANEL_GPU_BOOST_ON);
             assert(!label(lv_screen_active(),panel_text(TXT_CONFIRM)));
-            // The switch moves when the status says so, and not before.
-            assert(knob_right(knob)==false);
-            t.boost_on=true;t.answers++;
+            // The button changes when the status says so, and not before.
+            assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.muted);
+            t.boost_on=true;t.pc.gpu_fan_rpm=2950;t.answers++;
             panel_ui_update(&t);
-            lv_obj_update_layout(page);
-            assert(knob_right(knob)==true);
-            assert(!lv_color_eq(lv_obj_get_style_bg_color(track,0),off_colour));
-            lv_obj_send_event(field,LV_EVENT_CLICKED,NULL);
+            assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.accent_text);
+            assert(rgb_of(lv_obj_get_style_border_color(button,0))==colours.accent_text);
+            snprintf(speed,sizeof speed,panel_text(TXT_RPM),2950);
+            assert(label(fan,speed));
+            lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
             assert(actions==2&&last_action==PANEL_GPU_BOOST_OFF);
-            // A PC that does not answer: the switch stays, grey, and a tap
-            // sends nothing.
+            // A PC that does not answer: the button stays, grey and dim,
+            // and a tap sends nothing. The fan says "--".
             t.online=false;
             panel_ui_update(&t);
-            lv_obj_update_layout(page);
-            assert(label(page,panel_text(TXT_GPU_BOOST)));
-            assert(lv_obj_has_state(field,LV_STATE_DISABLED));
-            assert(knob_right(knob)==false);
-            assert(lv_color_eq(lv_obj_get_style_bg_color(track,0),off_colour));
-            lv_obj_send_event(field,LV_EVENT_CLICKED,NULL);
+            assert(!lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
+            assert(lv_obj_has_state(button,LV_STATE_DISABLED));
+            assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.muted);
+            assert(label(fan,"--")&&!label(fan,speed));
+            lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
             assert(actions==2);
             t.online=true;
             panel_ui_update(&t);
-            assert(!lv_obj_has_state(field,LV_STATE_DISABLED));
-            // LACT gone from the PC: the switch goes with it.
+            assert(!lv_obj_has_state(button,LV_STATE_DISABLED));
+            assert(rgb_of(lv_obj_get_style_image_recolor(flake,0))==colours.accent_text);
+            // LACT gone from the PC: the button goes with it.
             t.boost_here=false;t.boost_on=false;t.answers++;
             panel_ui_update(&t);
-            assert(!label(page,panel_text(TXT_GPU_BOOST)));
+            assert(lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN));
             lv_refr_now(screen);
             assert(complaints==0);
         }

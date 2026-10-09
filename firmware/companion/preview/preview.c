@@ -113,7 +113,8 @@ int main(int argc,char **argv)
     panel_ui_history_use(&history);
     panel_ui_create(NULL,NULL,NULL,&settings);
     panel_state_t s={.wifi=true,.online=true,.volume=42,.cpu_temp=49,.gpu_temp=56,.gpu_watts=78,
-                     .gpu_load=87,.gpu_mhz=2450,.vram_used=10522460160ULL,.vram_total=17163091968ULL};
+                     .gpu_load=87,.gpu_mhz=2450,.gpu_mhz_max=2970,.vram_used=10522460160ULL,
+                     .vram_total=17163091968ULL};
     strcpy(s.host,"FractalMachine");
     /* Two controllers in the head, and four on their page: one charges and
      * one has no battery that anybody reports. "pads" opens that page, and
@@ -235,6 +236,8 @@ int main(int argc,char **argv)
     if(argc>2&&strncmp(argv[2],"card",4)==0){
         s.boost_here=true;
         s.boost_on=strcmp(argv[2],"card-boost")==0;
+        /* The fan of the card, faster with the boost. */
+        s.pc.gpu_fan_rpm=s.boost_on?2950:1450;
         if(strcmp(argv[2],"card-empty")!=0){
             uint32_t seed=7;
             panel_state_t t=s;

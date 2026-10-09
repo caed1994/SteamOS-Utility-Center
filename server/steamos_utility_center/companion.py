@@ -267,6 +267,12 @@ SCLK_LABEL = "sclk"
 HERTZ_PER_MHZ = 1000000
 SANE_MHZ = 10000
 
+# The levels of that clock, a file of the PCI device: one level on each
+# line, as "1: 2450Mhz *", with a star at the level in use. The highest
+# level is the top of the bar of the clock on the panel.
+SCLK_LEVELS = "pp_dpm_sclk"
+SCLK_LEVEL = re.compile(r"^\s*\d+:\s*(\d+)\s*mhz", re.IGNORECASE | re.MULTILINE)
+
 # What the panel keeps of each list: PANEL_PADS, PANEL_SENSORS and
 # PANEL_DRIVES in its ui.h. The answer stops there. An Intel processor
 # reports a sensor for each core, and two of them on one board made an
@@ -722,13 +728,14 @@ def _sane(value, limit):
 def card_state(place):
     """How busy the card is, its memory and its clock, or None for each.
 
-    The load and the memory are files of the PCI device of the card. The
-    clock is a file of its hwmon chip, which is the place that telemetry
-    found, as the power is. amdgpu writes all four. A card of another
-    driver writes none of them, and the panel then shows a dash.
+    The load, the memory and the levels of the clock are files of the PCI
+    device of the card. The clock is a file of its hwmon chip, which is the
+    place that telemetry found, as the power is. amdgpu writes all five. A
+    card of another driver writes none of them, and the panel then shows a
+    dash.
     """
     out = {"gpu_load": None, "vram_used": None, "vram_total": None,
-           "gpu_mhz": None}
+           "gpu_mhz": None, "gpu_mhz_max": None}
     if not place:
         return out
     device = os.path.join(place, "device")
@@ -742,6 +749,10 @@ def card_state(place):
             == SCLK_LABEL:
         out["gpu_mhz"] = _sane(_read_number(
             os.path.join(place, "freq1_input"), HERTZ_PER_MHZ), SANE_MHZ)
+    levels = [int(level) for level in SCLK_LEVEL.findall(
+        _read_text(os.path.join(device, SCLK_LEVELS)) or "")]
+    if levels:
+        out["gpu_mhz_max"] = _sane(max(levels), SANE_MHZ)
     return out
 
 
