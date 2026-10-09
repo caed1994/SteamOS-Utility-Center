@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1057,6 +1058,52 @@ class DiscoveryTest(unittest.TestCase):
         answer = ctl.run_command(["areas"])
         self.assertEqual(answer["areas"], list(ctl.AREAS))
         self.assertEqual(answer["actions"], list(ctl.ACTIONS))
+
+
+
+class PairTest(unittest.TestCase):
+    """The answer of a person to a panel that asks to pair, from Game Mode."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        from steamos_utility_center import pairing
+        self.pairing = pairing
+        self.service = pairing.Pairing(folder=self.folder, name="deck")
+        _, said = self.service.ask(
+            {"name": "SteamOS-Panel-A1B2",
+             "key": pairing.public_key(bytes(range(32))).hex()},
+            "192.168.1.50")
+        self.id = said["id"]
+
+    def test_the_request_that_waits_is_reported(self):
+        found = ctl.pair(folder=self.folder)["waiting"]
+        self.assertEqual(found["id"], self.id)
+        self.assertRegex(found["code"], r"^\d{6}$")
+
+    def test_an_accept_reaches_the_service(self):
+        self.assertEqual(ctl.pair("accept", self.id, folder=self.folder),
+                         {"answered": "accept", "id": self.id})
+        self.assertEqual(self.service.check(self.id)[1],
+                         {"state": "accepted"})
+
+    def test_a_refusal_reaches_the_service(self):
+        ctl.pair("refuse", self.id, folder=self.folder)
+        self.assertEqual(self.service.check(self.id)[1], {"state": "refused"})
+
+    def test_an_answer_needs_the_id_of_the_request_that_waits(self):
+        with self.assertRaises(ctl.CtlError):
+            ctl.pair("accept", "0" * 16, folder=self.folder)
+        self.assertEqual(self.service.check(self.id)[1], {"state": "waiting"})
+
+    def test_the_command_line_takes_it(self):
+        with unittest.mock.patch.object(self.pairing, "runtime_dir",
+                                        return_value=self.folder):
+            answer = ctl.run_command(["pair"])
+            self.assertEqual(answer["waiting"]["id"], self.id)
+            ctl.run_command(["pair", "accept", self.id])
+        self.assertEqual(self.service.check(self.id)[1],
+                         {"state": "accepted"})
 
 
 if __name__ == "__main__":

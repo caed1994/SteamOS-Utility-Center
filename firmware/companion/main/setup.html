@@ -9,8 +9,8 @@ body{background:#101827;color:#f2f5fa;font:16px system-ui;margin:0;padding:24px;
 <main><h1>Set up the SteamOS panel</h1><p>Put the panel on your own network and point it at your SteamOS PC.</p>
 <form id="setup"><label for="ssid">Network name (2.4 GHz)</label><input id="ssid" name="ssid" required maxlength="32" autocomplete="off">
 <label for="password">Network password</label><input id="password" name="password" required type="password" minlength="8" maxlength="64" autocomplete="new-password">
-<label for="server">PC address</label><input id="server" name="server" required value="http://192.168.178.50:8765" inputmode="url"><small>The address of your PC on your own network.</small>
-<label for="token">Connection token</label><input id="token" name="token" required type="password" minlength="32" maxlength="127" autocomplete="off"><small>From ~/.config/steamos-utility-center/companion-token on the PC.</small>
+<details><summary>PC address and token by hand</summary><label for="server">PC address</label><input id="server" name="server" placeholder="http://192.168.178.50:8765" inputmode="url"><small>Leave it empty: the panel finds your PC by itself.</small>
+<label for="token">Connection token</label><input id="token" name="token" type="password" minlength="32" maxlength="127" autocomplete="off"><small>Leave it empty: the panel shows a code, and you accept it on the PC. By hand: from ~/.config/steamos-utility-center/companion-token on the PC.</small></details>
 <button id="save" type="submit">Save and connect</button></form><p id="result" role="status" aria-live="polite"></p></main>
 <script>
 const form=document.getElementById('setup'), output=document.getElementById('result'), button=document.getElementById('save');

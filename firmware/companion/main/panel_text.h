@@ -32,6 +32,34 @@
                            "WLAN und PC-Verbindung einrichten") \
     X(TXT_CONFIRM_HERE,    "Confirm on this display.", \
                            "Bitte am Display bestätigen.") \
+    X(TXT_PAIR,            "Pairing",               "Kopplung") \
+    X(TXT_PAIR_WHAT,       "A new secret from the PC, with a code", \
+                           "Neues Geheimnis vom PC, mit Code") \
+    X(TXT_PAIR_START,      "Pair",                  "Koppeln") \
+    X(TXT_PAIR_TITLE,      "Pair with the PC",      "Mit dem PC koppeln") \
+    X(TXT_PAIR_SEARCH,     "The panel looks for your PC on the network ...", \
+                           "Das Panel sucht deinen PC im WLAN ...") \
+    X(TXT_PAIR_ASK,        "The panel asks the PC ...", \
+                           "Das Panel fragt den PC ...") \
+    X(TXT_PAIR_WAIT,       "Accept this code on the PC: in the control panel, " \
+                           "or in Game Mode in the plugin SteamOS Utility Center.", \
+                           "Diesen Code am PC annehmen: im Kontrollpanel oder im " \
+                           "Spielmodus im Plugin SteamOS Utility Center.") \
+    X(TXT_PAIR_DONE,       "Paired.",               "Gekoppelt.") \
+    X(TXT_PAIR_BUSY,       "A different panel waits on the PC. The panel tries again ...", \
+                           "Am PC wartet ein anderes Panel. Das Panel versucht es erneut ...") \
+    X(TXT_PAIR_NO_ANSWER,  "The PC does not answer. The panel tries again ...", \
+                           "Der PC antwortet nicht. Das Panel versucht es erneut ...") \
+    X(TXT_PAIR_REFUSED,    "The PC refused this panel.", \
+                           "Der PC hat das Panel abgelehnt.") \
+    X(TXT_PAIR_EXPIRED,    "Nobody accepted the code in time.", \
+                           "Niemand hat den Code rechtzeitig angenommen.") \
+    X(TXT_PAIR_NOT_FOUND,  "No PC answered. The module Steam Companion must run on " \
+                           "the PC. Or give the address of the PC in the setup.", \
+                           "Kein PC hat geantwortet. Am PC muss das Modul Steam " \
+                           "Companion laufen. Oder die PC-Adresse im Setup eintragen.") \
+    X(TXT_PAIR_AGAIN,      "Try again",             "Erneut versuchen") \
+    X(TXT_PAIR_PC,         "PC: %s",                "PC: %s") \
     X(TXT_SETTINGS_TITLE,  "ESP settings",          "ESP-Einstellungen") \
     X(TXT_BRIGHTNESS,      "Display brightness",    "Displayhelligkeit") \
     X(TXT_BRIGHTNESS_WHAT, "The display of this ESP only", \

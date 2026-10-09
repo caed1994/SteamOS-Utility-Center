@@ -53,8 +53,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import config as config_module
-from . import ctl, desktop, lact, modules, notify, pcinfo, power, render
-from . import screen, steamapps, steamcontroller
+from . import ctl, desktop, lact, modules, notify, pairing, pcinfo, power
+from . import render, screen, steamapps, steamcontroller
 from . import temperature
 
 # The port, and the file that holds the shared secret.
@@ -72,6 +72,11 @@ TOKEN_MINIMUM = 32
 
 # A request body carries one short JSON object. Anything longer is not one.
 BODY_LIMIT = 256
+
+# The pairing of a new panel. These two paths need no signature, because a
+# new panel has no secret yet. See pairing.py.
+PAIR_PATH = "/v1/pair"
+PAIR_ID = re.compile(r"^%s/([0-9a-f]{16})$" % PAIR_PATH)
 
 # How the panel proves that it knows the secret without sending it.
 #
@@ -1447,10 +1452,44 @@ class Nonces:
             return self._open.pop(value, None) is not None
 
 
-def make_handler(token, nonces=None, offer=None):
-    """The request handler for one token."""
+class Secret:
+    """The token of the service, which a pairing can replace while it runs.
+
+    A replacement goes into the file first, with mode 0600, and then into
+    the memory. With no file, a replacement stays in the memory.
+    """
+
+    def __init__(self, value, path=None):
+        self.path = path
+        self._value = value or ""
+        self._lock = threading.Lock()
+
+    @property
+    def value(self):
+        with self._lock:
+            return self._value
+
+    def replace(self, value):
+        with self._lock:
+            if self.path:
+                folder = os.path.dirname(self.path)
+                os.makedirs(folder, mode=0o700, exist_ok=True)
+                temporary = self.path + ".new"
+                descriptor = os.open(temporary,
+                                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                                     0o600)
+                with os.fdopen(descriptor, "w") as handle:
+                    handle.write(value + "\n")
+                os.replace(temporary, self.path)
+            self._value = value
+
+
+def make_handler(token, nonces=None, offer=None, pair=None):
+    """The request handler for one token, or for a Secret that holds it."""
+    secret = token if isinstance(token, Secret) else Secret(token)
     nonces = Nonces() if nonces is None else nonces
     offer = _firmware if offer is None else offer
+    pair = pairing.Pairing() if pair is None else pair
 
     class Handler(BaseHTTPRequestHandler):
         # The log of BaseHTTPRequestHandler goes to stderr, which is the
@@ -1480,7 +1519,8 @@ def make_handler(token, nonces=None, offer=None):
         def authorized(self, body=b""):
             nonce = self.headers.get(NONCE_HEADER, "")
             given = self.headers.get(AUTH_HEADER, "")
-            if not nonce or not given:
+            token = secret.value
+            if not nonce or not given or len(token) < TOKEN_MINIMUM:
                 return False
             wanted = signature(token, self.command, self.path, nonce, body)
             # The signature first and the spend second. The other order lets
@@ -1490,6 +1530,19 @@ def make_handler(token, nonces=None, offer=None):
             return nonces.spend(nonce)
 
         def do_GET(self):
+            # A new panel asks for the answer to its pairing. Each other
+            # path needs the signature.
+            asked = PAIR_ID.match(self.path)
+            if asked:
+                code, said, new = pair.check(asked.group(1))
+                if new:
+                    try:
+                        secret.replace(new)
+                    except OSError as exc:
+                        sys.stderr.write("The new token cannot be saved: %s\n"
+                                         % exc)
+                        return self.reply(500, {"error": "not saved"})
+                return self.reply(code, said)
             # The check comes before the path, so a stranger cannot learn
             # which paths exist by reading the codes that come back.
             if not self.authorized():
@@ -1497,7 +1550,7 @@ def make_handler(token, nonces=None, offer=None):
             if self.path == "/v1/status":
                 return self.reply(200,
                                   status(self.connection.getsockname()[0],
-                                         token, offer))
+                                         secret.value, offer))
             if self.path == FIRMWARE_PATH:
                 return self.send_firmware()
             self.reply(404, {"error": "not found"})
@@ -1537,6 +1590,12 @@ def make_handler(token, nonces=None, offer=None):
                 body = self.rfile.read(length)
             except (ValueError, TypeError):
                 return self.reply(400, {"error": "invalid request"})
+            if self.path == PAIR_PATH:
+                try:
+                    asked = json.loads(body)
+                except ValueError:
+                    return self.reply(400, {"error": "invalid request"})
+                return self.reply(*pair.ask(asked, self.client_address[0]))
             if not self.authorized(body):
                 return self.reply(401, {"error": "unauthorized"})
             if self.path not in ("/v1/action", LED_PATH, CPU_PATH):
@@ -1557,17 +1616,20 @@ def make_handler(token, nonces=None, offer=None):
 
 
 def read_token(path):
-    """The secret from its file, or a message that says what to do.
+    """The secret from its file, or "" with no file.
 
-    A missing file is the ordinary state before the first install, so it
-    gives a sentence and not a traceback in the journal.
+    With no file the service still runs, because a pairing writes the file.
+    Until then it refuses each request that needs the secret. A token that
+    is too short is an error that a person must see.
     """
     try:
         token = Path(path).read_text().strip()
+    except FileNotFoundError:
+        sys.stderr.write("No token in %s yet. Pair a panel to write one.\n"
+                         % path)
+        return ""
     except OSError as exc:
-        raise SystemExit("cannot read %s: %s\n"
-                         "Install the companion module to write one."
-                         % (path, exc))
+        raise SystemExit("cannot read %s: %s" % (path, exc))
     if len(token) < TOKEN_MINIMUM:
         raise SystemExit("the token in %s is shorter than %d characters"
                          % (path, TOKEN_MINIMUM))
@@ -1575,6 +1637,12 @@ def read_token(path):
 
 
 def serve(host="0.0.0.0", port=PORT, home=None):
-    """Answers until the service stops."""
-    token = read_token(token_path(home))
-    ThreadingHTTPServer((host, port), make_handler(token)).serve_forever()
+    """Answers until the service stops.
+
+    It also answers a panel that looks for the PC, on the same port number
+    with UDP. See pairing.Responder.
+    """
+    path = token_path(home)
+    secret = Secret(read_token(path), path)
+    pairing.Responder(port).start()
+    ThreadingHTTPServer((host, port), make_handler(secret)).serve_forever()

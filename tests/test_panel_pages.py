@@ -58,10 +58,11 @@ class ActionTableTest(unittest.TestCase):
     def test_the_local_ones_stay_at_the_end(self):
         """Everything before PANEL_SETUP is a name the service performs.
         One put in the middle shifts every action under it. The panel does
-        the setup, the wake and the update itself."""
+        the setup, the wake, the update and the pairing itself."""
         names = actions()
-        self.assertEqual(names[-3:], ["PANEL_SETUP", "PANEL_WAKE",
-                                      "PANEL_UPDATE"])
+        self.assertEqual(names[names.index("PANEL_SETUP"):],
+                         ["PANEL_SETUP", "PANEL_WAKE", "PANEL_UPDATE",
+                          "PANEL_PAIR", "PANEL_PAIR_CANCEL"])
 
     def test_the_session_presses_name_where_to_go(self):
         names = actions()

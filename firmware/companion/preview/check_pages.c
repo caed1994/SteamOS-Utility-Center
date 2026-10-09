@@ -3523,6 +3523,13 @@ int main(void)
             panel_state_t setup=s;setup.setup=true;
             strcpy(setup.setup_ssid,"SteamOS-Panel-3A12");strcpy(setup.setup_password,"ABCD2345EFGH");
             panel_ui_update(&setup);READ_ALL("the setup");
+            // The pairing, with the code and both buttons.
+            panel_state_t pairing=s;pairing.pairing=PANEL_PAIRING_WAIT;pairing.pair_can_cancel=true;
+            strcpy(pairing.pair_code,"482913");strcpy(pairing.pair_pc,"steamdeck");
+            strcpy(pairing.pair_address,"192.168.178.20:8765");
+            panel_ui_update(&pairing);READ_ALL("the pairing");
+            pairing.pairing=PANEL_PAIRING_NOT_FOUND;pairing.pair_code[0]=0;
+            panel_ui_update(&pairing);READ_ALL("the pairing that found no PC");
             #undef READ_ALL
             lv_refr_now(screen);
         }
@@ -3530,6 +3537,70 @@ int main(void)
         assert(complaints==0);
         panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
         panel_ui_create(action,setting,sound,&english);
+    }
+
+    // The pairing with the PC: a screen over everything, with the code to
+    // compare, and a button for each way out that the moment has.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_state_t p=base();
+        p.pairing=PANEL_PAIRING_WAIT;p.pair_can_cancel=true;
+        strcpy(p.pair_code,"482913");strcpy(p.pair_pc,"steamdeck");strcpy(p.pair_address,"192.168.178.20:8765");
+        panel_ui_update(&p);
+        lv_obj_t *screen=lv_screen_active();
+        assert(label(screen,panel_text(TXT_PAIR_TITLE))&&label(screen,panel_text(TXT_PAIR_WAIT)));
+        // Three and three, which is easier to compare than six.
+        assert(label(screen,"482 913"));
+        assert(label(screen,"PC: steamdeck (192.168.178.20:8765)"));
+        // A panel with a secret of its own can go back to it.
+        lv_obj_t *page=lv_obj_get_child(screen,-1);
+        lv_obj_t *cancel=button_with(page,panel_text(TXT_CANCEL));
+        assert(cancel&&button_with(page,panel_text(TXT_SETUP)));
+        actions=0;
+        lv_obj_send_event(cancel,LV_EVENT_CLICKED,NULL);
+        assert(actions==1&&last_action==PANEL_PAIR_CANCEL);
+        // One with none has nothing to go back to.
+        p.pair_can_cancel=false;
+        panel_ui_update(&p);
+        assert(!button_with(page,panel_text(TXT_CANCEL)));
+        // An end with no secret offers a new try.
+        p.pairing=PANEL_PAIRING_EXPIRED;p.pair_code[0]=0;
+        panel_ui_update(&p);
+        assert(label(screen,panel_text(TXT_PAIR_EXPIRED))&&!label(screen,"482 913"));
+        lv_obj_t *again=button_with(page,panel_text(TXT_PAIR_AGAIN));
+        assert(again);
+        lv_obj_send_event(again,LV_EVENT_CLICKED,NULL);
+        assert(actions==2&&last_action==PANEL_PAIR);
+        // The search, and a search that found nothing: the setup takes an
+        // address by hand.
+        p.pairing=PANEL_PAIRING_SEARCH;p.pair_pc[0]=p.pair_address[0]=0;
+        panel_ui_update(&p);
+        assert(label(screen,panel_text(TXT_PAIR_SEARCH))&&!button_with(page,panel_text(TXT_PAIR_AGAIN)));
+        p.pairing=PANEL_PAIRING_NOT_FOUND;
+        panel_ui_update(&p);
+        assert(label(screen,panel_text(TXT_PAIR_NOT_FOUND))&&button_with(page,panel_text(TXT_SETUP)));
+        // The end that worked has no button: it closes by itself.
+        p.pairing=PANEL_PAIRING_DONE;p.pair_can_cancel=true;
+        panel_ui_update(&p);
+        assert(label(screen,panel_text(TXT_PAIR_DONE)));
+        assert(!button_with(page,panel_text(TXT_SETUP))&&!button_with(page,panel_text(TXT_CANCEL)));
+        // And then the screen goes, and the band is back.
+        p.pairing=PANEL_PAIRING_NONE;
+        panel_ui_update(&p);
+        assert(!label(screen,panel_text(TXT_PAIR_TITLE))&&find_band(screen));
+        // The settings start a new pairing, and ask nothing first: the
+        // secret of the panel stays until the PC gives a new one.
+        panel_ui_settings_open();
+        lv_obj_t *settings=lv_obj_get_child(screen,-1);
+        lv_obj_t *pair_button=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(settings)&&!pair_button;i++)
+            pair_button=button_with(lv_obj_get_child(settings,i),panel_text(TXT_PAIR_START));
+        assert(pair_button);
+        actions=0;
+        lv_obj_send_event(pair_button,LV_EVENT_CLICKED,NULL);
+        assert(actions==1&&last_action==PANEL_PAIR);
+        assert(panel_ui_home());
     }
 
     puts("OK: seven pages that snap, in an order somebody can change, any of them "
@@ -3546,7 +3617,8 @@ int main(void)
          "its power chip in detail and its frames in movement, and the page "
          "of the card with its history and its Cooling Boost, the page of "
          "the LED bar with the effect of each mode of the PC and the colour and the brightness of the desktop, and the page "
-         "of the energy profile of its CPU, and all of it in a dark theme and a "
+         "of the energy profile of its CPU, and the pairing with the PC and its "
+         "code, and all of it in a dark theme and a "
          "light one, each in eight accents that a card of the settings chooses, "
          "with every label of every page readable in each.");
     return 0;

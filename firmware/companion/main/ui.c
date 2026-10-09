@@ -45,6 +45,8 @@ static panel_palette_t palette;
 
 static lv_obj_t *connection,*dot,*audio_status,*audio_toggle,*audio_knob,*volume,*brightness_label,*sleep_label,*message;
 static lv_obj_t *controls[6],*overlay,*setup_screen,*setup_text,*cpu_value,*gpu_value,*power_value;
+/* The screen of the pairing with the PC, and what changes on it. */
+static lv_obj_t *pair_screen,*pair_text,*pair_code,*pair_pc,*pair_left,*pair_right,*pair_right_label;
 /* Not in controls[]: that table is indexed by the action, it holds the
  * six the service performs, and PANEL_WAKE is done by the panel. */
 static lv_obj_t *wake_button,*wake_what;
@@ -962,7 +964,13 @@ void panel_ui_settings_open(void)
     text_at(link,panel_text(TXT_CONNECTION),20,16,240,&panel_font_18,TEXT);
     text_at(link,panel_text(TXT_SETUP_WHAT),20,44,240,&panel_font_12,MUTED);
     button(link,panel_text(TXT_SETUP),276,20,144,44,clicked,PANEL_SETUP);
-    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,1048,440,&panel_font_12,MUTED);
+    /* A new secret from the PC, with no setup: the network stays, and the
+     * secret of the panel stays until the PC gives the new one. */
+    lv_obj_t *pairing=panel(settings_screen,20,1048,440,84,CARD,true);
+    text_at(pairing,panel_text(TXT_PAIR),20,16,240,&panel_font_18,TEXT);
+    text_at(pairing,panel_text(TXT_PAIR_WHAT),20,44,248,&panel_font_12,MUTED);
+    button(pairing,panel_text(TXT_PAIR_START),276,20,144,44,clicked,PANEL_PAIR);
+    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,1146,440,&panel_font_12,MUTED);
     slide_in(settings_screen);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
@@ -2815,7 +2823,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     // Everything on the screen goes, because this runs a second time when
     // the language changes. Without it the new words are drawn over the old
     // ones. The pointers below are the ones that outlive a clean.
-    lv_obj_clean(s);overlay=NULL;setup_screen=NULL;setup_text=NULL;sensor_layer=NULL;
+    lv_obj_clean(s);overlay=NULL;setup_screen=NULL;setup_text=NULL;sensor_layer=NULL;pair_screen=NULL;
     look_layer=NULL;look_slider=NULL;look_value=NULL;
     for(int i=0;i<PANEL_LED_COLOURS;i++)look_swatches[i]=NULL;
     /* The settings page is a child of this screen too, so the clean
@@ -3298,6 +3306,70 @@ static void esp_power_show(const panel_state_t *s)
     set_textf(esp_power,"%s%s %d %%",
                           s->esp_charging?LV_SYMBOL_CHARGE " ":"",shape,level);
 }
+/* The screen of the pairing with the PC, over everything else while the
+ * panel pairs. The left button opens the setup, for an address by hand.
+ * The right one tries again after an end with no secret, or goes back for
+ * a panel that keeps the secret it has. */
+static bool pair_ended(panel_pairing_t phase)
+{
+    return phase==PANEL_PAIRING_REFUSED||phase==PANEL_PAIRING_EXPIRED
+        ||phase==PANEL_PAIRING_NOT_FOUND;
+}
+static void pair_right_clicked(lv_event_t *e)
+{
+    (void)e;
+    feedback();
+    if(send_action)send_action(pair_ended(last_state.pairing)?PANEL_PAIR:PANEL_PAIR_CANCEL);
+}
+static void pair_show(const panel_state_t *s)
+{
+    if(!pair_screen){
+        if(overlay){lv_obj_delete(overlay);overlay=NULL;}
+        pair_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+        text_at(pair_screen,panel_text(TXT_PAIR_TITLE),24,28,432,&panel_font_24,ACCENT_TEXT);
+        pair_text=text_at(pair_screen,"",24,84,432,&panel_font_18,TEXT);
+        lv_label_set_long_mode(pair_text,LV_LABEL_LONG_WRAP);
+        pair_code=text_at(pair_screen,"",24,214,432,&panel_font_32,TEXT);
+        center_text(pair_code);
+        lv_obj_set_style_text_letter_space(pair_code,6,0);
+        pair_pc=text_at(pair_screen,"",24,276,432,&panel_font_16,MUTED);
+        center_text(pair_pc);
+        pair_left=button(pair_screen,panel_text(TXT_SETUP),24,396,208,60,clicked,PANEL_SETUP);
+        pair_right=button(pair_screen,panel_text(TXT_CANCEL),248,396,208,60,pair_right_clicked,0);
+        pair_right_label=lv_obj_get_child(pair_right,0);
+    }
+    static const panel_text_id_t says[]={
+        [PANEL_PAIRING_SEARCH]=TXT_PAIR_SEARCH,[PANEL_PAIRING_ASK]=TXT_PAIR_ASK,
+        [PANEL_PAIRING_WAIT]=TXT_PAIR_WAIT,[PANEL_PAIRING_DONE]=TXT_PAIR_DONE,
+        [PANEL_PAIRING_BUSY]=TXT_PAIR_BUSY,[PANEL_PAIRING_NO_ANSWER]=TXT_PAIR_NO_ANSWER,
+        [PANEL_PAIRING_REFUSED]=TXT_PAIR_REFUSED,[PANEL_PAIRING_EXPIRED]=TXT_PAIR_EXPIRED,
+        [PANEL_PAIRING_NOT_FOUND]=TXT_PAIR_NOT_FOUND};
+    set_text(pair_text,panel_text(says[s->pairing]));
+    /* "482913" as "482 913", which is easier to compare. */
+    char code[12]="";
+    if(s->pair_code[0])snprintf(code,sizeof code,"%.3s %.3s",s->pair_code,s->pair_code+3);
+    set_text(pair_code,code);
+    char pc[96]="";
+    if(s->pair_pc[0]&&s->pair_address[0]){
+        char both[80];
+        snprintf(both,sizeof both,"%s (%s)",s->pair_pc,s->pair_address);
+        snprintf(pc,sizeof pc,panel_text(TXT_PAIR_PC),both);
+    }else if(s->pair_pc[0]||s->pair_address[0])
+        snprintf(pc,sizeof pc,panel_text(TXT_PAIR_PC),s->pair_pc[0]?s->pair_pc:s->pair_address);
+    set_text(pair_pc,pc);
+    bool ended=pair_ended(s->pairing),done=s->pairing==PANEL_PAIRING_DONE;
+    bool right=!done&&(ended||s->pair_can_cancel);
+    if(right==lv_obj_has_flag(pair_right,LV_OBJ_FLAG_HIDDEN)){
+        if(right)lv_obj_remove_flag(pair_right,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(pair_right,LV_OBJ_FLAG_HIDDEN);
+    }
+    set_text(pair_right_label,panel_text(ended?TXT_PAIR_AGAIN:TXT_CANCEL));
+    /* The accent for the way forward, and not for the way back. */
+    lv_obj_set_style_bg_color(pair_right,lv_color_hex(ended?ACCENT:BUTTON),0);
+    lv_obj_set_style_text_color(pair_right,lv_color_hex(ended?ON_ACCENT:TEXT),0);
+    if(done==!lv_obj_has_flag(pair_left,LV_OBJ_FLAG_HIDDEN)){
+        if(done)lv_obj_add_flag(pair_left,LV_OBJ_FLAG_HIDDEN);else lv_obj_remove_flag(pair_left,LV_OBJ_FLAG_HIDDEN);
+    }
+}
 void panel_ui_update(const panel_state_t *s)
 {
     /* Before the test for a new state: the history moves on without one,
@@ -3320,6 +3392,11 @@ void panel_ui_update(const panel_state_t *s)
         }
         lv_label_set_text_fmt(setup_text,panel_text(TXT_SETUP_STEPS),s->setup_ssid,s->setup_password);return;
     }
+    if(s->pairing!=PANEL_PAIRING_NONE){
+        settings_forget();pads_forget();pc_forget();sensor_close();look_close();self_forget();
+        pair_show(s);return;
+    }
+    if(pair_screen){lv_obj_delete(pair_screen);pair_screen=NULL;}
     set_text(connection,!s->wifi?panel_text(TXT_WIFI_OFFLINE):s->online?panel_text(TXT_PC_ONLINE):panel_text(TXT_PC_OFFLINE));
     set_bg(dot,s->online?palette.online:palette.offline);
     pads_head(s);

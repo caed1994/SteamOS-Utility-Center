@@ -36,6 +36,9 @@
 #include "ui.h"
 #include "config.h"
 #include "panel_auth.h"
+#include "panel_pair.h"
+#include "esp_random.h"
+#include "esp_mac.h"
 #include "panel_text.h"
 #include "panel_boot.h"
 #include "panel_wol.h"
@@ -1319,10 +1322,339 @@ static void self_read(void)
 _Static_assert(PANEL_NETWORK_PRIORITY<tskIDLE_PRIORITY+CONFIG_LV_DRAW_THREAD_PRIO,
                "the network task stands above the thread that draws");
 
+/* -- the pairing with the PC -------------------------------------------
+ *
+ * A panel with no secret asks the PC for one, and a person accepts it on
+ * the PC after a look at the code on both screens. See panel_pair.h for the
+ * key exchange and pairing.py for the other end. A panel with no address of
+ * the PC finds it first with a broadcast, which the service answers. */
+
+/* How often the search sends its broadcast, and how long it looks. */
+#define PAIR_SEARCH_EVERY_MS 1000
+#define PAIR_SEARCH_MS 20000
+/* How often the panel asks the PC for the answer of the person. */
+#define PAIR_CHECK_EVERY_MS 2000
+/* The wait before the panel tries again after a failure that can pass. */
+#define PAIR_AGAIN_MS 5000
+/* How long "Paired" stays on the screen. */
+#define PAIR_DONE_MS 2000
+/* The PC keeps a request for pairing.WAIT_SECONDS. The panel waits a
+ * little longer, so that the answer of the PC and not this clock ends it. */
+#define PAIR_WAIT_MS (330*1000)
+/* With no answer of the PC for this long, a panel that is paired looks for
+ * it again, one broadcast at a time: its address can change. */
+#define FIND_AFTER_MS 60000
+#define FIND_EVERY_MS 30000
+
+static struct {
+    panel_pairing_t phase;
+    panel_pair_keys_t keys;
+    bool keys_made;
+    char id[PANEL_PAIR_ID];
+    char secret[PANEL_PAIR_SECRET];
+    char code[PANEL_PAIR_CODE];
+    char pc[PANEL_PAIR_NAME];
+    char server[sizeof(config.server)];
+    TickType_t began, next, sent;
+    int sock;
+} pair={.sock=-1};
+
+static void fill_random(unsigned char *out, size_t size)
+{
+    esp_fill_random(out,size);
+}
+
+/* The keys and the secret leave the memory as soon as they are not
+ * needed, and the request leaves with them. */
+static void pair_wipe(void)
+{
+    memset(&pair.keys,0,sizeof(pair.keys));
+    pair.keys_made=false;
+    memset(pair.secret,0,sizeof(pair.secret));
+    memset(pair.code,0,sizeof(pair.code));
+    pair.id[0]=0;
+    if (pair.sock>=0) { close(pair.sock); pair.sock=-1; }
+}
+
+static void pair_publish(void)
+{
+    xSemaphoreTake(lock,portMAX_DELAY);
+    state.pairing=pair.phase;
+    snprintf(state.pair_code,sizeof(state.pair_code),"%s",
+             pair.phase==PANEL_PAIRING_WAIT?pair.code:"");
+    snprintf(state.pair_pc,sizeof(state.pair_pc),"%s",pair.pc);
+    /* "http://192.168.1.20:8765" as "192.168.1.20:8765". */
+    snprintf(state.pair_address,sizeof(state.pair_address),"%.47s",
+             strncmp(pair.server,"http://",7)==0?pair.server+7:pair.server);
+    state.pair_can_cancel=config.token[0]!=0;
+    xSemaphoreGive(lock);
+}
+
+static void pair_set(panel_pairing_t phase,int wait_ms)
+{
+    pair.phase=phase;
+    pair.next=xTaskGetTickCount()+pdMS_TO_TICKS(wait_ms);
+    pair_publish();
+}
+
+/* A pairing from the start: with the address of the setup, or with a
+ * search where there is none. A secret that the panel has stays until a
+ * new one comes. */
+static void pair_start(void)
+{
+    pair_wipe();
+    snprintf(pair.server,sizeof(pair.server),"%s",config.server);
+    pair.pc[0]=0;
+    pair.began=xTaskGetTickCount();
+    ESP_LOGI("panel_pair","pairing: %s",pair.server[0]?"asking the PC of the setup":"looking for the PC");
+    pair_set(pair.server[0]?PANEL_PAIRING_ASK:PANEL_PAIRING_SEARCH,0);
+}
+
+static void pair_stop(void)
+{
+    pair_wipe();
+    pair_set(PANEL_PAIRING_NONE,0);
+}
+
+/* The broadcast that looks for the service of the panel on the PC: to all
+ * of the network, and to the broadcast address of this network, as the
+ * magic packet goes. */
+static bool find_send(int sock)
+{
+    uint32_t targets[2]={0xFFFFFFFFu,0xFFFFFFFFu};
+    esp_netif_ip_info_t info;
+    esp_netif_t *netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif && esp_netif_get_ip_info(netif,&info)==ESP_OK && info.ip.addr)
+        targets[1]=info.ip.addr | ~info.netmask.addr;
+    bool sent=false;
+    for (int i=0;i<2;i++) {
+        if (i==1 && targets[1]==targets[0]) break;
+        struct sockaddr_in where={0};
+        where.sin_family=AF_INET;
+        where.sin_port=htons(PANEL_PAIR_PORT);
+        where.sin_addr.s_addr=targets[i];
+        if (sendto(sock,PANEL_PAIR_DISCOVER,strlen(PANEL_PAIR_DISCOVER),0,
+                   (struct sockaddr *)&where,sizeof(where))>0) sent=true;
+    }
+    return sent;
+}
+
+static int find_socket(void)
+{
+    int sock=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
+    if (sock<0) return -1;
+    int yes=1;
+    setsockopt(sock,SOL_SOCKET,SO_BROADCAST,&yes,sizeof(yes));
+    return sock;
+}
+
+/* One answer to the broadcast, if one is there: the address of the PC is
+ * the address the answer came from, with the port that it says. */
+static bool find_read(int sock,char *server,size_t room,char name[PANEL_PAIR_NAME])
+{
+    char data[256];
+    struct sockaddr_in from={0};
+    socklen_t size=sizeof(from);
+    int got=recvfrom(sock,data,sizeof(data)-1,MSG_DONTWAIT,(struct sockaddr *)&from,&size);
+    if (got<=0) return false;
+    data[got]=0;
+    cJSON *root=cJSON_Parse(data);
+    cJSON *service=cJSON_GetObjectItemCaseSensitive(root,"service");
+    cJSON *port=cJSON_GetObjectItemCaseSensitive(root,"port");
+    cJSON *said=cJSON_GetObjectItemCaseSensitive(root,"name");
+    bool ok=cJSON_IsString(service) && strcmp(service->valuestring,PANEL_PAIR_SERVICE)==0
+        && cJSON_IsNumber(port) && port->valueint>0 && port->valueint<65536;
+    if (ok) {
+        uint32_t a=from.sin_addr.s_addr;
+        snprintf(server,room,"http://%u.%u.%u.%u:%d",(unsigned)(a&255u),(unsigned)((a>>8)&255u),
+                 (unsigned)((a>>16)&255u),(unsigned)(a>>24),port->valueint);
+        panel_pair_name(name,cJSON_IsString(said)?said->valuestring:"");
+    }
+    cJSON_Delete(root);
+    return ok;
+}
+
+/* One request to the pairing paths of the service, which need no
+ * signature: the panel has no secret for them. */
+static int pair_http(const char *path,const char *body,response_t *out)
+{
+    char url[224];
+    memset(out,0,sizeof(*out));
+    snprintf(url,sizeof(url),"%s%s",pair.server,path);
+    esp_http_client_config_t cfg={.url=url,.timeout_ms=PANEL_ASK_MS,.event_handler=collect_data,
+                                  .user_data=out,.disable_auto_redirect=true};
+    esp_http_client_handle_t client=esp_http_client_init(&cfg);
+    if (!client) return 0;
+    if (body) {
+        esp_http_client_set_method(client,HTTP_METHOD_POST);
+        esp_http_client_set_header(client,"Content-Type","application/json");
+        esp_http_client_set_post_field(client,body,strlen(body));
+    }
+    esp_err_t err=esp_http_client_perform(client);
+    int status=esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    return out->overflow ? 0 : err==ESP_OK ? status : 0;
+}
+
+static void pair_search(void)
+{
+    TickType_t now=xTaskGetTickCount();
+    if (pair.sock<0 && (pair.sock=find_socket())<0) { pair_set(PANEL_PAIRING_NO_ANSWER,PAIR_AGAIN_MS); return; }
+    char name[PANEL_PAIR_NAME];
+    if (find_read(pair.sock,pair.server,sizeof(pair.server),name)) {
+        close(pair.sock); pair.sock=-1;
+        snprintf(pair.pc,sizeof(pair.pc),"%s",name);
+        ESP_LOGI("panel_pair","found %s at %s",pair.pc,pair.server);
+        pair_set(PANEL_PAIRING_ASK,0);
+        return;
+    }
+    if (now-pair.began>=pdMS_TO_TICKS(PAIR_SEARCH_MS)) {
+        close(pair.sock); pair.sock=-1;
+        ESP_LOGW("panel_pair","no PC answered the search");
+        pair_set(PANEL_PAIRING_NOT_FOUND,0);
+        return;
+    }
+    if (now-pair.sent>=pdMS_TO_TICKS(PAIR_SEARCH_EVERY_MS)) { pair.sent=now; find_send(pair.sock); }
+    pair.next=now+pdMS_TO_TICKS(100);
+}
+
+static void pair_ask(void)
+{
+    if (!pair.keys_made) {
+        if (!panel_pair_keys(&pair.keys,fill_random)) { pair_set(PANEL_PAIRING_NO_ANSWER,PAIR_AGAIN_MS); return; }
+        pair.keys_made=true;
+    }
+    uint8_t mac[6];
+    esp_read_mac(mac,ESP_MAC_WIFI_STA);
+    char name[PANEL_PAIR_NAME],body[160];
+    snprintf(name,sizeof(name),"SteamOS-Panel-%02X%02X",mac[4],mac[5]);
+    if (!panel_pair_body(body,sizeof(body),name,pair.keys.public_key)) { pair_set(PANEL_PAIRING_NO_ANSWER,PAIR_AGAIN_MS); return; }
+    response_t *out=panel_psram_calloc(1,sizeof(*out));
+    if (!out) { pair_set(PANEL_PAIRING_NO_ANSWER,PAIR_AGAIN_MS); return; }
+    int code=pair_http(PANEL_PAIR_PATH,body,out);
+    cJSON *root=code==200?cJSON_Parse(out->data):NULL;
+    free(out);
+    if (code==200) {
+        cJSON *id=cJSON_GetObjectItemCaseSensitive(root,"id");
+        cJSON *key=cJSON_GetObjectItemCaseSensitive(root,"key");
+        cJSON *said=cJSON_GetObjectItemCaseSensitive(root,"name");
+        unsigned char pc_key[PANEL_PAIR_KEY],shared[PANEL_PAIR_KEY];
+        bool ok=cJSON_IsString(id) && panel_pair_id_ok(id->valuestring)
+            && cJSON_IsString(key) && panel_pair_unhex(key->valuestring,pc_key)
+            && panel_pair_shared(pair.keys.private_key,pc_key,shared,fill_random)
+            && panel_pair_derive(shared,pair.keys.public_key,pc_key,pair.secret,pair.code);
+        if (ok) {
+            snprintf(pair.id,sizeof(pair.id),"%s",id->valuestring);
+            if (cJSON_IsString(said) && said->valuestring[0]) panel_pair_name(pair.pc,said->valuestring);
+        }
+        memset(shared,0,sizeof(shared));
+        /* The private key has done its work. */
+        memset(&pair.keys.private_key,0,sizeof(pair.keys.private_key));
+        cJSON_Delete(root);
+        if (ok) { ESP_LOGI("panel_pair","the PC %s shows the code; waiting for a person",pair.pc); pair_set(PANEL_PAIRING_WAIT,PAIR_CHECK_EVERY_MS); }
+        else { pair.keys_made=false; pair_set(PANEL_PAIRING_NO_ANSWER,PAIR_AGAIN_MS); }
+        return;
+    }
+    cJSON_Delete(root);
+    ESP_LOGW("panel_pair","the PC answers the request with %d",code);
+    if (code==409) pair_set(PANEL_PAIRING_BUSY,PAIR_AGAIN_MS);
+    else if (code==429) pair.next=xTaskGetTickCount()+pdMS_TO_TICKS(3000);
+    else {
+        /* No answer: an address from the search can be old, so the next
+         * try looks again. One from the setup stays. */
+        if (!config.server[0] || strcmp(config.server,pair.server)!=0) pair.server[0]=0;
+        pair_set(PANEL_PAIRING_NO_ANSWER,PAIR_AGAIN_MS);
+    }
+}
+
+static void pair_check(int *answered)
+{
+    char path[48];
+    snprintf(path,sizeof(path),"%s/%s",PANEL_PAIR_PATH,pair.id);
+    response_t *out=panel_psram_calloc(1,sizeof(*out));
+    if (!out) { pair.next=xTaskGetTickCount()+pdMS_TO_TICKS(PAIR_CHECK_EVERY_MS); return; }
+    int code=pair_http(path,NULL,out);
+    cJSON *root=code==200?cJSON_Parse(out->data):NULL;
+    free(out);
+    cJSON *said=cJSON_GetObjectItemCaseSensitive(root,"state");
+    const char *word=cJSON_IsString(said)?said->valuestring:"";
+    if (code==200 && strcmp(word,"accepted")==0) {
+        esp_err_t err=panel_config_save_pairing(pair.server,pair.secret);
+        if (err==ESP_OK) {
+            snprintf(config.server,sizeof(config.server),"%s",pair.server);
+            snprintf(config.token,sizeof(config.token),"%s",pair.secret);
+            ESP_LOGI("panel_pair","paired with %s at %s",pair.pc,pair.server);
+            pair_wipe();
+            *answered=-1;
+            pair_set(PANEL_PAIRING_DONE,PAIR_DONE_MS);
+        } else {
+            ESP_LOGE("panel_pair","the new secret cannot be saved: %s",esp_err_to_name(err));
+            pair_wipe();
+            pair_set(PANEL_PAIRING_NO_ANSWER,PAIR_AGAIN_MS);
+        }
+    } else if (code==200 && strcmp(word,"refused")==0) {
+        pair_wipe(); pair_set(PANEL_PAIRING_REFUSED,0);
+    } else if ((code==200 && strcmp(word,"expired")==0) || code==404
+               || xTaskGetTickCount()-pair.began>=pdMS_TO_TICKS(PAIR_WAIT_MS)) {
+        /* 404: the PC forgot the request, by its age or by a restart. */
+        pair_wipe(); pair_set(PANEL_PAIRING_EXPIRED,0);
+    } else {
+        pair.next=xTaskGetTickCount()+pdMS_TO_TICKS(PAIR_CHECK_EVERY_MS);
+    }
+    cJSON_Delete(root);
+}
+
+/* One step of the pairing, at each turn of the loop of the network task.
+ * Each step is short: the search reads and sends without waiting, and a
+ * request waits PANEL_ASK_MS at most. */
+static void pair_turn(int *answered)
+{
+    if ((int32_t)(xTaskGetTickCount()-pair.next)<0 || !connected()) return;
+    switch (pair.phase) {
+    case PANEL_PAIRING_SEARCH: pair_search(); break;
+    case PANEL_PAIRING_ASK: pair_ask(); break;
+    case PANEL_PAIRING_WAIT: pair_check(answered); break;
+    case PANEL_PAIRING_DONE: pair_set(PANEL_PAIRING_NONE,0); break;
+    case PANEL_PAIRING_BUSY:
+    case PANEL_PAIRING_NO_ANSWER:
+        pair.began=xTaskGetTickCount();
+        pair_set(pair.server[0]?PANEL_PAIRING_ASK:PANEL_PAIRING_SEARCH,0);
+        break;
+    default: break;
+    }
+}
+
+/* A paired panel whose PC does not answer: one broadcast now and then, and
+ * the address of the answer, where it is a different one. The secret stays,
+ * so the PC there must still know it. */
+static void find_again(TickType_t unanswered_since)
+{
+    static TickType_t last;
+    static int sock=-1;
+    TickType_t now=xTaskGetTickCount();
+    if (sock>=0) {
+        char server[sizeof(config.server)],name[PANEL_PAIR_NAME];
+        if (find_read(sock,server,sizeof(server),name)) {
+            close(sock); sock=-1;
+            if (strcmp(server,config.server)!=0 && panel_config_save_server(server)==ESP_OK) {
+                ESP_LOGI("panel_pair","the PC %s is at %s now",name,server);
+                snprintf(config.server,sizeof(config.server),"%s",server);
+            }
+            return;
+        }
+        if (now-last>=pdMS_TO_TICKS(5000)) { close(sock); sock=-1; }
+        return;
+    }
+    if (now-unanswered_since<pdMS_TO_TICKS(FIND_AFTER_MS) || now-last<pdMS_TO_TICKS(FIND_EVERY_MS)) return;
+    last=now;
+    if ((sock=find_socket())>=0 && !find_send(sock)) { close(sock); sock=-1; }
+}
+
 static void network_task(void *arg)
 {
     (void)arg;
     if (!config.ssid[0]) portal_start();
+    else if (!config.token[0]) pair_start();
     /* Indexed by panel_action_t, and it has to hold every action below
      * PANEL_SETUP. The guard further down is that range, so a name added
      * to the enum and not to this table makes every button under it send
@@ -1338,8 +1670,10 @@ static void network_task(void *arg)
      * and not five seconds after the rest. */
     TickType_t last_battery=xTaskGetTickCount()-pdMS_TO_TICKS(5000);
     bool rest_wanted=false,was_connected=false,trial_over=false;
-    /* The answer of the last poll, for the line when it changes. */
+    /* The answer of the last poll, for the line when it changes, and the
+     * time since which the PC gives none. */
     int answered=-1;
+    TickType_t unanswered_since=xTaskGetTickCount();
     for (;;) {
         /* A reading of the clock at every turn of this loop, which is ten a
          * second or so. See panel_clock_sample. */
@@ -1435,7 +1769,14 @@ static void network_task(void *arg)
         }
         panel_action_t action;
         if (xQueueReceive(actions,&action,pdMS_TO_TICKS(100))==pdTRUE) {
-            if (action==PANEL_SETUP) { portal_start(); continue; }
+            if (action==PANEL_SETUP) { pair_stop(); portal_start(); continue; }
+            if (action==PANEL_PAIR) { pair_start(); continue; }
+            if (action==PANEL_PAIR_CANCEL) {
+                /* Only for a panel that keeps a secret of its own. One with
+                 * none has nothing to go back to. */
+                if (config.token[0]) pair_stop();
+                continue;
+            }
             if (action==PANEL_UPDATE) {
                 firmware_update();
                 last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
@@ -1507,10 +1848,20 @@ static void network_task(void *arg)
             xSemaphoreGive(lock);
             last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
         }
+        /* The pairing takes the place of the poll: a panel with no secret
+         * has nothing to ask, and the screen of the pairing covers the
+         * rest. */
+        if (pair.phase!=PANEL_PAIRING_NONE) {
+            pair_turn(&answered);
+            if (pair.phase==PANEL_PAIRING_NONE) last_poll=xTaskGetTickCount()-pdMS_TO_TICKS(3000);
+            continue;
+        }
+        if (answered==0 && connected() && !atomic_load(&radio_resting)) find_again(unanswered_since);
         if (!atomic_load(&radio_resting) &&
             xTaskGetTickCount()-last_poll>=pdMS_TO_TICKS(3000)) {
             last_poll=xTaskGetTickCount();
             int code=connected() ? request("/v1/status",NULL,PANEL_ASK_MS) : 0;
+            if (code!=0 || answered!=0) unanswered_since=xTaskGetTickCount();
             /* A firmware on trial is kept once the PC answered it: it
              * starts, draws, joins the network and talks to the service.
              * Until then a restart goes back to the firmware before it.

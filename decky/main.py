@@ -27,6 +27,12 @@ import decky
 # module. /var/lib is a partition of its own and it stays.
 CTL = "/var/lib/steamos-utility-center/steamos-utility-centerctl"
 
+# The request of a panel that asks to pair. The service of the panel writes
+# it into the runtime directory of the user, and this plugin runs as that
+# user. The page asks for it every few seconds, so it is a read of one small
+# file and not a run of the command. See pairing.py.
+PAIRING = "steamos-utility-center-pairing.json"
+
 
 class Plugin:
 
@@ -104,6 +110,25 @@ class Plugin:
     async def do_action(self, name: str) -> dict:
         """Does one thing that is not a setting."""
         return await self._ctl("action", name)
+
+    async def get_pairing(self) -> dict:
+        """The panel that asks to pair, or null. The code is in it."""
+        path = os.path.join("/run/user/%d" % os.getuid(), PAIRING)
+        try:
+            with open(path, "rb") as handle:
+                found = json.loads(handle.read(4096).decode("utf-8"))
+        except (OSError, ValueError):
+            return {"ok": True, "waiting": None}
+        if not isinstance(found, dict):
+            return {"ok": True, "waiting": None}
+        return {"ok": True, "waiting": {
+            key: found.get(key) for key in ("id", "code", "name", "address",
+                                            "until")}}
+
+    async def answer_pairing(self, request: str, accept: bool) -> dict:
+        """The answer of the person. The command checks the id."""
+        return await self._ctl("pair", "accept" if accept else "refuse",
+                               str(request))
 
     async def _main(self):
         decky.logger.info("SteamOS Utility Center plugin loaded")

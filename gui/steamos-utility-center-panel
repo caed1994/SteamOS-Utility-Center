@@ -1923,6 +1923,9 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
         if lact.available():
             self._gpu_first = self.root.after(CEC_FIRST_LOOK,
                                               self._first_look_gpu)
+        # A new panel that asks to pair gets its question at once, on any
+        # page. See CompanionPage._watch_pairing.
+        self._watch_pairing()
         # Open at the height the content needs, so the first thing anyone does
         # is not what resizes the window.
         self._fit_window()

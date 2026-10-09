@@ -69,6 +69,9 @@ clone of the source in `/var/lib/steamos-utility-center/source`.
 | Wall panel API | `GET /v1/status` (every 3 s), `POST /v1/action`, `POST /v1/led`, `POST /v1/cpu`, `GET /v1/firmware` |
 | Wall panel auth | HMAC with a nonce, headers `X-Panel-Nonce` and `X-Panel-Auth`, no clock needed |
 | Wall panel secret | `~/.config/steamos-utility-center/companion-token`, 32 characters or more |
+| Pairing | `pairing.py` and `panel_pair.c`: X25519 (RFC 7748), a token and a code of six digits from the shared secret. `POST /v1/pair` and `GET /v1/pair/<id>` need no signature. One request at a time, 300 s |
+| Pairing answer | the request in `$XDG_RUNTIME_DIR/steamos-utility-center-pairing.json`, the answer in `...-pairing-answer.json`. The control panel and the Decky plugin (`ctl pair accept <id>`) give the answer |
+| Search for the PC | the panel broadcasts `steamos-utility-center discover 1` to UDP 8765, and `pairing.Responder` answers with the port and the host name |
 | Refusals | 409 a change runs, 501 no module, 403 no sudo rule, 502 refused, 401 new nonce |
 | Actions | a name from the fixed table `ACTIONS`, sent to subprocess with no shell |
 | Mirror effect | `screen.py`, `RAINBOW_SHOWS=mirror`, Game Mode only. The LED service cannot see `/run/user` (`ProtectHome=yes`). So the user unit `steamos-utility-center-mirror` (`--mirror`) reads the PipeWire node `gamescope` with gst-launch-1.0 |

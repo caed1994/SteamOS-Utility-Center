@@ -229,6 +229,12 @@ int main(void)
     panel_ui_self_open();
     scrolled(lv_obj_get_child(lv_screen_active(),-1),"the panel");
     panel_ui_home();
+    /* The pairing with the PC, with both of its buttons. */
+    s.pairing=PANEL_PAIRING_EXPIRED;
+    panel_ui_update(&s);
+    screen("the pairing");
+    s.pairing=PANEL_PAIRING_NONE;
+    panel_ui_update(&s);
     printf("OK: every place that takes a tap on %u screens of the panel, %u of them, takes it "
            "over %d px each way, %d at the edge of the screen.\n",screens,targets,ZONE,EDGE_ZONE);
     return 0;

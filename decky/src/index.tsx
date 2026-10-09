@@ -12,7 +12,7 @@
 // while sitting on a sofa with a controller? A drive is added one time and a
 // keyboard layout is set one time, so both are in the panel.
 
-import { callable, definePlugin } from "@decky/api";
+import { callable, definePlugin, toaster } from "@decky/api";
 import {
   ButtonItem,
   Dropdown,
@@ -82,6 +82,25 @@ const getFullStatus = callable<[], Status>("get_full_status");
 const getArea = callable<[string], Area>("get_area");
 const setArea = callable<[string, Record<string, unknown>], Answer>("set_area");
 const doAction = callable<[string], Answer>("do_action");
+
+// A panel that asks to pair. The code on its screen and the code here come
+// from the same key exchange, so the person compares the two.
+type Pairing = {
+  id: string;
+  code: string;
+  name: string;
+  address: string;
+  until: number;
+};
+const getPairing = callable<[], Answer & { waiting?: Pairing | null }>(
+  "get_pairing",
+);
+const answerPairing = callable<[string, boolean], Answer>("answer_pairing");
+
+// "482913" as "482 913", which is easier to compare.
+function spaced(code: string): string {
+  return code.slice(0, 3) + " " + code.slice(3);
+}
 
 // The scenes of the strip, in words. The command answers with the names that
 // the configuration file uses.
@@ -180,6 +199,7 @@ function Choice(props: {
 // So the values live here, where a component that is built again reads the
 // same ones, and `draw` below puts them on the screen.
 const held = {
+  pairing: null as Pairing | null,
   status: null as Status | null,
   strip: null as Area | null,
   pegboard: null as Area | null,
@@ -457,8 +477,53 @@ function Content() {
   const governor = shown("power", "CPU_GOVERNOR", cpu.CPU_GOVERNOR);
   const preference = shown("power", "CPU_EPP", cpu.CPU_EPP);
 
+  // The answer of the person to a panel that asks to pair.
+  const pairAnswer = (accept: boolean) => {
+    const asked = held.pairing;
+    if (!asked) {
+      return;
+    }
+    held.pairing = null;
+    void change(() => answerPairing(asked.id, accept));
+  };
+
   return (
     <>
+      {has("companion") && held.pairing && (
+        <PanelSection title="Steam Companion">
+          <PanelSectionRow>
+            <div style={{ fontSize: "0.8em" }}>
+              {(held.pairing.name || "A panel") + " at " +
+                (held.pairing.address || "?") + " asks to pair. Accept it " +
+                "only when the panel shows the same code."}
+            </div>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <div style={{ fontSize: "1.6em", textAlign: "center" }}>
+              {spaced(String(held.pairing.code))}
+            </div>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              disabled={held.busy}
+              onClick={() => pairAnswer(true)}
+            >
+              Accept
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              disabled={held.busy}
+              onClick={() => pairAnswer(false)}
+            >
+              Refuse
+            </ButtonItem>
+          </PanelSectionRow>
+        </PanelSection>
+      )}
+
       {/*
         Only what went wrong, and nothing when nothing did. A page that
         reports its own health at the top of every visit reports it to
@@ -749,9 +814,48 @@ function Content() {
   );
 }
 
-export default definePlugin(() => ({
-  name: "SteamOS Utility Center",
-  titleView: <div>SteamOS Utility Center</div>,
-  content: <Content />,
-  icon: <FaLightbulb />,
-}));
+// The question for a panel that asks to pair, also while this page is closed:
+// one toast for each new request, and the buttons on the page. A read of a
+// small file each few seconds, and no run of the command.
+const PAIRING_LOOK_MS = 3000;
+let pairingSeen = "";
+
+async function lookForPairing() {
+  let answer;
+  try {
+    answer = await getPairing();
+  } catch {
+    return;
+  }
+  const found = answer.ok ? (answer.waiting ?? null) : null;
+  const waiting =
+    found && typeof found.id === "string" && found.until * 1000 > Date.now()
+      ? found
+      : null;
+  if (waiting && waiting.id !== pairingSeen) {
+    pairingSeen = waiting.id;
+    toaster.toast({
+      title: "Steam Companion",
+      body:
+        "A panel asks to pair. Code " + spaced(String(waiting.code)) +
+        ". Accept it in SteamOS Utility Center.",
+    });
+  }
+  if ((held.pairing?.id ?? "") !== (waiting?.id ?? "")) {
+    held.pairing = waiting;
+    draw();
+  }
+}
+
+export default definePlugin(() => {
+  const timer = setInterval(() => void lookForPairing(), PAIRING_LOOK_MS);
+  return {
+    name: "SteamOS Utility Center",
+    titleView: <div>SteamOS Utility Center</div>,
+    content: <Content />,
+    icon: <FaLightbulb />,
+    onDismount() {
+      clearInterval(timer);
+    },
+  };
+});

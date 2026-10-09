@@ -49,6 +49,7 @@ from . import lact
 from . import modules
 from . import mounts
 from . import nanoleaf
+from . import pairing
 from . import pegboard
 from . import power
 from . import shim
@@ -1122,6 +1123,11 @@ def _parser():
     where.add_parser("areas", help="the areas and the actions of this build")
 
     said = where.add_parser(
+        "pair", help="the panel that asks to pair, and the answer to it")
+    said.add_argument("answer", nargs="?", choices=("accept", "refuse"))
+    said.add_argument("id", nargs="?", help="the id of the request")
+
+    said = where.add_parser(
         "permit", help="write the sudoers rule. The installer runs this.")
     said.add_argument("user", help="the desktop user the rule is for")
     return parser
@@ -1144,7 +1150,25 @@ def run_command(argv=None):
         return action(parsed.name, may_prompt=parsed.may_prompt)
     if parsed.command == "permit":
         return permit(parsed.user)
+    if parsed.command == "pair":
+        return pair(parsed.answer, parsed.id)
     return {"areas": list(AREAS), "actions": list(ACTIONS)}
+
+
+def pair(answer=None, request_id=None, folder=None):
+    """The panel that waits for a person, or the answer of the person.
+
+    With no answer it reports the request that waits, or null. An answer
+    needs the id of that request, so a request that came after the person
+    looked cannot take the answer of the one before it.
+    """
+    if answer is None:
+        return {"waiting": pairing.waiting(folder)}
+    found = pairing.waiting(folder)
+    if not found or found["id"] != request_id:
+        raise CtlError("no panel waits with that id")
+    pairing.answer(request_id, answer == "accept", folder=folder)
+    return {"answered": answer, "id": request_id}
 
 
 def main(argv=None):

@@ -24,6 +24,7 @@ from tkinter import ttk
 
 import dialogs
 import ledpanel
+from steamos_utility_center import pairing
 
 from panelbase import (CARD_WRAP, GROUP_GAP, ROW_FIELD_WIDTH, ROW_GAP,
                        SIDE_MARGIN, SOURCE_DIR)
@@ -123,6 +124,33 @@ class CompanionPage:
         self.runner.start(ledpanel.restart_companion_command(),
                           lambda _code: self._reread_companion())
 
+    # -- a new panel that asks to pair --------------------------------------
+
+    # How often the window looks for a panel that asks to pair.
+    PAIR_LOOK_MS = 1500
+
+    def _watch_pairing(self):
+        """Asks the person about a panel that asks to pair, one time each.
+
+        The service of the panel writes the request into a file in the
+        runtime directory, and the answer goes back the same way. See
+        pairing.py.
+        """
+        found = pairing.waiting()
+        if found and found["id"] != getattr(self, "_pairing_seen", None):
+            self._pairing_seen = found["id"]
+            dialog = dialogs.CompanionPairDialog(self.root, found,
+                                                 pairing.waiting)
+            if not dialog.gone:
+                try:
+                    pairing.answer(found["id"], dialog.answer)
+                except (OSError, ValueError) as exc:
+                    self._say("Pair a Steam Companion",
+                              "The answer did not reach the service of the "
+                              "panel: %s" % exc)
+        self._pairing_job = self.root.after(self.PAIR_LOOK_MS,
+                                            self._watch_pairing)
+
     # -- what the panel has to be told -------------------------------------
 
     def _companion_where(self):
@@ -137,8 +165,10 @@ class CompanionPage:
         self._companion_line(
             inner,
             "Hold the panel's Set up button, join the network it opens, and "
-            "open http://192.168.4.1 on a phone. The form there asks for "
-            "these two.")
+            "open http://192.168.4.1 on a phone. Give it your Wi-Fi. The "
+            "panel then finds this PC and asks to pair, and this window asks "
+            "you to compare a code. The address and the secret below are for "
+            "a setup by hand.")
         self.companion_where = self._companion_line(inner,
                                                     self._companion_where(),
                                                     muted=False)

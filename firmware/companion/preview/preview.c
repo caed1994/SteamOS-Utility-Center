@@ -173,6 +173,18 @@ int main(int argc,char **argv)
         s.online=false;s.can_wake=true;
     }
     if(argc>2&&strcmp(argv[2],"setup")==0){s.setup=true;strcpy(s.setup_ssid,"SteamOS-Panel-3A12");strcpy(s.setup_password,"ABCD2345EFGH");}
+    /* The pairing with the PC: "pair-search" looks for it, "pair-wait"
+     * shows the code, "pair-not-found" found none, and "pair-expired"
+     * waited for nobody. */
+    if(argc>2&&strncmp(argv[2],"pair-",5)==0){
+        s.pairing=strcmp(argv[2],"pair-search")==0?PANEL_PAIRING_SEARCH
+                 :strcmp(argv[2],"pair-not-found")==0?PANEL_PAIRING_NOT_FOUND
+                 :strcmp(argv[2],"pair-expired")==0?PANEL_PAIRING_EXPIRED:PANEL_PAIRING_WAIT;
+        if(s.pairing==PANEL_PAIRING_WAIT){
+            strcpy(s.pair_code,"482913");strcpy(s.pair_pc,"steamdeck");
+            strcpy(s.pair_address,"192.168.178.20:8765");s.pair_can_cancel=true;
+        }
+    }
     /* The third page, with a game on it and its achievements under the
      * name. */
     if(argc>2&&strcmp(argv[2],"playing")==0){

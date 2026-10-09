@@ -23,4 +23,10 @@ bool panel_config_load(panel_config_t *config);
  * by the setup form, and this is learnt instead, so the two do not share a
  * path that could drop one while saving the other. */
 esp_err_t panel_config_save_wol(const char *mac);
+
+/* The address of the PC and the secret that a pairing gave, in one commit,
+ * and the address alone, for a PC that the panel found again at a new
+ * address. See panel_pair.h. */
+esp_err_t panel_config_save_pairing(const char *server, const char *token);
+esp_err_t panel_config_save_server(const char *server);
 esp_err_t panel_config_portal(char *ssid, size_t ssid_size, char *password, size_t password_size);

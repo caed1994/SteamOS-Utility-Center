@@ -5702,7 +5702,7 @@ class ModulePageTest(unittest.TestCase):
 
 
 class CompanionPageTest(unittest.TestCase):
-    """The Wall Panel page, in a real window.
+    """The Steam Companion page, in a real window.
 
     Nothing on this page writes a setting. It reports three things that live
     outside this window, and it has one button that writes to hardware. That
@@ -5748,6 +5748,99 @@ class CompanionPageTest(unittest.TestCase):
     def test_the_page_is_there_and_named(self):
         panel = self._panel()
         self.assertEqual(str(panel.section_title.cget("text")), "Steam Companion")
+
+    def _request(self):
+        """A panel that asks to pair, in a runtime directory of its own."""
+        import shutil
+        import tempfile
+        import unittest.mock
+        from steamos_utility_center import pairing
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        patcher = unittest.mock.patch.dict(os.environ,
+                                           {"XDG_RUNTIME_DIR": folder})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        service = pairing.Pairing(folder=folder, name="deck")
+        _, said = service.ask({"name": "SteamOS-Panel-A1B2",
+                               "key": pairing.public_key(bytes(range(32)))
+                               .hex()}, "192.168.1.50")
+        return service, said["id"]
+
+    def test_a_panel_that_asks_to_pair_is_asked_about_one_time(self):
+        service, request_id = self._request()
+        shown = []
+        was = dialogs.CompanionPairDialog
+
+        def stand_in(parent, request, look):
+            shown.append(request["id"])
+            return type("Asked", (), {"answer": True, "gone": False})()
+
+        dialogs.CompanionPairDialog = stand_in
+        self.addCleanup(setattr, dialogs, "CompanionPairDialog", was)
+        # The window looks one time as it opens, and then on a timer.
+        panel = self._panel()
+        panel._watch_pairing()
+        self.assertEqual(shown, [request_id])
+        self.assertEqual(service.check(request_id)[1], {"state": "accepted"})
+
+    def test_a_request_that_expired_gets_no_answer(self):
+        service, request_id = self._request()
+        was = dialogs.CompanionPairDialog
+        dialogs.CompanionPairDialog = lambda parent, request, look: type(
+            "Asked", (), {"answer": False, "gone": True})()
+        self.addCleanup(setattr, dialogs, "CompanionPairDialog", was)
+        self._panel()
+        self.assertEqual(service.check(request_id)[1], {"state": "waiting"})
+
+    def _texts(self, widget):
+        found = []
+        for child in widget.winfo_children():
+            try:
+                found.append(str(child.cget("text")))
+            except tk.TclError:
+                pass
+            found += self._texts(child)
+        return found
+
+    def test_the_dialog_shows_the_code_and_takes_an_accept(self):
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        request = {"id": "0" * 16, "code": "482913", "name": "SteamOS-Panel",
+                   "address": "192.168.1.50", "until": 0.0}
+        seen = []
+
+        def press():
+            for window in root.winfo_children():
+                if isinstance(window, tk.Toplevel):
+                    seen.extend(self._texts(window))
+                    for button in self._buttons(window):
+                        if str(button.cget("text")) == "Accept":
+                            button.invoke()
+                            return
+
+        root.after(300, press)
+        dialog = dialogs.CompanionPairDialog(root, request, lambda: request)
+        self.assertTrue(dialog.answer)
+        self.assertFalse(dialog.gone)
+        self.assertIn("482 913", seen)
+
+    def _buttons(self, widget):
+        found = []
+        for child in widget.winfo_children():
+            if isinstance(child, ttk.Button):
+                found.append(child)
+            found += self._buttons(child)
+        return found
+
+    def test_the_dialog_closes_when_the_request_is_gone(self):
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        request = {"id": "0" * 16, "code": "482913", "name": "", "address": "",
+                   "until": 0.0}
+        dialog = dialogs.CompanionPairDialog(root, request, lambda: None)
+        self.assertTrue(dialog.gone)
+        self.assertFalse(dialog.answer)
 
     def test_with_no_image_the_button_runs_nothing(self):
         """The one that matters. A flash from an incomplete build leaves a

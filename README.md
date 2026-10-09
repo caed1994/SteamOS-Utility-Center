@@ -17,13 +17,14 @@ the Quick Access menu of Game Mode.
 6. [CPU and GPU power](#cpu-and-gpu-power)
 7. [HDMI CEC](#hdmi-cec)
 8. [Keyboard, controller wake and drives](#keyboard-controller-wake-and-drives)
-9. [The control panel](#the-control-panel)
-10. [Game Mode](#game-mode)
-11. [The command that speaks JSON](#the-command-that-speaks-json)
-12. [Settings reference](#settings-reference)
-13. [Troubleshooting](#troubleshooting)
-14. [Updates and removal](#updates-and-removal)
-15. [Credits and licence](#credits-and-licence)
+9. [Steam Companion](#steam-companion)
+10. [The control panel](#the-control-panel)
+11. [Game Mode](#game-mode)
+12. [The command that speaks JSON](#the-command-that-speaks-json)
+13. [Settings reference](#settings-reference)
+14. [Troubleshooting](#troubleshooting)
+15. [Updates and removal](#updates-and-removal)
+16. [Credits and licence](#credits-and-licence)
 
 ## Install
 
@@ -981,6 +982,34 @@ A drive that reports `NO UNIT` is mounted again at the next boot.
 Caution: A mount point that holds a symlink is recorded under its resolved
 name. `/mnt/games` on a machine where `/mnt` is a link becomes
 `/var/mnt/games`.
+
+## Steam Companion
+
+The Steam Companion is the panel on the wall: a Waveshare
+ESP32-S3-Touch-LCD-4B with the firmware in `firmware/companion`. It shows the
+PC and its controllers, and its buttons reach the PC.
+
+### Pair the panel
+
+1. Hold the **Set up** button of the panel, and join the network that it shows.
+2. Open `http://192.168.4.1` on a phone, and give the panel your Wi-Fi.
+3. The panel finds the PC by itself and shows a code of six digits.
+4. Accept the panel on the PC when the PC shows the same code. The control
+   panel asks in a window. In Game Mode, the plugin shows a message and has
+   the buttons.
+
+The panel and the PC do a key exchange, so the secret never goes over the
+network. The code shows that the two ends talk to each other and to no other
+device. Only one panel waits at a time, and a request ends after five minutes.
+
+To pair again, open the settings of the panel and press **Pair**. The panel
+keeps its old secret until the PC accepts the new one.
+
+The panel finds the PC with a broadcast on UDP port 8765. A network that
+stops broadcasts between its devices gives "No PC answered". Then give the
+address of the PC on the setup page. The token from
+`~/.config/steamos-utility-center/companion-token` can go there too, for a
+setup by hand.
 
 ## The control panel
 

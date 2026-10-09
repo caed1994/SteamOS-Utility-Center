@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import threading
@@ -1544,11 +1545,110 @@ class NonceTest(unittest.TestCase):
         self.assertEqual(len(values), 400)
 
 
+class PairServiceTest(unittest.TestCase):
+    """A new panel pairs over HTTP, and its new secret then signs."""
+
+    PANEL = bytes(range(1, 33))
+    PC = bytes(range(101, 133))
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.path = os.path.join(self.folder, "config", "companion-token")
+        self.secret = companion.Secret(TOKEN, self.path)
+        self.nonces = companion.Nonces()
+        self.pair = companion.pairing.Pairing(
+            folder=self.folder, random=lambda size: self.PC, name="deck")
+        httpd = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            companion.make_handler(self.secret, self.nonces, pair=self.pair))
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        self.conn = HTTPConnection("127.0.0.1", httpd.server_port)
+        self.addCleanup(self.conn.close)
+
+    def send(self, method, path, body=b"", headers=None):
+        self.conn.request(method, path, body, headers or {})
+        answer = self.conn.getresponse()
+        return answer.status, json.loads(answer.read() or b"null")
+
+    def signed(self, token, path="/v1/status"):
+        nonce = self.nonces.issue()
+        return self.send("GET", path, headers={
+            companion.NONCE_HEADER: nonce,
+            companion.AUTH_HEADER: companion.signature(token, "GET", path,
+                                                       nonce, b"")})[0]
+
+    def ask(self):
+        key = companion.pairing.public_key(self.PANEL).hex()
+        return self.send("POST", companion.PAIR_PATH, json.dumps(
+            {"name": "SteamOS-Panel-A1B2", "key": key}).encode(),
+            {"Content-Type": "application/json"})
+
+    def expected(self):
+        panel_key = companion.pairing.public_key(self.PANEL)
+        pc_key = companion.pairing.public_key(self.PC)
+        shared = companion.pairing.shared_secret(self.PANEL, pc_key)
+        return companion.pairing.derive(shared, panel_key, pc_key)
+
+    def test_a_panel_pairs_and_its_new_secret_signs(self):
+        code, said = self.ask()
+        self.assertEqual(code, 200)
+        self.assertEqual(said["key"],
+                         companion.pairing.public_key(self.PC).hex())
+        path = "%s/%s" % (companion.PAIR_PATH, said["id"])
+        self.assertEqual(self.send("GET", path), (200, {"state": "waiting"}))
+        companion.pairing.answer(said["id"], True, folder=self.folder)
+        self.assertEqual(self.send("GET", path), (200, {"state": "accepted"}))
+        new, _code = self.expected()
+        with open(self.path) as handle:
+            self.assertEqual(handle.read().strip(), new)
+        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
+        self.assertEqual(self.signed(new), 200)
+        self.assertEqual(self.signed(TOKEN), 401)
+
+    def test_a_refusal_keeps_the_old_secret(self):
+        _, said = self.ask()
+        companion.pairing.answer(said["id"], False, folder=self.folder)
+        self.assertEqual(
+            self.send("GET", "%s/%s" % (companion.PAIR_PATH, said["id"])),
+            (200, {"state": "refused"}))
+        self.assertFalse(os.path.exists(self.path))
+        self.assertEqual(self.signed(TOKEN), 200)
+
+    def test_only_the_paths_of_the_pairing_need_no_signature(self):
+        self.assertEqual(self.send("GET", "/v1/status")[0], 401)
+        self.assertEqual(self.send("GET", companion.PAIR_PATH + "/x")[0], 401)
+        self.assertEqual(
+            self.send("GET", companion.PAIR_PATH + "/" + "0" * 16)[0], 404)
+
+    def test_a_bad_request_to_pair_is_refused(self):
+        for body in (b"{", b"[]", json.dumps({"key": "00"}).encode()):
+            self.assertEqual(self.send("POST", companion.PAIR_PATH, body)[0],
+                             400, body)
+        self.assertEqual(self.send("POST", companion.PAIR_PATH,
+                                   b"x" * (companion.BODY_LIMIT + 1))[0], 400)
+
+    def test_a_service_with_no_token_refuses_each_signature(self):
+        """An HMAC with an empty key is still an HMAC. A panel that knows
+        that the PC has no secret yet must not get in with one."""
+        empty = companion.make_handler("", self.nonces, pair=self.pair)
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), empty)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        self.conn = HTTPConnection("127.0.0.1", httpd.server_port)
+        self.assertEqual(self.signed(""), 401)
+
+
 class TokenTest(unittest.TestCase):
     def test_a_missing_file_gives_a_sentence_and_not_a_traceback(self):
-        with self.assertRaises(SystemExit) as caught:
-            companion.read_token("/does/not/exist")
-        self.assertIn("companion module", str(caught.exception))
+        """And the service runs: a pairing writes the file."""
+        with mock.patch.object(companion.sys, "stderr") as said:
+            self.assertEqual(companion.read_token("/does/not/exist"), "")
+        self.assertIn("Pair a panel", "".join(
+            str(call.args[0]) for call in said.write.call_args_list))
 
     def test_a_short_token_is_refused(self):
         with tempfile.NamedTemporaryFile("w", suffix=".token",

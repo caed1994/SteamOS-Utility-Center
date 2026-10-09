@@ -39,8 +39,28 @@ typedef enum {
      * by this number. These last ones are done by the panel itself:
      * PANEL_UPDATE takes the firmware the PC offers. */
     PANEL_WAKE,
-    PANEL_UPDATE
+    PANEL_UPDATE,
+    /* The pairing with the PC: start it, or try again, and stop a new
+     * pairing of a panel that has a secret already. See panel_pair.h. */
+    PANEL_PAIR,
+    PANEL_PAIR_CANCEL
 } panel_action_t;
+
+/* Where the pairing with the PC is, for its screen. NONE is a panel that
+ * does not pair now. The last five wait: BUSY and NO_ANSWER try again by
+ * themselves, the other three wait for a tap. */
+typedef enum {
+    PANEL_PAIRING_NONE,
+    PANEL_PAIRING_SEARCH,
+    PANEL_PAIRING_ASK,
+    PANEL_PAIRING_WAIT,
+    PANEL_PAIRING_DONE,
+    PANEL_PAIRING_BUSY,
+    PANEL_PAIRING_NO_ANSWER,
+    PANEL_PAIRING_REFUSED,
+    PANEL_PAIRING_EXPIRED,
+    PANEL_PAIRING_NOT_FOUND
+} panel_pairing_t;
 
 /* One drive, as the second page draws it.
  *
@@ -237,6 +257,14 @@ typedef struct {
     /* What the mirror of the LED bar does on the PC, for the line under
      * the Game Mode card. See panel_led.h. */
     panel_led_mirror_t led_mirror;
+    /* The pairing with the PC, for its screen: where it is, the code while
+     * a person must compare it, the name of the PC and its address, and
+     * whether the panel has a secret already, which it can keep. */
+    panel_pairing_t pairing;
+    char pair_code[7];
+    char pair_pc[25];
+    char pair_address[48];
+    bool pair_can_cancel;
     /* The CPU of the PC, for its page, the same way. cpu_profile is the
      * key of the profile of its settings, "custom" for a setting of the
      * control panel that no profile is, and cpu_offers has a bit for each
