@@ -33,6 +33,7 @@ from steamos_utility_center import cec
 from steamos_utility_center import lact
 from steamos_utility_center import modules
 from steamos_utility_center import power
+from steamos_utility_center import screen
 from steamos_utility_center import syssettings
 from steamos_utility_center import __version__ as VERSION
 
@@ -103,8 +104,12 @@ class StatusPage:
         """
         checks = ledpanel.run_checks(config=self.config)
         self._checks = checks           # kept for the foot of the window
-        return [
+        parts = [
             ledpanel.led_part(checks, self._module_here("led")),
+            # Only while the rainbow slot shows the mirror. See screen.py.
+            ledpanel.mirror_part(self.config.get("RAINBOW_SHOWS"),
+                                 screen.read_status())
+            if self._module_here("led") else None,
             ledpanel.power_part(self.power, power.available()),
             ledpanel.gpu_part(self._gpu, self._gpu_error,
                               available=lact.available(),
@@ -123,6 +128,7 @@ class StatusPage:
                                 ledpanel.install_is_behind(SOURCE_DIR),
                                 head=ledpanel.head_commit(SOURCE_DIR)),
         ]
+        return [part for part in parts if part is not None]
 
     def _light(self, parent, ok):
         """The three-state indicator of one part. Grey is "not installed"."""

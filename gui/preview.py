@@ -26,7 +26,7 @@ the effect that runs now.
 from __future__ import annotations
 
 from steamos_utility_center import config as config_module
-from steamos_utility_center import notify, render, shim
+from steamos_utility_center import notify, render, screen, shim
 
 # One flash, then a beat of dark before it starts again, so a shape is seen to
 # end rather than looping into itself.
@@ -40,6 +40,9 @@ SWEEP_SECONDS = 12.0
 # ends of the scale are reached whatever they are set to.
 SWEEP_LOW = 20.0
 SWEEP_HIGH = 100.0
+
+# How long the made-up screen of the mirror takes for its four pictures.
+MIRROR_SECONDS = 16.0
 
 # Idle, a menu, a game, and back. The GPU spikier than the CPU, as it is.
 LOAD_WALK = ((0.05, 0.02), (0.22, 0.10), (0.35, 0.62), (0.78, 0.96),
@@ -56,12 +59,16 @@ class _Scripted:
     def __init__(self):
         self.celsius_value = SWEEP_LOW
         self.load_value = (0.0, 0.0)
+        self.picture = screen.demo(0.0)
 
     def celsius(self, now=None):
         return self.celsius_value
 
     def fractions(self, now=None):
         return self.load_value
+
+    def colours(self, now=None):
+        return self.picture
 
 
 def _unpack(payload, leds):
@@ -151,6 +158,7 @@ class Preview:
                 rainbow_shows=shows,
                 temperature=self.sensor,
                 load=self.sensor,
+                screen=self.sensor,
                 temperature_range=(self.setting("TEMPERATURE_MIN"),
                                    self.setting("TEMPERATURE_MAX")),
                 # Read leniently, the way everything else on this page is: a
@@ -177,6 +185,8 @@ class Preview:
         elif shows == render.SHOWS_LOAD:
             self.sensor.load_value = _along(LOAD_WALK,
                                             elapsed / SWEEP_SECONDS)
+        elif shows == render.SHOWS_MIRROR:
+            self.sensor.picture = screen.demo(elapsed / MIRROR_SECONDS)
         snapshot = shim.make_snapshot(shim.EFFECT_RAINBOW)
         return _unpack(self._renderer(shows).render(snapshot, elapsed),
                        self.led_count())
@@ -235,6 +245,9 @@ SLOT_EFFECTS = (
     # user made green, and then reversed, contradicts the page. So the text
     # says only what the effect always does.
     ("Load", render.SHOWS_LOAD, "A bar for each chip, out of the middle"),
+    # The preview has no screen, so it shows four made-up pictures.
+    ("Mirror", render.SHOWS_MIRROR,
+     "The colours of the screen in Game Mode, left to right"),
 )
 
 SHAPE_BLURBS = {

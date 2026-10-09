@@ -94,8 +94,10 @@ const SCENE_WORDS: Record<string, string> = {
   rainbow: "Rainbow",
   fire: "Fire",
   aurora: "Aurora",
+  ooze: "Ooze",
   temperature: "Temperature gauge",
   load: "Load gauge",
+  mirror: "Mirror the screen",
 };
 
 function words(value: string): string {

@@ -36,7 +36,7 @@ PREVIEW = os.path.join(REPO, "firmware", "companion", "preview")
 HARNESS = os.path.join(REPO, "tests", "c", "panel-led-harness.c")
 sys.path.insert(0, os.path.join(REPO, "server"))
 
-from steamos_utility_center import companion, desktop, render  # noqa: E402
+from steamos_utility_center import companion, desktop, render, screen  # noqa: E402
 
 
 def read(path):
@@ -151,6 +151,32 @@ class ListsTest(unittest.TestCase):
                            longest)
 
 
+class MirrorTableTest(unittest.TestCase):
+    """The states of the mirror on the panel against those of the PC."""
+
+    def lines(self):
+        found = re.search(r"\} mirror_lines\[\] = \{(.*?)\};",
+                          code("panel_led.c"), re.S)
+        assert found
+        return re.findall(r'\{"([\w-]+)", (TXT_\w+)\}', found.group(1))
+
+    def test_each_state_of_the_pc_has_a_line(self):
+        self.assertEqual([state for state, _ in self.lines()],
+                         [state for state in screen.STATES])
+
+    def test_a_bar_on_a_different_effect_gets_the_usual_line(self):
+        self.assertIn(("idle", "TXT_LED_GAME_WHAT"), self.lines())
+
+    def test_the_rooms_hold_what_the_pc_sends(self):
+        header = code("panel_led.h")
+        self.assertEqual(number("PANEL_MIRROR_DETAIL", header),
+                         screen.DETAIL_CHARS + 1)
+        self.assertGreater(number("PANEL_MIRROR_SOURCE", header),
+                           len("65535x65535"))
+        self.assertGreater(number("PANEL_LED_KEY", header),
+                           max(len(state) for state in screen.STATES))
+
+
 class RequestTest(unittest.TestCase):
     """What the panel sends, against what the companion service reads."""
 
@@ -227,7 +253,8 @@ class HarnessTest(unittest.TestCase):
         done = subprocess.run(
             [compiler(), "-std=gnu17", "-Wall", "-Wextra", "-Werror",
              "-I", FIRMWARE, "-o", cls.program, HARNESS,
-             os.path.join(FIRMWARE, "panel_led.c")],
+             os.path.join(FIRMWARE, "panel_led.c"),
+             os.path.join(FIRMWARE, "panel_text.c")],
             capture_output=True, text=True)
         # A failure and not a skip: the file is plain C, so a build that
         # fails is a fault in it.
@@ -315,6 +342,44 @@ class HarnessTest(unittest.TestCase):
             self.assertEqual(code_, 200, body)
             self.assertEqual(wrote, [{companion.LED_CHOICES[mode][0]: value
                                       for mode, value in wanted.items()}])
+
+    def mirror(self, state, fps=-1, cpu=-1, source="-", detail="-",
+               language=0, room=200):
+        return self.ask("mirror %d %d %d %d %s %s %s" % (
+            room, language, fps, cpu, state, source, detail))[0]
+
+    def test_a_running_mirror_gives_its_rate_its_load_and_the_screen(self):
+        self.assertEqual(self.mirror("running", 15, 12, "1280x800"),
+                         "Mirror runs: 15 fps, CPU 1.2 %, 1280x800")
+        self.assertEqual(self.mirror("running", 15, 12, "1280x800",
+                                     language=1),
+                         "Spiegel läuft: 15 fps, CPU 1,2 %, 1280x800")
+        self.assertEqual(self.mirror("running", 9, 0),
+                         "Mirror runs: 9 fps, CPU 0.0 %")
+
+    def test_a_running_mirror_with_no_numbers_says_only_that(self):
+        self.assertEqual(self.mirror("running"), "Mirror runs")
+
+    def test_the_detail_names_what_stops_it(self):
+        self.assertEqual(self.mirror("busy", detail="steam"),
+                         "Mirror paused: steam reads the screen")
+        self.assertEqual(self.mirror("no-plugin", detail="pipewiresrc"),
+                         "Mirror: the PC has no GStreamer pipewiresrc")
+        self.assertEqual(self.mirror("failed", detail="no picture"),
+                         "Mirror error: no picture")
+        self.assertEqual(self.mirror("failed"), "Mirror error: ?")
+
+    def test_a_state_this_firmware_does_not_know_gets_the_usual_line(self):
+        usual = "Shows when the LED menu of Steam is on Rainbow"
+        self.assertEqual(self.mirror("idle"), usual)
+        self.assertEqual(self.mirror("-"), usual)
+        self.assertEqual(self.mirror("dancing"), usual)
+
+    def test_a_small_room_holds_the_start_of_the_line(self):
+        self.assertEqual(self.mirror("running", 15, 12, "1280x800", room=12),
+                         "Mirror runs")
+        self.assertEqual(self.mirror("busy", detail="steam", room=8),
+                         "Mirror ")
 
     def test_a_body_with_no_room_is_no_body(self):
         """Never half an object: the service would refuse it, and the

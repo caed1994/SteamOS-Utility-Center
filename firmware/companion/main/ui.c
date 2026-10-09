@@ -1973,6 +1973,8 @@ static panel_text_id_t change_refusal(int code,panel_text_id_t no_module)
 }
 static void look_button_show(const panel_state_t *s,int index,bool show);
 static void look_show(const panel_state_t *s);
+/* The line of the mirror under the Game Mode card. */
+static char mirror_note[96];
 static void led_show(const panel_state_t *s)
 {
     if(!led_cards[PANEL_LED_DESKTOP].name)return;
@@ -2033,7 +2035,15 @@ static void led_show(const panel_state_t *s)
              * the usual way to get the second. */
             if(m==PANEL_LED_DESKTOP)note=panel_text(s->led_known?TXT_LED_NONE:TXT_PC_TOO_OLD);
         }
-        else if(m==PANEL_LED_GAME)note=panel_text(TXT_LED_GAME_WHAT);
+        else if(m==PANEL_LED_GAME){
+            /* The mirror says what it does on the PC, so a person sees why
+             * the bar does not follow the screen. */
+            const char *key=panel_led_key(PANEL_LED_GAME,index);
+            if(usable&&key&&strcmp(key,"mirror")==0){
+                panel_led_mirror_line(mirror_note,sizeof mirror_note,&s->led_mirror);
+                note=mirror_note;
+            }else note=panel_text(TXT_LED_GAME_WHAT);
+        }
         /* The button of the colour and the brightness takes the place of
          * the line, for a scene that uses them. A service that sends
          * neither keeps the line that says where the colour comes from. */

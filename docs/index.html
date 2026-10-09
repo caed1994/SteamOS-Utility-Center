@@ -585,6 +585,18 @@
                     ["Blobs", "3, at &minus;0.87 / &minus;0.41 / +0.53"],
                     ["Reach", "0.15 of the bar"],
                     ["Darkest point", "6 %"], ["Steam colour slider", "moves the window"]]
+          },
+          {
+            id: "mirror", name: "Mirror", gloss: "The colours of the screen, left to right",
+            clip: "mirror", lit: "linear-gradient(90deg,#ff7814,#14a0c8,#5aa028)",
+            body: [
+              "The bar follows the picture of the game. The screen is cut into seventeen zones, one for each LED, and each LED takes the mean colour of its zone &ndash; so a sunset on the left of the screen glows on the left of the bar.",
+              "The black bars of a film or of an old 4:3 game are found and left out, so the zones cover the picture and not the black around it. Light comes quickly and goes slowly, as from a lamp, and a dark screen gives a dark bar.",
+              "Game Mode only. The picture is the PipeWire stream of gamescope, which a small service of your own user reads with GStreamer. It steps aside while Steam records or streams the screen, and the wall panel says what it does. Shown here is a made-up screen of four scenes."
+            ],
+            facts: [["Zones", "17, one for each LED"], ["Pictures", "15 a second, 68 &times; 36 pixels"],
+                    ["Light comes / goes", "0.10 s / 0.35 s"], ["Needs", "GStreamer with pipewiresrc"],
+                    ["Steam brightness", "applies"], ["Steam speed", "no effect"]]
           }
         ]
       },

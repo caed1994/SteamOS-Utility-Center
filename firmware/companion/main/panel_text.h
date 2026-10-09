@@ -322,6 +322,24 @@
     X(TXT_LED_FIRE,        "Fire",                  "Feuer") \
     X(TXT_LED_AURORA,      "Aurora",                "Polarlicht") \
     X(TXT_LED_OOZE,        "Ooze",                  "Schleim") \
+    X(TXT_LED_MIRROR,      "Mirror",                "Spiegel") \
+    X(TXT_MIRROR_RUNNING,  "Mirror runs: %d fps, CPU %d.%d %%", \
+                           "Spiegel läuft: %d fps, CPU %d,%d %%") \
+    X(TXT_MIRROR_RUNS,     "Mirror runs",           "Spiegel läuft") \
+    X(TXT_MIRROR_STARTING, "Mirror starts ...",     "Spiegel startet ...") \
+    X(TXT_MIRROR_NO_SCREEN,"Mirror waits for Game Mode", \
+                           "Spiegel wartet auf den Spielmodus") \
+    X(TXT_MIRROR_BUSY,     "Mirror paused: %s reads the screen", \
+                           "Spiegel pausiert: %s liest das Bild") \
+    X(TXT_MIRROR_NO_GSTREAMER,"Mirror: GStreamer is not on the PC", \
+                           "Spiegel: GStreamer fehlt am PC") \
+    X(TXT_MIRROR_NO_PLUGIN,"Mirror: the PC has no GStreamer %s", \
+                           "Spiegel: am PC fehlt GStreamer %s") \
+    X(TXT_MIRROR_FAILED,   "Mirror error: %s",      "Spiegel-Fehler: %s") \
+    X(TXT_MIRROR_OFF,      "Mirror: the LED service does not run", \
+                           "Spiegel: LED-Dienst läuft nicht") \
+    X(TXT_MIRROR_GONE,     "Mirror: the capture service does not run", \
+                           "Spiegel: Aufnahmedienst läuft nicht") \
     X(TXT_LED_TEMPERATURE, "Temperature",           "Temperatur") \
     X(TXT_LED_LOAD,        "CPU and GPU load",      "CPU- und GPU-Last") \
     X(TXT_LED_COLOUR,      "Colour",                "Farbe") \

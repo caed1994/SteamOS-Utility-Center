@@ -97,8 +97,10 @@ const SCENE_WORDS = {
     rainbow: "Rainbow",
     fire: "Fire",
     aurora: "Aurora",
+    ooze: "Ooze",
     temperature: "Temperature gauge",
     load: "Load gauge",
+    mirror: "Mirror the screen",
 };
 function words(value) {
     return SCENE_WORDS[value] ?? value;

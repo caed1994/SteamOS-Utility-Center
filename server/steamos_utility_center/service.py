@@ -18,7 +18,7 @@ import time
 
 from . import config as config_module
 from . import desktop, elf, load, mounts, notify, phone, render
-from . import repair
+from . import repair, screen
 from . import link as link_module
 from . import serialport, shim
 from . import steamapps, steamworks
@@ -170,7 +170,24 @@ def build_overheat_watch(config):
     return temperature.OverheatWatch()
 
 
-def build_renderer(config):
+def build_mirror(config):
+    """Returns the end of the pipe from the screen, or None.
+
+    Only the rainbow slot of Game Mode shows the mirror. The desktop has no
+    stream of gamescope to read. The user service of the mirror waits for
+    this pipe. See screen.
+    """
+    if config["RAINBOW_SHOWS"] != render.SHOWS_MIRROR:
+        return None
+    mirror = screen.Mirror()
+    try:
+        mirror.create()
+    except OSError as exc:
+        LOG.warning("mirror: cannot make %s: %s", mirror.path, exc)
+    return mirror
+
+
+def build_renderer(config, mirror=None):
     return render.Renderer(
         led_count=config["LED_COUNT"],
         mapping=config["MAPPING"],
@@ -191,6 +208,7 @@ def build_renderer(config):
         load_cpu_colour=notify.parse_color(config["LOAD_CPU_COLOR"]),
         load_gpu_colour=notify.parse_color(config["LOAD_GPU_COLOR"]),
         load_swap=config["LOAD_SWAP"],
+        screen=mirror,
     )
 
 
@@ -268,7 +286,8 @@ class Runner:
     def __init__(self, config):
         self.config = config
         self.running = True
-        self.renderer = build_renderer(config)
+        self.mirror = build_mirror(config)
+        self.renderer = build_renderer(config, self.mirror)
         self.link = build_link(config)
         self.overlay = notify.NotificationOverlay(
             enabled=config["NOTIFY"],
@@ -375,6 +394,8 @@ class Runner:
                 self.source.close()
             if self.trigger is not None:
                 self.trigger.unlink()
+            if self.mirror is not None:
+                self.mirror.close()
         return 0
 
     def _open_trigger(self):
@@ -565,6 +586,11 @@ class Runner:
 
             if triggered:
                 self._poll_trigger(time.monotonic())
+
+            if self.mirror is not None:
+                # Closes the pipe when the bar no longer shows the mirror,
+                # and that stops the capture of the screen.
+                self.mirror.poll(time.monotonic())
 
             if self.overheat is not None:
                 # This costs little at most turns: it reads nothing until
@@ -1571,6 +1597,22 @@ def run_watch_phone(config, print_only=False):
     return 0
 
 
+def run_mirror():
+    """The user service of the mirror. See screen.Watcher.
+
+    It needs no configuration. The LED service opens the pipe while the bar
+    shows the mirror, and that is the one signal.
+    """
+    _interrupt_on_sigterm()
+    watcher = screen.Watcher()
+    LOG.info("mirror: the status is in %s", watcher.status)
+    try:
+        watcher.run()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def run_notify(config, kind):
     """Sends a notification to a service that runs."""
     try:
@@ -1839,6 +1881,10 @@ def build_parser():
                        dest="watch_achievements",
                        help="flash on every achievement unlocked in the running "
                             "game (run as your normal user, not with sudo)")
+    modes.add_argument("--mirror", action="store_true",
+                       help="read the screen for the mirror effect of the "
+                            "LED bar (the user service runs this as your "
+                            "normal user, not with sudo)")
     modes.add_argument("--watch-phone", action="store_true",
                        dest="watch_phone",
                        help="flash on your phone's notifications, which KDE "
@@ -1916,6 +1962,10 @@ def main(argv=None):
     if args.repair_check or args.repair:
         configure_logging("warning")
         return run_repair(write=args.repair)
+
+    if args.mirror:
+        configure_logging("info")
+        return run_mirror()
 
     overrides = {
         "DEVICE": args.device,

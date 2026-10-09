@@ -23,6 +23,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
@@ -32,7 +33,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "server"))
 sys.path.insert(0, os.path.join(REPO, "gui"))
 
-from steamos_utility_center import companion, temperature      # noqa: E402
+from steamos_utility_center import companion, screen, temperature  # noqa: E402
 import ledpanel                                                 # noqa: E402
 
 TOKEN = "x" * 32
@@ -342,7 +343,17 @@ class AnswerSizeTest(unittest.TestCase):
                                   return_value={"desktop": longest,
                                                 "game": longest,
                                                 "desktop_color": "#ffffff",
-                                                "desktop_brightness": 255}), \
+                                                "desktop_brightness": 255,
+                                                "mirror": {
+                                                    "state": max(
+                                                        screen.STATES,
+                                                        key=len),
+                                                    "detail": "D" * screen
+                                                    .DETAIL_CHARS,
+                                                    "fps": 999.9,
+                                                    "cpu": 9999.9,
+                                                    "source":
+                                                    "65535x65535"}}), \
                 mock.patch.object(companion, "_boost", mock.Mock(
                     read=mock.Mock(return_value=False),
                     zero_rpm=mock.Mock(return_value=False))), \
@@ -1178,6 +1189,31 @@ class LedTest(unittest.TestCase):
                          {"desktop": "fire", "game": "ooze",
                           "desktop_color": "#ff8000",
                           "desktop_brightness": 200})
+
+    def test_the_mirror_says_what_it_does(self):
+        """Only with the mirror in Game Mode: the panel shows it below that
+        effect, and the status of each other effect stays small."""
+        said = {"state": "running", "fps": 15.0, "cpu": 1.2}
+        reader = companion.LedSettings(self.settings("RAINBOW_SHOWS=mirror\n"))
+        found = companion.led(reader, present=lambda path: True,
+                              mirror=lambda: said)
+        self.assertEqual(found["game"], "mirror")
+        self.assertEqual(found["mirror"], said)
+        reader = companion.LedSettings(self.settings("RAINBOW_SHOWS=fire\n"))
+        found = companion.led(reader, present=lambda path: True,
+                              mirror=lambda: said)
+        self.assertNotIn("mirror", found)
+
+    def test_the_mirror_status_comes_from_the_runtime_directory(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        with open(os.path.join(root, screen.STATUS_NAME), "w") as handle:
+            json.dump({"state": "busy", "detail": "steam",
+                       "at": time.time()}, handle)
+        reader = companion.LedSettings(self.settings("RAINBOW_SHOWS=mirror\n"))
+        with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": root}):
+            found = companion.led(reader, present=lambda path: True)
+        self.assertEqual(found["mirror"], {"state": "busy", "detail": "steam"})
 
     def test_what_the_file_leaves_out_is_the_default(self):
         for text in ("LED_COUNT=17\n", None):

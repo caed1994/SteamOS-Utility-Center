@@ -1349,6 +1349,7 @@ start_user_units() {
     # straight away while NOTIFY_PHONE is off, which is the shipped default and
     # not something to report as a failure.
     user_systemctl restart "$PHONE_UNIT" || true
+    user_systemctl restart "$MIRROR_UNIT" || true
     if user_systemctl restart "$WATCHER_UNIT"; then
         say "Watchers running now"
         WATCHER_STATUS="running for $WATCHER_USER$LINGER_NOTE"
@@ -1982,6 +1983,10 @@ LED bar:
   panel, under Notifications
   Try it:   $COMMAND_STATUS --watch-phone --print   (as yourself, not with sudo)
   Log:      journalctl --user -u steamos-utility-center-phone -f
+
+  The mirror effect in Game Mode reads the screen with GStreamer. The wall
+  panel and the control panel show what it does.
+  Log:      journalctl --user -u steamos-utility-center-mirror -f
 
 Test the strip without Steam (stop the service first so the port is free):
 

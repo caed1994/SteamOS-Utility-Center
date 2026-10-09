@@ -525,6 +525,23 @@ def _ooze(snapshot, elapsed, options):
     return frame
 
 
+# -- the mirror --------------------------------------------------------------
+#
+# The colours of the screen, which screen.Mirror reads from the user service
+# that captures the screen. They are ready for the bar, so this effect only
+# gives them on. Steam's brightness dims them. The speed has no meaning: the
+# screen sets the movement.
+
+
+def _mirror(snapshot, elapsed, options):
+    """Draws the colours of the screen: one zone, from the left, for each LED.
+
+    This function always has a picture. _substitute gives the slot back to the
+    rainbow before it runs.
+    """
+    return options.picture()
+
+
 # What the rainbow entry shows.
 #
 # SteamOS does not permit new entries in its LED menu: the entries are in the
@@ -539,6 +556,7 @@ SHOWS_LOAD = "load"
 SHOWS_FIRE = "fire"
 SHOWS_AURORA = "aurora"
 SHOWS_OOZE = "ooze"
+SHOWS_MIRROR = "mirror"
 
 # What the brightness and the speed of a scene reach.
 #
@@ -566,8 +584,8 @@ TAKES_LIGHT = frozenset((TAKES_BRIGHTNESS,))
 
 # For each value: the renderer that replaces the rainbow, the Renderer
 # attribute that must be present for the value to have a meaning, and which of
-# the settings of the bar reach it. The attribute applies to the two values
-# that read hardware.
+# the settings of the bar reach it. The attribute applies to the values that
+# read hardware or the screen.
 #
 # config validates against this table. A new effect thus needs one new entry.
 _SUBSTITUTES = {
@@ -576,6 +594,7 @@ _SUBSTITUTES = {
     SHOWS_FIRE: (_fire, None, TAKES_BOTH),
     SHOWS_AURORA: (_aurora, None, TAKES_BOTH),
     SHOWS_OOZE: (_ooze, None, TAKES_BOTH),
+    SHOWS_MIRROR: (_mirror, "screen", TAKES_LIGHT),
 }
 RAINBOW_CHOICES = (SHOWS_RAINBOW,) + tuple(_SUBSTITUTES)
 
@@ -612,7 +631,7 @@ class Renderer:
                  temperature=None,
                  temperature_range=DEFAULT_TEMPERATURE_RANGE, load=None,
                  rainbow_shows=None, load_cpu_colour=None,
-                 load_gpu_colour=None, load_swap=False):
+                 load_gpu_colour=None, load_swap=False, screen=None):
         if led_count < 1:
             raise ValueError("led_count must be >= 1")
         if mapping not in MAPPINGS:
@@ -677,10 +696,14 @@ class Renderer:
         # together.
         self.load_swap = bool(load_swap)
         self.rainbow_shows = rainbow_shows
+        # An object with .colours(), or None. See screen.Mirror.
+        self.screen = screen
         self._gamma_table = self._build_gamma(gamma)
         self._stretch = {}
         # The load of this frame, read one time. See reading().
         self._reading = None
+        # And the colours of the screen. See picture().
+        self._picture = None
 
     @staticmethod
     def _build_gamma(gamma):
@@ -718,6 +741,22 @@ class Renderer:
                              else self.load.fractions())
         return self._reading
 
+    def picture(self, snapshot=None, shows=None, fresh=False):
+        """Returns the colours of the screen for this frame, or None.
+
+        It asks the screen one time for each frame, and only while the slot
+        shows the mirror. A question tells the capture that the bar shows
+        the screen. A question for each frame of a different effect thus
+        starts a capture that nothing shows.
+        """
+        if fresh:
+            self._picture = None
+            if (self.screen is not None
+                    and snapshot.effect == shim.EFFECT_RAINBOW
+                    and self.shown_by(shows) == SHOWS_MIRROR):
+                self._picture = self.screen.colours()
+        return self._picture
+
     def shown_by(self, shows):
         """Returns the effect that a `shows` argument asks for.
 
@@ -748,6 +787,8 @@ class Renderer:
             return None
         if effect is _load and self.reading() is None:
             return None
+        if effect is _mirror and self.picture() is None:
+            return None
         return effect
 
     def is_animated(self, snapshot, shows=None):
@@ -773,6 +814,7 @@ class Renderer:
             return [(0.0, 0.0, 0.0)] * shim.LOGICAL_LEDS
         # Before any caller asks what this draws, and one time for the frame.
         self.reading(fresh=True)
+        self.picture(snapshot, shows, fresh=True)
         effect = (self._substitute(snapshot, shows)
                   or _EFFECTS.get(snapshot.effect, _EFFECTS[shim.EFFECT_MANUAL]))
         return effect(snapshot, elapsed, self)

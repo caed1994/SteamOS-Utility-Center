@@ -97,3 +97,26 @@ int panel_led_brightness(int percent);
  * brightness above 255. The keys come from the lists above, which hold
  * letters and nothing to escape. */
 size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change);
+
+/* The room for the detail and for the size of the screen in the status of
+ * the mirror, each with its end: screen.DETAIL_CHARS and "65535x65535". */
+#define PANEL_MIRROR_DETAIL 41
+#define PANEL_MIRROR_SOURCE 12
+
+/* The status of the mirror on the PC: the state word of screen.STATES, its
+ * detail, the pictures each second, the processor time in tenths of a per
+ * cent, and the size of the screen. An empty state is a PC that sends no
+ * status, and a number below nought is a number that the status does not
+ * have. */
+typedef struct {
+    char state[PANEL_LED_KEY];
+    char detail[PANEL_MIRROR_DETAIL];
+    char source[PANEL_MIRROR_SOURCE];
+    int fps;
+    int cpu;
+} panel_led_mirror_t;
+
+/* The line under the Game Mode card while it shows the mirror, in the
+ * language of the panel. A state that this firmware does not know gets the
+ * line of each other effect of that card. */
+void panel_led_mirror_line(char *out, size_t room, const panel_led_mirror_t *mirror);

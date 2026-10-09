@@ -27,6 +27,11 @@
 //                              below nought is none. "(half) 0" is a room
 //                              left with text in it, and "(written) 0" a
 //                              room of nought that the call wrote to
+//   mirror <room> <language> <fps> <cpu> <state> <source> <detail>
+//                              prints the line of the mirror in a room of
+//                              that size, in English for 0 and German for
+//                              1; "-" is an empty text, and the detail is
+//                              the rest of the line
 #include <stdio.h>
 #include <string.h>
 
@@ -85,6 +90,18 @@ int main(void)
             if (length) printf("%s %zu\n", body, length);
             else if (room == 0) printf("%s 0\n", body[0] == 'x' ? "(empty)" : "(written)");
             else printf("%s 0\n", body[0] ? "(half)" : "(empty)");
+        } else if (sscanf(line, "mirror %d %d %d %d %63s %63s %n", &room, &level, &index, &step, key, other,
+                          &got) == 6) {
+            panel_led_mirror_t mirror = {.fps = index, .cpu = step};
+            char *detail = line + got;
+            detail[strcspn(detail, "\n")] = 0;
+            snprintf(mirror.state, sizeof mirror.state, "%.15s", strcmp(key, "-") ? key : "");
+            snprintf(mirror.source, sizeof mirror.source, "%.11s", strcmp(other, "-") ? other : "");
+            snprintf(mirror.detail, sizeof mirror.detail, "%.40s", strcmp(detail, "-") ? detail : "");
+            panel_text_set(level ? PANEL_GERMAN : PANEL_ENGLISH);
+            if (room < 1 || room > (int)sizeof body) room = (int)sizeof body;
+            panel_led_mirror_line(body, (size_t)room, &mirror);
+            printf("%s\n", body);
         } else {
             printf("?\n");
         }

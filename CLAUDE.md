@@ -71,6 +71,10 @@ clone of the source in `/var/lib/steamos-utility-center/source`.
 | Wall panel secret | `~/.config/steamos-utility-center/companion-token`, 32 characters or more |
 | Refusals | 409 a change runs, 501 no module, 403 no sudo rule, 502 refused, 401 new nonce |
 | Actions | a name from the fixed table `ACTIONS`, sent to subprocess with no shell |
+| Mirror effect | `screen.py`, `RAINBOW_SHOWS=mirror`, Game Mode only. The LED service cannot see `/run/user` (`ProtectHome=yes`). So the user unit `steamos-utility-center-mirror` (`--mirror`) reads the PipeWire node `gamescope` with gst-launch-1.0 |
+| Mirror pipe | `/run/steamos-utility-center/mirror`, mode 0622, messages of 52 bytes. The LED service opens it only while the bar shows the mirror, and that starts the capture |
+| Mirror status | `$XDG_RUNTIME_DIR/steamos-utility-center-mirror.json`, read by `companion.py` (`led.mirror`) and the Status page of the control panel |
+| Mirror cost | measured with GStreamer 1.24 and a test source: two scale steps cost less than 0.3 ms for each picture, and Python 0.46 ms for each picture |
 
 ## 5. The wall panel firmware
 
@@ -158,6 +162,8 @@ Notes for the checks:
 ## 10. Open items
 
 - Deep sleep of the panel, for a longer battery life. The owner put this off.
+- The mirror is not measured on the PC. Open: GStreamer and `pipewiresrc` on SteamOS, and the node name `gamescope`. Also open: the cost in gamescope at full size, and a second reader during a recording of Steam. The status on the panel names each case. Plan B is a PipeWire client with ctypes that asks gamescope for a small picture.
+- The mirror on the desktop needs the screen portal of KDE. That is a later step.
 - A Nanoleaf page on the panel. The owner put this off.
 - The fan column on the card page: zero RPM on top, lit while it is on. Under it Auto and Cooling Boost, one lit for the profile that runs. Auto ends Cooling Boost. Cooling Boost sets a static fan speed of 100 % in LACT. When it goes off, it puts back the old fan settings.
 - LACT holds zero RPM off for a static speed, and after it puts back only what its config says. This comes from the source of LACT and is not measured. So Cooling Boost writes `pmfw_options.zero_rpm` first, and the status reports that setting.

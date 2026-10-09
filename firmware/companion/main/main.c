@@ -1030,6 +1030,19 @@ static int request(const char *path, const char *body, int wait_ms)
         snprintf(state.led_effect[mode],sizeof state.led_effect[mode],"%s",
                  cJSON_IsString(effect)?effect->valuestring:"");
     }
+    /* The mirror: what the service that reads the screen does on the PC.
+     * A service older than this firmware sends nothing, and the card then
+     * keeps its usual line. */
+    cJSON *mirror=cJSON_GetObjectItemCaseSensitive(led,"mirror");
+    pc_text(state.led_mirror.state,sizeof state.led_mirror.state,mirror,"state");
+    pc_text(state.led_mirror.detail,sizeof state.led_mirror.detail,mirror,"detail");
+    pc_text(state.led_mirror.source,sizeof state.led_mirror.source,mirror,"source");
+    cJSON *rate=cJSON_GetObjectItemCaseSensitive(mirror,"fps");
+    cJSON *share=cJSON_GetObjectItemCaseSensitive(mirror,"cpu");
+    state.led_mirror.fps=cJSON_IsNumber(rate)&&rate->valuedouble>=0&&rate->valuedouble<=1000
+        ?(int)(rate->valuedouble+0.5):-1;
+    state.led_mirror.cpu=cJSON_IsNumber(share)&&share->valuedouble>=0&&share->valuedouble<=10000
+        ?(int)(share->valuedouble*10+0.5):-1;
     /* The colour and the brightness of the desktop scenes. A service older
      * than this firmware sends neither, and the page then keeps to the
      * effects. */

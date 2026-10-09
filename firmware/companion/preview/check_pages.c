@@ -2844,10 +2844,10 @@ int main(void)
         led_tap(page,PANEL_LED_GAME,LV_SYMBOL_LEFT);
         led_tap(page,PANEL_LED_GAME,LV_SYMBOL_LEFT);
         led_tap(page,PANEL_LED_GAME,LV_SYMBOL_LEFT);
-        assert(label(game,"Ooze"));
+        assert(label(game,"Mirror"));
         // A refusal takes the choice back, and says why.
         led_wait(1600);
-        assert(led_changes==2&&strcmp(led_last[PANEL_LED_GAME],"ooze")==0&&!led_last[PANEL_LED_DESKTOP][0]);
+        assert(led_changes==2&&strcmp(led_last[PANEL_LED_GAME],"mirror")==0&&!led_last[PANEL_LED_DESKTOP][0]);
         t.led_replies++;t.led_code=403;
         panel_ui_update(&t);
         assert(label(game,"Fire")&&label(game,panel_text(TXT_CHANGE_NO_RULE)));
@@ -2879,6 +2879,28 @@ int main(void)
         t.game_mode=true;
         panel_ui_update(&t);
         assert(!label(desktop,panel_text(TXT_LED_NOW))&&label(game,panel_text(TXT_LED_NOW)));
+        // The mirror says what it does on the PC, in place of the usual
+        // line of its card.
+        strcpy(t.led_effect[PANEL_LED_GAME],"mirror");
+        t.led_mirror=(panel_led_mirror_t){.state="running",.fps=15,.cpu=12,.source="1280x800"};
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,"Mirror")&&label(game,"Mirror runs: 15 fps, CPU 1.2 %, 1280x800"));
+        strcpy(t.led_mirror.state,"busy");strcpy(t.led_mirror.detail,"steam");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,"Mirror paused: steam reads the screen"));
+        // A service older than this firmware sends no status.
+        t.led_mirror.state[0]=0;
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,panel_text(TXT_LED_GAME_WHAT)));
+        // A different effect never shows the status of the mirror.
+        strcpy(t.led_mirror.state,"failed");
+        strcpy(t.led_effect[PANEL_LED_GAME],"fire");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,panel_text(TXT_LED_GAME_WHAT))&&!label(game,"Mirror error: steam"));
         // A PC with no LED module: no effect, no arrow to press, and the
         // reason once.
         t.led_here=false;t.answers++;

@@ -275,8 +275,9 @@ int main(int argc,char **argv)
      * a service that sends no colour, "led-look" the layer of the colour and
      * the brightness, "led-look-fire" that layer for a scene with colours of
      * its own, "led-none" a PC with no LED module, "led-applying" a tap that
-     * waits to go, and "led-refused" a change the PC refused for want of the
-     * sudo rule. */
+     * waits to go, "led-refused" a change the PC refused for want of the
+     * sudo rule, and "led-mirror" the mirror in Game Mode with the line of
+     * its status. */
     if(argc>2&&strncmp(argv[2],"led",3)==0){
         bool fire=strcmp(argv[2],"led-look-fire")==0;
         bool coloured=strcmp(argv[2],"led-colour")==0||strcmp(argv[2],"led-old")==0
@@ -289,6 +290,10 @@ int main(int argc,char **argv)
         snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"%s",
                  coloured?"breath":fire?"fire":"aurora");
         snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"fire");
+        if(strcmp(argv[2],"led-mirror")==0){
+            snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"mirror");
+            s.led_mirror=(panel_led_mirror_t){.state="running",.fps=15,.cpu=12,.source="2560x1440"};
+        }
         panel_ui_update(&s);
         lv_obj_t *band=band_in(lv_screen_active());
         if(band){

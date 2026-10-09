@@ -1,0 +1,1080 @@
+# SPDX-FileCopyrightText: 2026 caed1994
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""The mirror: the LED bar takes the colours of the screen in Game Mode.
+
+Two processes do this work, because the LED service cannot see the screen.
+That service runs as root in a sandbox, and the sandbox hides /run/user. The
+screen of Game Mode is a PipeWire stream of gamescope, and PipeWire is a
+service of the user.
+
+So a user service reads the screen: Watcher. It starts gst-launch-1.0, which
+gives it small pictures of 68 by 36 pixels. Watcher makes 17 colours from
+each picture and writes them into a pipe. In the LED service, Mirror reads
+that pipe, and the renderer draws the colours.
+
+The pipe also tells Watcher when to read the screen. The LED service opens
+the pipe only while the bar shows the mirror. With no reader, the open of
+Watcher fails. Watcher then starts no capture, and gamescope copies no
+pictures.
+
+Watcher writes what it does into a small file in the runtime directory of the
+user. The panel service and the control panel read that file. A person thus
+sees why the mirror does not work, with no terminal.
+"""
+
+from __future__ import annotations
+
+import errno
+import json
+import logging
+import math
+import os
+import re
+import select
+import shutil
+import signal
+import stat
+import subprocess
+import time
+
+from . import shim
+
+LOG = logging.getLogger(__name__)
+
+# One zone of the screen for each LED of the bar, from the left to the right.
+ZONES = shim.LOGICAL_LEDS
+
+# The picture that gst-launch-1.0 gives: four columns for each zone, and
+# sufficient rows to find the black bars of a film.
+WIDTH = 4 * ZONES
+HEIGHT = 36
+FRAME = WIDTH * HEIGHT * 3
+
+# The pipeline scales in two steps. The first step keeps one pixel of each
+# cell, at four times the last size. The second step makes the mean of each
+# cell. One step that makes the mean of the full screen costs 0.7 ms to 2.1 ms
+# for each picture. The two steps cost less than 0.3 ms, and the mean of an
+# 8 pixel checkerboard is equally flat. Measured with GStreamer 1.24 at 1080p,
+# 1440p and 2160p, with no PipeWire.
+COARSE = 4
+
+# The pictures each second. The bar eases between them at its frame rate.
+RATE = 15
+
+# The pipe from Watcher to the LED service. It is in the runtime directory of
+# the LED service, beside the pipe for the notifications.
+FIFO = "/run/steamos-utility-center/mirror"
+# Each user can write, and only root can read. A reader starts the capture of
+# the screen, so the reader must be the LED service.
+FIFO_MODE = 0o622
+
+# One message: a byte for the kind, then three bytes for each zone. It is
+# smaller than PIPE_BUF, so each write arrives whole.
+KIND_COLOURS = 1
+MESSAGE = 1 + 3 * ZONES
+
+# The file of the status, in the runtime directory of the user.
+STATUS_NAME = "steamos-utility-center-mirror.json"
+
+# The words of the status. The panel and the control panel translate them.
+OFF = "off"                     # no pipe: the LED service offers no mirror
+IDLE = "idle"                   # the bar shows a different effect now
+NO_GSTREAMER = "no-gstreamer"   # gst-launch-1.0 is not on this machine
+NO_PLUGIN = "no-plugin"         # an element of the pipeline is not there
+NO_SCREEN = "no-screen"         # no stream of gamescope: no Game Mode
+BUSY = "busy"                   # a different program reads the screen
+STARTING = "starting"           # the capture runs and has no picture yet
+RUNNING = "running"
+FAILED = "failed"
+GONE = "gone"                   # no recent status: Watcher does not run
+STATES = (OFF, IDLE, NO_GSTREAMER, NO_PLUGIN, NO_SCREEN, BUSY, STARTING,
+          RUNNING, FAILED, GONE)
+
+# The longest detail in the status. The panel has one line for it.
+DETAIL_CHARS = 40
+
+
+# -- from a picture to the colours of the bar ------------------------------
+
+# A channel at or below this value is black, for the bars of a film. Video
+# black is 16, and a compressed film adds noise to it.
+BLACK = 24
+# A bar can be this part of each edge at most. A dark scene with one light in
+# the middle is not a film with bars.
+MOST_BAR = 0.3
+# How long a new bar must stay before the zones use it. A dark scene makes a
+# bar that is not there, so a larger bar must stay longer. Light in a bar is
+# always a part of the picture, so a smaller bar comes quickly.
+GROW_SECONDS = 2.0
+SHRINK_SECONDS = 0.2
+
+# The level below which a zone is dark. Black on a screen is often not zero,
+# and a bar that glows for a black screen is not a mirror.
+DARK = 18.0
+# The colour of a zone is the mean of many pixels, which is paler than each of
+# them. This multiplies the distance from grey to give the colour back.
+SATURATION = 1.4
+
+
+def bars(frame, width=WIDTH, height=HEIGHT, black=BLACK):
+    """Returns the black bars as (rows, columns), or None for a black picture.
+
+    The rows are at the top and at the bottom, and the columns are at the
+    left and at the right. Each value is the smaller of its two sides, because
+    the two bars of a film are equal. A bar that is too large counts as no
+    bar.
+    """
+    stride = width * 3
+    lit = [max(frame[row * stride:(row + 1) * stride]) > black
+           for row in range(height)]
+    if True not in lit:
+        return None
+    rows = min(lit.index(True), lit[::-1].index(True))
+    lit = [max(max(frame[column * 3::stride]),
+               max(frame[column * 3 + 1::stride]),
+               max(frame[column * 3 + 2::stride])) > black
+           for column in range(width)]
+    columns = min(lit.index(True), lit[::-1].index(True))
+    if rows > height * MOST_BAR:
+        rows = 0
+    if columns > width * MOST_BAR:
+        columns = 0
+    return rows, columns
+
+
+class Crop:
+    """The bars that the zones leave out, with a hold time for each change."""
+
+    def __init__(self):
+        self.bars = (0, 0)
+        self._next = None
+        self._since = 0.0
+
+    def update(self, found, now):
+        """Returns the bars to use after a picture with the bars `found`.
+
+        A black picture says nothing about the bars, so it changes nothing.
+        """
+        if found is None or found == self.bars:
+            self._next = None
+            return self.bars
+        if found != self._next:
+            self._next = found
+            self._since = now
+        grows = found[0] > self.bars[0] or found[1] > self.bars[1]
+        if now - self._since >= (GROW_SECONDS if grows else SHRINK_SECONDS):
+            self.bars = found
+            self._next = None
+        return self.bars
+
+
+_SPANS = {}
+
+
+def _spans(count):
+    """Returns the columns of each zone, as (column, weight) pairs.
+
+    The zones are equal, so a zone can start or stop in a column. That column
+    then counts in two zones, each with its part.
+    """
+    spans = _SPANS.get(count)
+    if spans is None:
+        spans = []
+        for zone in range(ZONES):
+            start = zone * count / float(ZONES)
+            end = (zone + 1) * count / float(ZONES)
+            parts = []
+            for column in range(int(start), min(int(math.ceil(end)), count)):
+                weight = min(end, column + 1.0) - max(start, float(column))
+                if weight > 1e-9:
+                    parts.append((column, weight))
+            spans.append(parts)
+        _SPANS[count] = spans
+    return spans
+
+
+def zones(frame, crop=(0, 0), width=WIDTH, height=HEIGHT):
+    """Returns the mean colour of each zone, from the left to the right.
+
+    The zones divide the picture inside the bars into equal columns. sum() of
+    a slice does the work in C. A picture thus needs 3 * WIDTH slices and no
+    loop in Python over its pixels.
+    """
+    rows, columns = crop
+    stride = width * 3
+    first = rows * stride
+    last = (height - rows) * stride
+    used = height - 2 * rows
+    sums = []
+    for column in range(columns, width - columns):
+        start = first + column * 3
+        sums.append((sum(frame[start:last:stride]),
+                     sum(frame[start + 1:last:stride]),
+                     sum(frame[start + 2:last:stride])))
+    colours = []
+    for parts in _spans(len(sums)):
+        weight = sum(part for _column, part in parts) * used
+        colours.append(tuple(
+            sum(sums[column][channel] * part for column, part in parts) / weight
+            for channel in range(3)))
+    return colours
+
+
+def treat(colour):
+    """Returns one zone as the bar shows it: a darker black, more colour."""
+    red, green, blue = colour
+    peak = max(red, green, blue)
+    if peak <= DARK:
+        return (0.0, 0.0, 0.0)
+    # The peak goes from DARK..255 to 0..255, and the hue stays.
+    gain = (peak - DARK) * 255.0 / ((255.0 - DARK) * peak)
+    red, green, blue = red * gain, green * gain, blue * gain
+    grey = (red + green + blue) / 3.0
+    red, green, blue = (max(0.0, grey + (channel - grey) * SATURATION)
+                        for channel in (red, green, blue))
+    peak = max(red, green, blue)
+    if peak > 255.0:
+        # A clamp of one channel changes the hue. A scale of all three does
+        # not.
+        scale = 255.0 / peak
+        red, green, blue = red * scale, green * scale, blue * scale
+    return (red, green, blue)
+
+
+class Picture:
+    """Makes the colours of the bar from each picture of the screen."""
+
+    def __init__(self):
+        self.crop = Crop()
+
+    def colours(self, frame, now):
+        crop = self.crop.update(bars(frame), now)
+        return [treat(colour) for colour in zones(frame, crop)]
+
+
+def encode(colours):
+    """Returns one message for the pipe."""
+    message = bytearray([KIND_COLOURS])
+    for colour in colours:
+        for channel in colour:
+            message.append(max(0, min(int(channel + 0.5), 255)))
+    return bytes(message)
+
+
+def decode(message):
+    """Returns the colours of one message, or None for a message of a
+    different kind or size."""
+    if len(message) != MESSAGE or message[0] != KIND_COLOURS:
+        return None
+    return [(float(message[1 + zone * 3]), float(message[2 + zone * 3]),
+             float(message[3 + zone * 3]))
+            for zone in range(ZONES)]
+
+
+# -- a screen for the previews -----------------------------------------------
+#
+# The previews in the control panel and on the catalogue page have no screen.
+# These pictures take its place: a sunset, the sea, a forest and a fire, each
+# as colours from the left to the right of the screen.
+DEMO = (
+    ((255, 120, 20), (240, 60, 60), (90, 30, 120)),
+    ((10, 60, 160), (20, 150, 200), (200, 220, 235)),
+    ((20, 90, 20), (90, 160, 40), (30, 70, 25)),
+    ((40, 10, 0), (255, 190, 50), (40, 10, 0)),
+)
+# The part of each picture in which it stays. The change to the next one
+# takes the rest.
+DEMO_STAY = 0.6
+
+
+def _gradient(stops):
+    colours = []
+    for zone in range(ZONES):
+        place = zone * (len(stops) - 1) / float(ZONES - 1)
+        first = min(int(place), len(stops) - 2)
+        blend = place - first
+        colours.append(tuple(float(low + (high - low) * blend) for low, high
+                             in zip(stops[first], stops[first + 1])))
+    return colours
+
+
+def demo(fraction):
+    """Returns the colours of the screen of the previews, at `fraction` of
+    its loop. The loop ends where it starts."""
+    place = (fraction % 1.0) * len(DEMO)
+    index = int(place) % len(DEMO)
+    blend = max(0.0, (place - int(place) - DEMO_STAY) / (1.0 - DEMO_STAY))
+    now = _gradient(DEMO[index])
+    then = _gradient(DEMO[(index + 1) % len(DEMO)])
+    return [tuple(low + (high - low) * blend for low, high in zip(one, two))
+            for one, two in zip(now, then)]
+
+
+# -- the LED service: the colours for the renderer -------------------------
+
+# How long the bar keeps the last colours with no new message. After that the
+# renderer gives the slot back to the rainbow of Steam, as with no sensor.
+HOLD = 3.0
+# How long the pipe stays open after the last frame that showed the mirror. A
+# short change of the effect thus does not stop the capture.
+RELEASE = 10.0
+# The time constants of the ease, in seconds. Light comes quickly and goes
+# slowly, as from a lamp.
+RISE = 0.10
+FALL = 0.35
+
+
+class Mirror:
+    """The colours of the screen, for the renderer in the LED service."""
+
+    def __init__(self, path=None, clock=time.monotonic):
+        self.path = FIFO if path is None else path
+        self.clock = clock
+        self.fd = None
+        self.target = None
+        self.shown = None
+        # The time of the last message, of the last frame, and of the last
+        # frame that asked for the mirror.
+        self.arrived = None
+        self.drawn = None
+        self.wanted = None
+        self._rest = b""
+        self._warned = False
+
+    def create(self):
+        """Makes the pipe. The LED service calls this one time at its start."""
+        try:
+            os.mkfifo(self.path, FIFO_MODE)
+        except FileExistsError:
+            pass
+        if not stat.S_ISFIFO(os.lstat(self.path).st_mode):
+            raise OSError(errno.EEXIST, "not a pipe", self.path)
+        # umask changes the mode of mkfifo, so set the mode again.
+        os.chmod(self.path, FIFO_MODE)
+
+    def colours(self, now=None):
+        """Returns the colours of this frame, or None with no recent picture.
+
+        Each call says that the bar shows the mirror now. The first call opens
+        the pipe, and that starts the capture.
+        """
+        now = self.clock() if now is None else now
+        self.wanted = now
+        if self.fd is None:
+            self._open()
+        if self.fd is not None:
+            self._read(now)
+        if self.target is None or now - self.arrived > HOLD:
+            self.shown = None
+            self.drawn = now
+            return None
+        if self.shown is None:
+            self.shown = list(self.target)
+        else:
+            step = max(0.0, min(now - self.drawn, 0.25))
+            rise = 1.0 - math.exp(-step / RISE)
+            fall = 1.0 - math.exp(-step / FALL)
+            for zone, (target, shown) in enumerate(zip(self.target,
+                                                       self.shown)):
+                # One speed for the three channels of a zone, so that the
+                # hue does not change on the way.
+                blend = rise if max(target) > max(shown) else fall
+                self.shown[zone] = tuple(old + (new - old) * blend
+                                         for old, new in zip(shown, target))
+        self.drawn = now
+        return list(self.shown)
+
+    def poll(self, now=None):
+        """Closes the pipe when no frame asked for the mirror for a time.
+
+        The loop of the service calls this at each turn. That stops the
+        capture of the screen.
+        """
+        now = self.clock() if now is None else now
+        if self.fd is not None and (self.wanted is None
+                                    or now - self.wanted > RELEASE):
+            self.close()
+
+    def close(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+        self.target = None
+        self.shown = None
+        self._rest = b""
+
+    def _open(self):
+        try:
+            self.fd = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError as exc:
+            if not self._warned:
+                LOG.warning("mirror: cannot open %s: %s", self.path, exc)
+                self._warned = True
+            return
+        LOG.info("mirror: the bar shows the screen, so the pipe is open")
+
+    def _read(self, now):
+        size = MESSAGE * 64
+        while True:
+            try:
+                data = os.read(self.fd, size)
+            except BlockingIOError:
+                return
+            except OSError as exc:
+                LOG.warning("mirror: reading %s failed: %s", self.path, exc)
+                self.close()
+                return
+            # Empty: no writer has the pipe open now.
+            if not data:
+                return
+            # Each write is one whole message. A read can still stop in a
+            # message, so the rest waits for the next read.
+            more = len(data)
+            data = self._rest + data
+            whole = len(data) - len(data) % MESSAGE
+            self._rest = data[whole:]
+            if whole:
+                colours = decode(data[whole - MESSAGE:whole])
+                if colours is not None:
+                    self.target = colours
+                    self.arrived = now
+            if more < size:
+                return
+
+
+# -- the user service: from the screen into the pipe ------------------------
+
+GST_LAUNCH = "gst-launch-1.0"
+GST_INSPECT = "gst-inspect-1.0"
+PW_DUMP = "pw-dump"
+# The elements of the pipeline. pipewiresrc is in a package of its own on
+# many systems, and the others are in the base plugins.
+ELEMENTS = ("pipewiresrc", "videorate", "queue", "videoscale",
+            "videoconvert", "fdsink")
+# The stream of the screen in Game Mode, and the name of the reader.
+SCREEN_NODE = "gamescope"
+CLIENT = "steamos-utility-center-mirror"
+
+# How often Watcher looks at the pipe while nothing reads it, and while the
+# pipe is not there. With no pipe, the LED service offers no mirror. That is
+# the usual case, so Watcher looks less often.
+LOOK_SECONDS = 2.0
+OFF_SECONDS = 10.0
+# How often it asks PipeWire about other readers while it reads the screen.
+CHECK_SECONDS = 5.0
+# The wait after a failure: the first value, then two times the last value,
+# up to the maximum.
+RETRY_SECONDS = 5.0
+RETRY_MOST = 60.0
+# How long a new capture can take for its first picture.
+FIRST_PICTURE_SECONDS = 10.0
+# gamescope sends no picture while the screen does not change, and the bar
+# keeps a picture for HOLD seconds. So Watcher sends the last colours again
+# after this time.
+REPEAT_SECONDS = 1.0
+# How often Watcher writes the status file, and the age at which a reader
+# calls it GONE.
+STATUS_SECONDS = 2.0
+STATUS_STALE = 15.0
+
+TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+
+
+def command(target, by_id=False):
+    """Returns the argument list of the pipeline.
+
+    GStreamer before 1.22 has no target-object. A pipeline for that version
+    names the node by its id with path=.
+    """
+    source = ["pipewiresrc", ("path=%s" if by_id else "target-object=%s")
+              % target, "client-name=" + CLIENT, "do-timestamp=true"]
+    return ([GST_LAUNCH, "-q"] + source
+            + ["!", "videorate", "drop-only=true", "max-rate=%d" % RATE,
+               "!", "queue", "leaky=downstream", "max-size-buffers=1",
+               "!", "videoscale", "method=nearest-neighbour",
+               "!", "video/x-raw,width=%d,height=%d"
+               % (COARSE * WIDTH, COARSE * HEIGHT),
+               "!", "videoscale", "method=bilinear2",
+               "!", "video/x-raw,width=%d,height=%d" % (WIDTH, HEIGHT),
+               "!", "videoconvert",
+               "!", "video/x-raw,format=RGB",
+               "!", "fdsink", "fd=1", "sync=false"])
+
+
+def has_element(name, run=subprocess.run):
+    """Returns whether GStreamer has the element `name`."""
+    try:
+        done = run([GST_INSPECT, "--exists", name], stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+def pw_dump(run=subprocess.run):
+    """Returns the objects of PipeWire, or None when pw-dump fails."""
+    try:
+        done = run([PW_DUMP], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                   stderr=subprocess.DEVNULL, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    try:
+        objects = json.loads(done.stdout)
+    except ValueError:
+        return None
+    if not isinstance(objects, list):
+        return None
+    return [one for one in objects if isinstance(one, dict)]
+
+
+def _info(one):
+    info = one.get("info")
+    return info if isinstance(info, dict) else {}
+
+
+def _props(one):
+    props = _info(one).get("props")
+    return props if isinstance(props, dict) else {}
+
+
+def screen_node(objects):
+    """Returns the id of the stream of the screen, or None."""
+    for one in objects:
+        props = _props(one)
+        if (one.get("type") == "PipeWire:Interface:Node"
+                and props.get("node.name") == SCREEN_NODE
+                and props.get("media.class") == "Video/Source"):
+            return one.get("id")
+    return None
+
+
+def _same(first, second):
+    return first is not None and str(first) == str(second)
+
+
+def readers(objects, node, own_pid=None):
+    """Returns the names of the programs that read the stream `node`.
+
+    The reader of a link is a node, and its client says which process it
+    is. PipeWire sets pipewire.sec.pid itself, so a client cannot give a
+    false one. The readers of `own_pid` are not in the list.
+    """
+    nodes = {}
+    clients = {}
+    for one in objects:
+        if one.get("type") == "PipeWire:Interface:Node":
+            nodes[one.get("id")] = _props(one)
+        elif one.get("type") == "PipeWire:Interface:Client":
+            clients[one.get("id")] = _props(one)
+    names = []
+    for one in objects:
+        info = _info(one)
+        if (one.get("type") != "PipeWire:Interface:Link"
+                or not _same(info.get("output-node-id"), node)):
+            continue
+        reader = nodes.get(info.get("input-node-id"), {})
+        client = {}
+        for key, value in clients.items():
+            if _same(key, reader.get("client.id")):
+                client = value
+        pid = client.get("pipewire.sec.pid",
+                         client.get("application.process.id"))
+        if own_pid is not None and _same(pid, own_pid):
+            continue
+        names.append(_name(reader.get("application.name")
+                           or client.get("application.name")
+                           or reader.get("node.name") or "unknown"))
+    return names
+
+
+def _name(text):
+    """Returns a name that is safe and short for the status."""
+    return re.sub(r"[^A-Za-z0-9 ._-]", "", str(text))[:24] or "unknown"
+
+
+def screen_size(objects, node):
+    """Returns the size of the stream as "WxH", or "" with no format."""
+    for one in objects:
+        info = _info(one)
+        if (one.get("type") != "PipeWire:Interface:Port"
+                or info.get("direction") != "output"
+                or not _same(_props(one).get("node.id"), node)):
+            continue
+        params = info.get("params")
+        formats = params.get("Format") if isinstance(params, dict) else None
+        for found in formats if isinstance(formats, list) else ():
+            size = found.get("size") if isinstance(found, dict) else None
+            try:
+                return "%dx%d" % (int(size["width"]), int(size["height"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return ""
+
+
+def cpu_seconds(pid, proc="/proc"):
+    """Returns the processor time of `pid` in seconds, or 0.0."""
+    try:
+        with open(os.path.join(proc, str(pid), "stat")) as handle:
+            fields = handle.read().rsplit(")", 1)[1].split()
+        return (int(fields[11]) + int(fields[12])) / float(TICKS)
+    except (OSError, IndexError, ValueError):
+        return 0.0
+
+
+def _own_cpu():
+    times = os.times()
+    return times[0] + times[1]
+
+
+def _short(line):
+    """Returns the useful end of an error line of gst-launch-1.0."""
+    line = line.strip()
+    for prefix in ("ERROR:", "WARNING:"):
+        if line.startswith(prefix):
+            line = line[len(prefix):].strip()
+    # "from element /GstPipeline:pipeline0/...: text" keeps the text.
+    if line.startswith("from element"):
+        line = line.split(": ", 1)[-1]
+    line = line.replace("erroneous pipeline: ", "")
+    return re.sub(r"[^\x20-\x7e]", "", line)[:DETAIL_CHARS]
+
+
+class Pipeline:
+    """The gst-launch-1.0 child, and the pictures that it gives."""
+
+    def __init__(self, argv, launch=subprocess.Popen):
+        self.argv = argv
+        self.launch = launch
+        self.process = None
+        self.ended = False
+        self._buffer = bytearray()
+        self._errors = []
+
+    @property
+    def pid(self):
+        return None if self.process is None else self.process.pid
+
+    def start(self):
+        self.process = self.launch(
+            self.argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, start_new_session=True,
+            env=dict(os.environ, LC_ALL="C"))
+        for stream in (self.process.stdout, self.process.stderr):
+            os.set_blocking(stream.fileno(), False)
+
+    def frame(self, timeout):
+        """Returns the newest whole picture, or None after `timeout` seconds.
+
+        Older pictures in the pipe are discarded. The newest one is the
+        screen now.
+        """
+        streams = [self.process.stdout, self.process.stderr]
+        try:
+            readable = select.select(streams, [], [], timeout)[0]
+        except (OSError, ValueError):
+            readable = []
+        if self.process.stderr in readable:
+            self._read_errors()
+        if self.process.stdout in readable:
+            try:
+                chunk = os.read(self.process.stdout.fileno(), FRAME * 8)
+            except BlockingIOError:
+                chunk = None
+            except OSError:
+                chunk = b""
+            if chunk == b"":
+                self.ended = True
+            elif chunk:
+                self._buffer += chunk
+        whole = len(self._buffer) // FRAME
+        if not whole:
+            if self.ended:
+                # Do not turn at full speed on a closed pipe.
+                time.sleep(min(timeout, 0.1))
+            return None
+        picture = bytes(self._buffer[(whole - 1) * FRAME:whole * FRAME])
+        del self._buffer[:whole * FRAME]
+        return picture
+
+    def _read_errors(self):
+        try:
+            chunk = os.read(self.process.stderr.fileno(), 4096)
+        except OSError:
+            return
+        for line in chunk.decode("utf-8", "replace").splitlines():
+            if line.strip():
+                self._errors = (self._errors + [line])[-6:]
+
+    def alive(self):
+        return self.process is not None and self.process.poll() is None
+
+    def error(self):
+        """Returns the most useful of the last error lines, or ""."""
+        self._read_errors()
+        lines = self._errors
+        for line in reversed(lines):
+            # GStreamer gives the reason of a stop in a line of its own.
+            found = re.search(r"reason (\S+)", line)
+            if found:
+                return _short(found.group(1))
+        for line in reversed(lines):
+            if line.lstrip().startswith(("ERROR", "WARNING")):
+                return _short(line)
+        return _short(lines[-1]) if lines else ""
+
+    def stop(self):
+        if self.process is None:
+            return
+        if self.process.poll() is None:
+            try:
+                os.killpg(self.process.pid, signal.SIGTERM)
+            except OSError:
+                pass
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                self.process.wait()
+        for stream in (self.process.stdout, self.process.stderr):
+            try:
+                stream.close()
+            except (OSError, AttributeError):
+                pass
+
+
+def status_path():
+    """The file of the status, in the runtime directory of the user."""
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    return os.path.join(runtime, STATUS_NAME)
+
+
+def read_status(path=None, wall=time.time):
+    """Returns the status that Watcher wrote, as a small dict.
+
+    An old, absent or damaged file gives GONE: Watcher writes the file each
+    STATUS_SECONDS while it runs.
+    """
+    path = status_path() if path is None else path
+    try:
+        with open(path, "rb") as handle:
+            values = json.loads(handle.read(4096).decode("utf-8"))
+    except (OSError, ValueError):
+        return {"state": GONE}
+    if not isinstance(values, dict) or values.get("state") not in STATES:
+        return {"state": GONE}
+    at = values.get("at")
+    if (not isinstance(at, (int, float)) or isinstance(at, bool)
+            or abs(wall() - at) > STATUS_STALE):
+        return {"state": GONE}
+    found = {"state": values["state"]}
+    detail = values.get("detail")
+    if isinstance(detail, str) and detail:
+        found["detail"] = detail[:DETAIL_CHARS]
+    for key in ("fps", "cpu"):
+        value = values.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            found[key] = round(float(value), 1)
+    source = values.get("source")
+    if isinstance(source, str) and re.match(r"^\d{1,5}x\d{1,5}$", source):
+        found["source"] = source
+    return found
+
+
+class Watcher:
+    """Reads the screen while the LED service shows the mirror."""
+
+    def __init__(self, fifo=None, status=None, dump=pw_dump,
+                 launch=subprocess.Popen, which=shutil.which,
+                 element=has_element, clock=time.monotonic, wall=time.time,
+                 cpu=cpu_seconds):
+        self.fifo = FIFO if fifo is None else fifo
+        self.status = status_path() if status is None else status
+        self.dump = dump
+        self.launch = launch
+        self.which = which
+        self.element = element
+        self.clock = clock
+        self.wall = wall
+        self.cpu = cpu
+        self.state = None
+        self.detail = ""
+        self.out = None
+        self.pipeline = None
+        self.picture = Picture()
+        self.by_id = False
+        self.tools = False
+        self.retry_at = 0.0
+        self.retry = RETRY_SECONDS
+        self.started = 0.0
+        self.next_check = 0.0
+        self.sent = None
+        self.sent_at = 0.0
+        self.source = ""
+        self.fps = 0.0
+        self.load = 0.0
+        self.frames = 0
+        self.counted_at = 0.0
+        self.counted_cpu = 0.0
+        self.reported_at = None
+        self._changed = True
+
+    # -- the loop ----------------------------------------------------------
+
+    def run(self, running=lambda: True, sleep=time.sleep):
+        try:
+            while running():
+                wait = self.step()
+                if wait > 0:
+                    sleep(wait)
+        finally:
+            self.close()
+
+    def step(self):
+        """Does one turn of the work. Returns the time to wait after it."""
+        now = self.clock()
+        if self.out is None and not self._connect():
+            wait = OFF_SECONDS if self.state == OFF else LOOK_SECONDS
+        elif self._reader_gone():
+            self._stop()
+            self._disconnect()
+            self._set(IDLE)
+            wait = 0.0
+        elif self.pipeline is None:
+            wait = self._begin(now)
+        else:
+            self._watch()
+            wait = 0.0
+        self._report(self.clock())
+        return wait
+
+    def close(self):
+        """Stops the capture and removes the status file."""
+        self._stop()
+        self._disconnect()
+        try:
+            os.unlink(self.status)
+        except OSError:
+            pass
+
+    # -- the pipe ----------------------------------------------------------
+
+    def _connect(self):
+        try:
+            fd = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as exc:
+            if exc.errno == errno.ENOENT:
+                self._set(OFF)
+            elif exc.errno == errno.ENXIO:
+                self._set(IDLE)
+            else:
+                self._set(FAILED, os.strerror(exc.errno))
+            return False
+        if not stat.S_ISFIFO(os.fstat(fd).st_mode):
+            os.close(fd)
+            self._set(FAILED, "%s is not a pipe" % self.fifo)
+            return False
+        self.out = fd
+        return True
+
+    def _disconnect(self):
+        if self.out is not None:
+            os.close(self.out)
+            self.out = None
+
+    def _reader_gone(self):
+        poller = select.poll()
+        poller.register(self.out, select.POLLOUT)
+        return any(events & (select.POLLERR | select.POLLHUP)
+                   for _fd, events in poller.poll(0))
+
+    def _send(self, message, now):
+        try:
+            os.write(self.out, message)
+        except BlockingIOError:
+            # The LED service is late, and the next picture replaces this.
+            pass
+        except OSError:
+            # The reader is gone. The next step finds that and stops.
+            return
+        self.sent = message
+        self.sent_at = now
+
+    # -- the capture -------------------------------------------------------
+
+    def _missing(self):
+        """Returns (state, detail) for a part that is not there, or None."""
+        if self.tools:
+            return None
+        if self.which(GST_LAUNCH) is None:
+            return NO_GSTREAMER, GST_LAUNCH
+        for name in ELEMENTS:
+            if not self.element(name):
+                return NO_PLUGIN, name
+        # Programs do not go away while the machine runs, so ask one time.
+        self.tools = True
+        return None
+
+    def _begin(self, now):
+        if now < self.retry_at:
+            return min(self.retry_at - now, LOOK_SECONDS)
+        missing = self._missing()
+        if missing is not None:
+            self._set(*missing)
+            self.retry_at = now + RETRY_MOST
+            return LOOK_SECONDS
+        objects = self.dump()
+        if objects is None:
+            self._fail(now, "no answer from pw-dump")
+            return LOOK_SECONDS
+        node = screen_node(objects)
+        if node is None:
+            # Each question costs a run of pw-dump, and Game Mode does not
+            # start in a moment.
+            self._set(NO_SCREEN)
+            self.retry_at = now + CHECK_SECONDS
+            return LOOK_SECONDS
+        others = readers(objects, node)
+        if others:
+            self._set(BUSY, others[0])
+            self.retry_at = now + CHECK_SECONDS
+            return LOOK_SECONDS
+        pipeline = Pipeline(command(node if self.by_id else SCREEN_NODE,
+                                    self.by_id), launch=self.launch)
+        try:
+            pipeline.start()
+        except (OSError, ValueError) as exc:
+            self._fail(now, str(exc))
+            return LOOK_SECONDS
+        self.pipeline = pipeline
+        self.picture = Picture()
+        self.started = now
+        self.next_check = now + CHECK_SECONDS
+        self.sent = None
+        self.source = ""
+        self.frames = 0
+        self.counted_at = now
+        self.counted_cpu = self._cpu_now()
+        self._set(STARTING)
+        return 0.0
+
+    def _watch(self):
+        pipeline = self.pipeline
+        picture = pipeline.frame(0.25)
+        now = self.clock()
+        if picture is not None:
+            self._send(encode(self.picture.colours(picture, now)), now)
+            self.frames += 1
+            if self.state != RUNNING:
+                self._set(RUNNING)
+                self.retry = RETRY_SECONDS
+        elif self.sent is not None and now - self.sent_at >= REPEAT_SECONDS:
+            self._send(self.sent, now)
+        if not pipeline.alive() or pipeline.ended:
+            detail = pipeline.error()
+            if not self.by_id and "target-object" in detail:
+                # An older GStreamer. Try again at once, with the id.
+                self.by_id = True
+                self._stop()
+                self._set(STARTING)
+                return
+            self._fail(now, detail or "gst-launch-1.0 stopped")
+            return
+        if self.state == STARTING and now - self.started > FIRST_PICTURE_SECONDS:
+            self._fail(now, "no picture")
+            return
+        if now >= self.next_check:
+            self.next_check = now + CHECK_SECONDS
+            self._check(now)
+
+    def _check(self, now):
+        """Stops the capture when a different program reads the screen."""
+        objects = self.dump()
+        if objects is None:
+            return
+        node = screen_node(objects)
+        if node is None:
+            self._stop()
+            self._set(NO_SCREEN)
+            self.retry_at = now + LOOK_SECONDS
+            return
+        others = readers(objects, node, own_pid=self.pipeline.pid)
+        if others:
+            # The other program came after this one. Make room for it: the
+            # screen of a recording is more important than the bar.
+            self._stop()
+            self._set(BUSY, others[0])
+            self.retry_at = now + CHECK_SECONDS
+            return
+        self.source = screen_size(objects, node)
+
+    def _fail(self, now, detail):
+        self._stop()
+        self._set(FAILED, detail)
+        self.retry_at = now + self.retry
+        self.retry = min(self.retry * 2.0, RETRY_MOST)
+
+    def _stop(self):
+        if self.pipeline is not None:
+            self.pipeline.stop()
+            self.pipeline = None
+        self.sent = None
+        self.fps = 0.0
+        self.load = 0.0
+
+    def _cpu_now(self):
+        used = _own_cpu()
+        if self.pipeline is not None and self.pipeline.pid is not None:
+            used += self.cpu(self.pipeline.pid)
+        return used
+
+    # -- the status --------------------------------------------------------
+
+    def _set(self, state, detail=""):
+        detail = _short(detail) if detail else ""
+        if state == self.state and detail == self.detail:
+            return
+        if detail:
+            LOG.info("mirror: %s (%s)", state, detail)
+        else:
+            LOG.info("mirror: %s", state)
+        self.state = state
+        self.detail = detail
+        self._changed = True
+
+    def _report(self, now):
+        if (not self._changed and self.reported_at is not None
+                and now - self.reported_at < STATUS_SECONDS):
+            return
+        if self.pipeline is not None and self.state == RUNNING:
+            span = now - self.counted_at
+            if span >= 1.0:
+                used = self._cpu_now()
+                self.fps = self.frames / span
+                self.load = max(0.0, (used - self.counted_cpu) / span * 100.0)
+                self.frames = 0
+                self.counted_at = now
+                self.counted_cpu = used
+        values = {"state": self.state, "at": round(self.wall(), 1)}
+        if self.detail:
+            values["detail"] = self.detail
+        if self.state == RUNNING:
+            values["fps"] = round(self.fps, 1)
+            values["cpu"] = round(self.load, 1)
+            if self.source:
+                values["source"] = self.source
+        temporary = self.status + ".new"
+        try:
+            with open(temporary, "w", encoding="utf-8") as handle:
+                json.dump(values, handle)
+            os.replace(temporary, self.status)
+        except OSError as exc:
+            LOG.debug("mirror: cannot write %s: %s", self.status, exc)
+        self.reported_at = now
+        self._changed = False

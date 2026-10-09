@@ -39,6 +39,26 @@ static const effect_t game[] = {
     {"fire", TXT_LED_FIRE, false, false},
     {"aurora", TXT_LED_AURORA, false, false},
     {"ooze", TXT_LED_OOZE, false, false},
+    {"mirror", TXT_LED_MIRROR, false, false},
+};
+
+/* screen.STATES of the LED service, and the line of each one. "idle" is a
+ * bar on a different effect of Steam, so its line is the line of the other
+ * effects. */
+static const struct {
+    const char *state;
+    panel_text_id_t text;
+} mirror_lines[] = {
+    {"off", TXT_MIRROR_OFF},
+    {"idle", TXT_LED_GAME_WHAT},
+    {"no-gstreamer", TXT_MIRROR_NO_GSTREAMER},
+    {"no-plugin", TXT_MIRROR_NO_PLUGIN},
+    {"no-screen", TXT_MIRROR_NO_SCREEN},
+    {"busy", TXT_MIRROR_BUSY},
+    {"starting", TXT_MIRROR_STARTING},
+    {"running", TXT_MIRROR_RUNNING},
+    {"failed", TXT_MIRROR_FAILED},
+    {"gone", TXT_MIRROR_GONE},
 };
 
 /* companion.LED_COLOURS, in its order. */
@@ -225,4 +245,35 @@ size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
     out[at++] = '}';
     out[at] = 0;
     return at;
+}
+
+void panel_led_mirror_line(char *out, size_t room, const panel_led_mirror_t *mirror)
+{
+    if (!out || !room) return;
+    out[0] = '\0';
+    panel_text_id_t text = TXT_LED_GAME_WHAT;
+    for (size_t i = 0; mirror && i < sizeof mirror_lines / sizeof mirror_lines[0]; i++)
+        if (strcmp(mirror->state, mirror_lines[i].state) == 0) text = mirror_lines[i].text;
+    switch (text) {
+    case TXT_MIRROR_RUNNING:
+        /* The rate and the load, and the size of the screen where the PC
+         * knows it. A status with no numbers says only that it runs. */
+        if (mirror->fps >= 0 && mirror->cpu >= 0) {
+            int used = snprintf(out, room, panel_text(TXT_MIRROR_RUNNING), mirror->fps,
+                                mirror->cpu / 10, mirror->cpu % 10);
+            if (mirror->source[0] && used > 0 && (size_t)used < room)
+                snprintf(out + used, room - (size_t)used, ", %s", mirror->source);
+        } else {
+            snprintf(out, room, "%s", panel_text(TXT_MIRROR_RUNS));
+        }
+        break;
+    case TXT_MIRROR_BUSY:
+    case TXT_MIRROR_NO_PLUGIN:
+    case TXT_MIRROR_FAILED:
+        snprintf(out, room, panel_text(text), mirror->detail[0] ? mirror->detail : "?");
+        break;
+    default:
+        snprintf(out, room, "%s", panel_text(text));
+        break;
+    }
 }

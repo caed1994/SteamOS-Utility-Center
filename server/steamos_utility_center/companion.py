@@ -53,8 +53,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import config as config_module
-from . import ctl, desktop, lact, modules, notify, pcinfo, power, steamapps
-from . import steamcontroller
+from . import ctl, desktop, lact, modules, notify, pcinfo, power, render
+from . import screen, steamapps, steamcontroller
 from . import temperature
 
 # The port, and the file that holds the shared secret.
@@ -1269,16 +1269,23 @@ class LedSettings:
 _led_settings = LedSettings()
 
 
-def led(settings=None, present=None):
+def led(settings=None, present=None, mirror=screen.read_status):
     """The effects, the colour and the brightness for the page of the LED
     bar, or None.
 
     None where the LED module is not on this machine, or where its file has
     an error. The panel then shows a sentence in place of the buttons.
+
+    With the mirror in Game Mode, also what the service that reads the
+    screen does. It runs as this user, so its file is in the same runtime
+    directory. The panel shows it below the effect.
     """
     if not modules.installed(modules.LED, present=present):
         return None
-    return (_led_settings if settings is None else settings).read()
+    values = (_led_settings if settings is None else settings).read()
+    if values is not None and values.get("game") == render.SHOWS_MIRROR:
+        values = dict(values, mirror=mirror())
+    return values
 
 
 # One change at a time for each module. A change of the LED bar starts the

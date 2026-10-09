@@ -159,6 +159,7 @@ Mode. The download progress bar comes from there too.
 | `fire` | a flame that moves along the strip | ![fire](docs/previews/fire.png) |
 | `aurora` | slow green and violet curtains | ![aurora](docs/previews/aurora.png) |
 | `ooze` | thick acid blobs that creep and merge | ![ooze](docs/previews/ooze.png) |
+| `mirror` | the colours of the screen, from the left to the right | ![mirror](docs/previews/mirror.png) |
 
 Set the option, then select **Rainbow** in Steam's LED menu. A machine that
 cannot show your selection gets the rainbow, with the reason in the log.
@@ -173,14 +174,26 @@ right, in `LOAD_CPU_COLOR` and `LOAD_GPU_COLOR`. `LOAD_SWAP` exchanges the two
 sides. The GPU half needs an amdgpu card.
 `steamos-utility-center --load` gives the counters of your machine.
 
+**Mirror.** The bar takes the colours of the screen in Game Mode. Each LED
+shows the mean colour of one of 17 zones across the screen. The black bars of a
+film are not in the zones.
+
+A user service, `steamos-utility-center-mirror`, reads the screen with
+GStreamer and its `pipewiresrc` element. It reads only while the bar shows the
+mirror. It stops while a different program reads the screen, for example a
+recording of Steam. The wall panel and the Status page of the control panel
+show what it does. The log is
+`journalctl --user -u steamos-utility-center-mirror -f`.
+
 ### Desktop Mode
 
 Steam sets the LEDs in Game Mode only. The panel's **Desktop mode** page gives
 the desktop a scene of its own: `steam`, `off`, `color`, `breath`, `patrol`,
 `rainbow`, `fire`, `aurora`, `ooze`, `temperature` or `load`.
 
-Every effect is available here, and not only the one in the rainbow slot. The
-two modes can show different effects.
+Every effect of the rainbow slot except the mirror is available here, and not
+only the one in the slot. The mirror reads the screen of Game Mode. The two
+modes can show different effects.
 
 Game Mode stays Steam's. A download keeps the bar for its whole length and
 gives it back at the end, also when you leave Game Mode while one runs.

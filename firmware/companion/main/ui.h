@@ -234,6 +234,9 @@ typedef struct {
     int led_brightness;
     uint32_t led_replies;
     int led_code;
+    /* What the mirror of the LED bar does on the PC, for the line under
+     * the Game Mode card. See panel_led.h. */
+    panel_led_mirror_t led_mirror;
     /* The CPU of the PC, for its page, the same way. cpu_profile is the
      * key of the profile of its settings, "custom" for a setting of the
      * control panel that no profile is, and cpu_offers has a bit for each
