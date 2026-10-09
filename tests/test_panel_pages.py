@@ -135,8 +135,7 @@ class BandTest(unittest.TestCase):
                      "gpu_load_value", "gpu_load_track", "gpu_load_bar",
                      "vram_value", "vram_track", "vram_bar",
                      "gpu_clock_value", "history_chart", "history_empty",
-                     "history_ago", "history_axis", "history_buttons",
-                     "history_series"):
+                     "history_axis", "history_series"):
             self.assertIn(name, kept.group(1),
                           "%s outlives the clean that freed it" % name)
 

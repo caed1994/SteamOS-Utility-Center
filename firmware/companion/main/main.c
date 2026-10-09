@@ -1667,10 +1667,10 @@ void app_main(void)
     BaseType_t sound_created=panel_psram_task(sound_task,"panel_sound",6144,3,tskNO_AFFINITY);
     assert(sound_created==pdPASS);
     ram_step("sound");
-    /* The history of the page of the card: an hour of points and what the
-     * chart draws of it, about 6.5 KB. PSRAM, because the internal memory
-     * is for the network and the drawing. A panel with no PSRAM to spare
-     * shows the page without curves. */
+    /* The history of the page of the card: 30 minutes of points and what
+     * the chart draws of them, about 4.3 KB. PSRAM, because the internal
+     * memory is for the network and the drawing. A panel with no PSRAM to
+     * spare shows the page without curves. */
     history=heap_caps_calloc(1,sizeof(panel_history_t),MALLOC_CAP_SPIRAM);
     if(history)panel_history_reset(history);
     else ESP_LOGW("panel_history","No PSRAM for the history; the page shows no curves");

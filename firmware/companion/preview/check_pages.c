@@ -2334,26 +2334,27 @@ int main(void)
         assert(history.count==14&&history.points[PANEL_HISTORY_CPU][last]==PANEL_HISTORY_GAP);
         g.online=true;
         panel_ui_update(&g);
-        // The window: 30 minutes, then the hour.
+        // The window: the 30 minutes of the history, and no button that
+        // chooses another.
         assert(label(page,"-30 min"));
-        click("60 min");
-        assert(label(page,"-60 min")&&!label(page,"-30 min"));
-        // The chart takes no press, so a swipe over it moves the band.
-        lv_obj_t *history_card=lv_obj_get_parent(label(page,"-60 min"));
+        lv_obj_t *history_card=lv_obj_get_parent(label(page,"-30 min"));
         lv_obj_t *chart=NULL;
-        for(unsigned i=0;i<lv_obj_get_child_count(history_card);i++)
-            if(lv_obj_check_type(lv_obj_get_child(history_card,i),&lv_chart_class))
-                chart=lv_obj_get_child(history_card,i);
+        for(unsigned i=0;i<lv_obj_get_child_count(history_card);i++){
+            lv_obj_t *o=lv_obj_get_child(history_card,i);
+            assert(!lv_obj_check_type(o,&lv_button_class));
+            if(lv_obj_check_type(o,&lv_chart_class))chart=o;
+        }
+        // The chart takes no press, so a swipe over it moves the band.
         assert(chart&&!lv_obj_has_flag(chart,LV_OBJ_FLAG_CLICKABLE));
         assert(lv_chart_get_point_count(chart)==PANEL_HISTORY_DRAWN);
         lv_refr_now(screen);
         assert(complaints==0);
-        // A new screen for a new language keeps the history and the window.
+        // A new screen for a new language keeps the history.
         panel_settings_t german=chosen;german.language=PANEL_GERMAN;
         panel_ui_create(action,setting,sound,&german);
         page=lv_obj_get_child(find_band(lv_screen_active()),4);
         assert(label(page,"GPU-Last")&&label(page,"Verlauf"));
-        assert(label(page,"80 °C")&&label(page,"-60 Min"));
+        assert(label(page,"80 °C")&&label(page,"-30 Min"));
         assert(!label(page,"Noch keine Werte"));
         lv_refr_now(screen);
         assert(complaints==0);

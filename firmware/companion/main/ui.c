@@ -87,18 +87,13 @@ static uint32_t hold_counted;
 static panel_history_t *history;
 static uint32_t history_answers,history_drawn;
 static bool history_stale=true;
-/* The window the page shows, in minutes. Not stored: a restart starts the
- * history again in any case. */
-static int history_minutes=30;
-#define HISTORY_WINDOWS 3
-static const int history_windows[HISTORY_WINDOWS]={15,30,60};
 static lv_obj_t *gpu_load_value,*gpu_load_track,*gpu_load_bar,*vram_value,*vram_track,*vram_bar,*gpu_clock_value;
 /* Cooling Boost, under the clock of the card: the field that takes the tap,
  * and the track and the knob of its switch. boost_shown is what they show,
  * -1 for nothing yet, 0 off and 1 on, so that only a change goes to LVGL. */
 static lv_obj_t *boost_field,*boost_track,*boost_knob;
 static int boost_shown=-1;
-static lv_obj_t *history_chart,*history_empty,*history_ago,*history_axis[4],*history_buttons[HISTORY_WINDOWS];
+static lv_obj_t *history_chart,*history_empty,*history_axis[4];
 static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
 /* The colours of the three curves, and the legend that names them: the
  * processor in blue, the card in orange and its power in green, which read
@@ -1304,26 +1299,20 @@ static void history_show(void)
     if(!history_chart)return;
     if(!history_stale&&(!history||history_drawn==history->version))return;
     history_stale=false;
-    for(int i=0;i<HISTORY_WINDOWS;i++){
-        bool on=history_windows[i]==history_minutes;
-        lv_obj_set_style_border_color(history_buttons[i],lv_color_hex(on?ACCENT_TEXT:EDGE),0);
-        set_text_colour(history_buttons[i],on?ACCENT_TEXT:TEXT);
-    }
-    set_textf(history_ago,"-%d %s",history_minutes,panel_text(TXT_MINUTES));
     int found=0,low=0,high=0,cpu_low=0,cpu_high=0,watts_low=0,watts_high=0;
     if(history){
         history_drawn=history->version;
         for(int i=0;i<PANEL_HISTORY_SERIES;i++){
             int32_t *points=history->drawn[i];
-            found+=panel_history_read(history,(panel_history_series_t)i,history_minutes,points,PANEL_HISTORY_DRAWN);
+            found+=panel_history_read(history,(panel_history_series_t)i,PANEL_HISTORY_MINUTES,points,PANEL_HISTORY_DRAWN);
             for(int k=0;k<PANEL_HISTORY_DRAWN;k++)if(points[k]==PANEL_HISTORY_GAP)points[k]=LV_CHART_POINT_NONE;
         }
     }
-    bool cpu=history&&panel_history_range(history,PANEL_HISTORY_CPU,history_minutes,&cpu_low,&cpu_high);
-    bool gpu=history&&panel_history_range(history,PANEL_HISTORY_GPU,history_minutes,&low,&high);
+    bool cpu=history&&panel_history_range(history,PANEL_HISTORY_CPU,PANEL_HISTORY_MINUTES,&cpu_low,&cpu_high);
+    bool gpu=history&&panel_history_range(history,PANEL_HISTORY_GPU,PANEL_HISTORY_MINUTES,&low,&high);
     if(cpu&&(!gpu||cpu_low<low))low=cpu_low;
     if(cpu&&(!gpu||cpu_high>high))high=cpu_high;
-    bool watts=history&&panel_history_range(history,PANEL_HISTORY_WATTS,history_minutes,&watts_low,&watts_high);
+    bool watts=history&&panel_history_range(history,PANEL_HISTORY_WATTS,PANEL_HISTORY_MINUTES,&watts_low,&watts_high);
     int bottom=30,top=90,most=300;
     if(cpu||gpu){
         bottom=floor_to(low-3,10);top=ceil_to(high+3,10);
@@ -1345,14 +1334,6 @@ static void history_show(void)
     if(found)set_shown(history_empty,false);
     else set_shown(history_empty,true);
     lv_chart_refresh(history_chart);
-}
-static void history_window_clicked(lv_event_t *e)
-{
-    int minutes=(int)(intptr_t)lv_event_get_user_data(e);
-    feedback();
-    if(minutes==history_minutes)return;
-    history_minutes=minutes;history_stale=true;
-    history_show();
 }
 /* The load, the memory and the clock of the card. "--" where the
  * service sent nothing, as on the page of the PC, and for all of them
@@ -2814,9 +2795,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     gpu_load_value=NULL;gpu_load_track=NULL;gpu_load_bar=NULL;
     vram_value=NULL;vram_track=NULL;vram_bar=NULL;gpu_clock_value=NULL;
     boost_field=NULL;boost_track=NULL;boost_knob=NULL;boost_shown=-1;
-    history_chart=NULL;history_empty=NULL;history_ago=NULL;
+    history_chart=NULL;history_empty=NULL;
     for(int i=0;i<4;i++)history_axis[i]=NULL;
-    for(int i=0;i<HISTORY_WINDOWS;i++)history_buttons[i]=NULL;
     for(int i=0;i<PANEL_HISTORY_SERIES;i++)history_series[i]=NULL;
     for(int i=0;i<PANEL_DRIVES;i++){
         drive_rows[i]=NULL;drive_names[i]=NULL;
@@ -3069,22 +3049,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     boost_knob=knob_in(boost_track,BOOST_KNOB_OFF,2,BOOST_TRACK_HEIGHT-4);
     lv_obj_add_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *history_card=panel(page[4],10,106,460,194,CARD,true);
-    /* The three windows in the top right corner, over the legend. Each is
-     * 38 high and takes a press 5 past its edge: 48 each way. They stand
-     * twice that apart, so no press is between two and none is on both. */
-    enum{HISTORY_BUTTON_REACH=5,HISTORY_BUTTON_WIDTH=76,HISTORY_BUTTON_HEIGHT=38,HISTORY_BUTTON_Y=6,
-         HISTORY_BUTTON_X=460-14-HISTORY_WINDOWS*HISTORY_BUTTON_WIDTH-(HISTORY_WINDOWS-1)*2*HISTORY_BUTTON_REACH};
     text_at(history_card,panel_text(TXT_HISTORY),16,14,120,&panel_font_14,MUTED);
-    for(int i=0;i<HISTORY_WINDOWS;i++){
-        char caption[16];
-        snprintf(caption,sizeof caption,"%d %s",history_windows[i],panel_text(TXT_MINUTES));
-        history_buttons[i]=button(history_card,caption,
-                                  HISTORY_BUTTON_X+i*(HISTORY_BUTTON_WIDTH+2*HISTORY_BUTTON_REACH),
-                                  HISTORY_BUTTON_Y,HISTORY_BUTTON_WIDTH,HISTORY_BUTTON_HEIGHT,
-                                  history_window_clicked,history_windows[i]);
-        lv_obj_set_ext_click_area(history_buttons[i],HISTORY_BUTTON_REACH);
-        lv_obj_set_style_text_font(history_buttons[i],&panel_font_14,0);
-    }
     /* The legend, one dot and one name for each curve. */
     const char *legend[PANEL_HISTORY_SERIES]={"CPU °C","GPU °C","GPU W"};
     const uint32_t curves[PANEL_HISTORY_SERIES]=CURVE_COLOURS;
@@ -3126,7 +3091,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
                                 low?CHART_Y+CHART_HEIGHT-16:CHART_Y-2,right?44:CHART_X-6,&panel_font_12,MUTED);
         lv_obj_set_style_text_align(history_axis[i],right?LV_TEXT_ALIGN_LEFT:LV_TEXT_ALIGN_RIGHT,0);
     }
-    history_ago=text_at(history_card,"",CHART_X,CHART_Y+CHART_HEIGHT+6,120,&panel_font_12,MUTED);
+    lv_obj_t *ago=text_at(history_card,"",CHART_X,CHART_Y+CHART_HEIGHT+6,120,&panel_font_12,MUTED);
+    set_textf(ago,"-%d %s",PANEL_HISTORY_MINUTES,panel_text(TXT_MINUTES));
     lv_obj_t *now=text_at(history_card,panel_text(TXT_HISTORY_NOW),CHART_X+CHART_WIDTH-120,
                           CHART_Y+CHART_HEIGHT+6,120,&panel_font_12,MUTED);
     lv_obj_set_style_text_align(now,LV_TEXT_ALIGN_RIGHT,0);
