@@ -714,6 +714,18 @@ def has_node(objects, node):
                and _same(one.get("id"), node) for one in objects)
 
 
+def node_serial(objects, node):
+    """Returns the serial of the node with the id `node`, or None.
+
+    PipeWire does not give a serial two times, but it gives an id again.
+    """
+    for one in objects:
+        if (one.get("type") == "PipeWire:Interface:Node"
+                and _same(one.get("id"), node)):
+            return _props(one).get("object.serial")
+    return None
+
+
 def _links(objects, node):
     """Gives (link info, process id, name) for each reader of `node`.
 
@@ -1101,7 +1113,11 @@ class Watcher:
         self.desktop = desktop
         self.wanted = wanted
         self.share = None
+        # The id of the node that the capture reads. PipeWire can give the
+        # id of a node that went to a new node, so the capture of gamescope
+        # also keeps the serial of its node.
         self.node = None
+        self.serial = None
         # The compositor of the desktop that the share shows.
         self.shared_by = None
         # A refusal of the share holds for the desktop of the compositor
@@ -1288,6 +1304,8 @@ class Watcher:
             self._set(BUSY, others[0])
             self.retry_at = now + CHECK_SECONDS
             return LOOK_SECONDS
+        self.node = node
+        self.serial = node_serial(objects, node)
         return self._launch(now, command(node if self.by_id else SCREEN_NODE,
                                          self.by_id, self.rate,
                                          slow=self.slow))
@@ -1436,7 +1454,11 @@ class Watcher:
         if objects is None:
             return
         node = screen_node(objects)
-        if node is None:
+        if (not _same(node, self.node)
+                or node_serial(objects, node) != self.serial):
+            # gamescope ended, or it started again with a new node. The
+            # reader of the old node can wait with no picture and no error,
+            # as on the desktop. See _check_desktop.
             self._stop()
             self._set(NO_SCREEN)
             self.retry_at = now + LOOK_SECONDS
@@ -1561,8 +1583,9 @@ class Watcher:
             # so the share ends with its capture.
             self.share.stop()
             self.share = None
-            self.node = None
             self.shared_by = None
+        self.node = None
+        self.serial = None
         self.sent = None
         self.fps = 0.0
         self.load = 0.0

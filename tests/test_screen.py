@@ -791,6 +791,37 @@ class WatcherTest(WatcherCase):
         self.assertIn("path=40", self.argvs[1])
         self.assertNotIn("target-object=gamescope", self.argvs[1])
 
+    def test_a_new_stream_of_gamescope_ends_the_capture_of_the_old(self):
+        """gamescope that starts again has a new node, and PipeWire can give
+        it the id of the old node. The reader of the old node can wait with
+        no picture and no error."""
+        def dump(node, serial):
+            found = objects()
+            found[0]["id"] = node
+            found[0]["info"]["props"]["object.serial"] = serial
+            return found
+        for node in (45, 40):
+            with self.subTest(node=node):
+                self.watcher.close()
+                self.watcher.state = None
+                self.watcher.retry_at = 0.0
+                self.dumped = dump(40, 5)
+                self.mirror.colours()
+                self.until(screen.RUNNING)
+                captures = len(self.argvs)
+                self.dumped = dump(node, 9)
+                self.clock.now += screen.CHECK_SECONDS
+                self.watcher.step()
+                self.assertEqual(self.watcher.state, screen.NO_SCREEN)
+                self.assertIsNone(self.watcher.pipeline)
+                self.clock.now += screen.LOOK_SECONDS
+                self.until(screen.RUNNING)
+                self.assertEqual(len(self.argvs), captures + 1)
+                # The same node at the next check keeps the capture.
+                self.clock.now += screen.CHECK_SECONDS
+                self.watcher.step()
+                self.assertEqual(self.watcher.state, screen.RUNNING)
+
     def test_a_still_screen_at_the_start_is_no_failure(self):
         """gamescope sends no picture until the screen changes."""
         self.mirror.colours()
