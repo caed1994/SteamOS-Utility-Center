@@ -190,6 +190,21 @@ gamescope sends a picture only when the screen changes. On a still screen the
 bar keeps the last picture. A capture that starts on a still screen waits for
 the first change, and the panel shows "Mirror waits for a picture".
 
+Three profiles give the colours of the screen to the bar in different ways.
+The wall panel, the control panel and the Game Mode plugin select one, or
+`MIRROR_PROFILE` in the settings file:
+
+| Profile | What the bar shows |
+| --- | --- |
+| Color Pop (`pop`, the default) | the colourful parts of each zone, strong and quick; a dim colour still shows |
+| Cinematic (`cinematic`) | the mean light of each zone, with a little more colour and calm changes |
+| Solid (`solid`) | one colour for the whole bar, the colour of the screen, with calm changes |
+
+Each profile gives the bar the light of the screen and not the values of the
+pixels. A screen gives light by the sRGB curve, and an LED gives light in
+proportion to its value. With the values, the middle tones were too bright,
+and the colours went pale.
+
 ### Desktop Mode
 
 Steam sets the LEDs in Game Mode only. The panel's **Desktop mode** page gives

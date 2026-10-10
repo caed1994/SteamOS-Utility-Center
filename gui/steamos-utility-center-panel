@@ -163,6 +163,9 @@ EFFECTS = [
         # first effect that asked for it.
         ("RAINBOW_SHOWS", "The Rainbow entry shows", "named",
          ledpanel.rainbow_choices(config_module.RAINBOW_CHOICES), None, None),
+        # How the mirror makes the colours of the bar. See screen.PROFILES.
+        ("MIRROR_PROFILE", "Mirror profile", "named",
+         ledpanel.mirror_profiles(), None, None),
         # The bar takes one colour, and these two marks give the position on
         # the scale: green below the first, red above the second, yellow
         # between. The sliders keep them apart, so no pair breaks
@@ -575,6 +578,7 @@ SOON = {}
 # would both have to be true, which is the opposite meaning.
 TEMPERATURE_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "temperature")
 LOAD_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "load")
+MIRROR_SHOWN = (("RAINBOW_SHOWS",), "mirror")
 SCENE_HAS_COLOUR = ("DESKTOP_SCENE", ("color", "breath", "patrol"))
 
 # The effects of the Nanoleaf board that draw in one colour.
@@ -612,6 +616,7 @@ DEPENDS_ON = {
     "DESKTOP_BRIGHTNESS": (SCENE_IS_LIT,),
     "DESKTOP_SPEED": (SCENE_MOVES,),
     "PEGBOARD_COLOR": (PEGBOARD_TAKES_COLOUR,),
+    "MIRROR_PROFILE": (MIRROR_SHOWN,),
     "LOAD_CPU_COLOR": (LOAD_SHOWN,),
     "LOAD_GPU_COLOR": (LOAD_SHOWN,),
     "LOAD_SWAP": (LOAD_SHOWN,),

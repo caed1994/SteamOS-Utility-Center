@@ -378,11 +378,12 @@ MIRROR_SAYS = {
 MIRROR_LOG = "journalctl --user -u steamos-utility-center-mirror -f"
 
 
-def mirror_part(rainbow_shows, status):
+def mirror_part(rainbow_shows, status, profile=None):
     """Returns the mirror, or None while the slot shows a different effect.
 
     The capture runs as a service of the user, and it writes what it does
     into a file. `status` is that file, as screen.read_status gives it.
+    `profile` is MIRROR_PROFILE of the settings.
     """
     if rainbow_shows != render_module.SHOWS_MIRROR:
         return None
@@ -398,6 +399,8 @@ def mirror_part(rainbow_shows, status):
             detail.append("Processor: %g %% of one core" % status["cpu"])
         if "source" in status:
             detail.append("Screen: %s" % status["source"])
+    if profile in screen_module.PROFILE_NAMES:
+        detail.append("Profile: " + screen_module.PROFILE_NAMES[profile])
     detail.append("Log: " + MIRROR_LOG)
     return Part("mirror", "Mirror", ok, said, detail)
 
@@ -1377,6 +1380,12 @@ def palette():
 #
 # Not a list of its own: the service registers them, and a shape the panel
 # does not offer would be one nobody ever finds.
+
+def mirror_profiles():
+    """Menu entries for the profiles of the mirror, in the order of screen."""
+    return tuple((screen_module.PROFILE_NAMES[name], name)
+                 for name in screen_module.PROFILES)
+
 
 def rainbow_choices(names):
     """Menu entries for what the rainbow slot shows, in the service's order.

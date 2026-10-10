@@ -1040,6 +1040,7 @@ static int request(const char *path, const char *body, int wait_ms)
     pc_text(state.led_mirror.state,sizeof state.led_mirror.state,mirror,"state");
     pc_text(state.led_mirror.detail,sizeof state.led_mirror.detail,mirror,"detail");
     pc_text(state.led_mirror.source,sizeof state.led_mirror.source,mirror,"source");
+    pc_text(state.led_profile,sizeof state.led_profile,led,PANEL_LED_PROFILE_KEY);
     cJSON *rate=cJSON_GetObjectItemCaseSensitive(mirror,"fps");
     cJSON *share=cJSON_GetObjectItemCaseSensitive(mirror,"cpu");
     state.led_mirror.fps=cJSON_IsNumber(rate)&&rate->valuedouble>=0&&rate->valuedouble<=1000

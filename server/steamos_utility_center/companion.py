@@ -187,6 +187,10 @@ CPU_PATH = "/v1/cpu"
 CPU_WORD = 23
 LED_CHOICES = {"desktop": ("DESKTOP_SCENE", config_module.DESKTOP_SCENES),
                "game": ("RAINBOW_SHOWS", config_module.RAINBOW_CHOICES)}
+# The profile of the mirror, for the mirror in Game Mode only. It is not in
+# LED_CHOICES, because the panel has one card for each key of that table.
+LED_MIRROR = {"mirror_profile": ("MIRROR_PROFILE",
+                                 config_module.MIRROR_PROFILES)}
 # The colour and the brightness of the scenes on the desktop. The same key is
 # in the status and in a change, and the value is the setting of the LED
 # service that the key names. desktop.SCENES_WITH_COLOUR and
@@ -1268,6 +1272,8 @@ class LedSettings:
             values[LED_LOOK["desktop_color"]])
         found["desktop_brightness"] = int(
             values[LED_LOOK["desktop_brightness"]])
+        for key, (name, _) in LED_MIRROR.items():
+            found[key] = values[name]
         return found
 
 
@@ -1341,9 +1347,10 @@ def led_change(request, write=None):
 
     Returns (HTTP code, body) for the panel. request is the JSON of the
     body: {"desktop": "fire"}, {"game": "ooze"}, {"desktop_color":
-    "#ff0000"}, {"desktop_brightness": 200}, or more than one of these
-    keys together. A key that is not in LED_CHOICES or LED_LOOK, or a value
-    that is not in its list or its limits, reaches nothing.
+    "#ff0000"}, {"desktop_brightness": 200}, {"mirror_profile": "solid"},
+    or more than one of these keys together. A key that is not in
+    LED_CHOICES, LED_LOOK or LED_MIRROR, or a value that is not in its list
+    or its limits, reaches nothing.
 
     The change goes through ctl.strip_write, as a change from the plugin in
     Game Mode does. The LED service checks the new file before the applier
@@ -1351,7 +1358,8 @@ def led_change(request, write=None):
     second or two, and the panel waits for this answer.
     """
     if (not isinstance(request, dict) or not request
-            or not set(request) <= set(LED_CHOICES) | set(LED_LOOK)):
+            or not set(request) <= (set(LED_CHOICES) | set(LED_LOOK)
+                                    | set(LED_MIRROR))):
         return 400, {"error": "invalid request"}
     updates = {}
     for key, value in request.items():
@@ -1360,7 +1368,7 @@ def led_change(request, write=None):
                 return 400, {"error": "unsupported colour or brightness"}
             updates[LED_LOOK[key]] = value
             continue
-        name, allowed = LED_CHOICES[key]
+        name, allowed = LED_CHOICES.get(key) or LED_MIRROR[key]
         if not isinstance(value, str) or value not in allowed:
             return 400, {"error": "unsupported effect"}
         updates[name] = value

@@ -116,10 +116,47 @@ SHRINK_SECONDS = 0.2
 
 # The level below which a zone is dark. Black on a screen is often not zero,
 # and a bar that glows for a black screen is not a mirror.
-DARK = 18.0
-# The colour of a zone is the mean of many pixels, which is paler than each of
-# them. This multiplies the distance from grey to give the colour back.
-SATURATION = 1.4
+DARK = 18
+
+
+def _light(value):
+    value /= 255.0
+    if value <= 0.04045:
+        return value / 12.92
+    return ((value + 0.055) / 1.055) ** 2.4
+
+
+# The light of each value of a pixel, from 0 to 1. A screen gives light by
+# the sRGB curve, and an LED of the bar gives light in proportion to its
+# value. So the bar gets the light of the screen, and not the value of the
+# pixel. The values of the pixels made the middle tones too bright, and each
+# colour went pale.
+LIGHT = tuple(_light(value) for value in range(256))
+DARK_LIGHT = LIGHT[DARK]
+
+# The profiles of the mirror. MIRROR_PROFILE in the settings selects one.
+CINEMATIC = "cinematic"     # the mean light of each zone, with calm changes
+POP = "pop"                 # the colours of each zone, strong and quick
+SOLID = "solid"             # one colour for the whole bar, with calm changes
+PROFILES = (CINEMATIC, POP, SOLID)
+DEFAULT_PROFILE = POP
+# The names that a person reads. They are English in each language.
+PROFILE_NAMES = {CINEMATIC: "Cinematic", POP: "Color Pop", SOLID: "Solid"}
+# How much each profile multiplies the distance from grey, in light.
+MORE_COLOUR = {CINEMATIC: 1.25, POP: 1.8, SOLID: 1.8}
+# The least light of a zone that has light, as a part of full light. A dim
+# colour thus still shows. Cinematic follows the light of the screen.
+LEAST_LIGHT = {CINEMATIC: 0.0, POP: 0.35, SOLID: 0.35}
+# The time constants of the bar for each profile, in seconds: for light that
+# comes, and for light that goes. Light comes more quickly, as from a lamp.
+EASING = {CINEMATIC: (0.40, 1.00), POP: (0.10, 0.35), SOLID: (0.50, 1.00)}
+# The weight of a grey pixel. A zone with no colour thus keeps its mean.
+GREY_WEIGHT = 1e-4
+
+# Measured with 12 pictures of games, as the saturation of the light from 0
+# to 1: 0.49 on the screen, 0.33 on the bar with the values of the pixels and
+# a mean of each zone. With the light: 0.45 for cinematic, 0.71 for pop and
+# 0.63 for solid.
 
 
 def bars(frame, width=WIDTH, height=HEIGHT, black=BLACK):
@@ -199,63 +236,124 @@ def _spans(count):
     return spans
 
 
-def zones(frame, crop=(0, 0), width=WIDTH, height=HEIGHT):
-    """Returns the mean colour of each zone, from the left to the right.
+def _columns(frame, crop, width, height):
+    """Returns the sums of the light of each column inside the bars.
 
-    The zones divide the picture inside the bars into equal columns. sum() of
-    a slice does the work in C. A picture thus needs 3 * WIDTH slices and no
-    loop in Python over its pixels.
+    Each column gives (plain sum, sum weighted by colour, sum of weights). A
+    pixel weighs its saturation squared times its light. A grey pixel thus
+    weighs almost nothing, and the colours of a zone decide its colour.
     """
     rows, columns = crop
-    stride = width * 3
-    first = rows * stride
-    last = (height - rows) * stride
-    used = height - 2 * rows
-    sums = []
+    light = LIGHT
+    found = []
     for column in range(columns, width - columns):
-        start = first + column * 3
-        sums.append((sum(frame[start:last:stride]),
-                     sum(frame[start + 1:last:stride]),
-                     sum(frame[start + 2:last:stride])))
-    colours = []
-    for parts in _spans(len(sums)):
-        weight = sum(part for _column, part in parts) * used
-        colours.append(tuple(
-            sum(sums[column][channel] * part for column, part in parts) / weight
-            for channel in range(3)))
-    return colours
+        plain_red = plain_green = plain_blue = 0.0
+        red_sum = green_sum = blue_sum = weights = 0.0
+        for row in range(rows, height - rows):
+            at = (row * width + column) * 3
+            red = light[frame[at]]
+            green = light[frame[at + 1]]
+            blue = light[frame[at + 2]]
+            top = red if red > green else green
+            top = top if top > blue else blue
+            low = red if red < green else green
+            low = low if low < blue else blue
+            weight = GREY_WEIGHT
+            if top > 0.0:
+                weight += (top - low) * (top - low) / top
+            plain_red += red
+            plain_green += green
+            plain_blue += blue
+            red_sum += red * weight
+            green_sum += green * weight
+            blue_sum += blue * weight
+            weights += weight
+        found.append(((plain_red, plain_green, plain_blue),
+                      (red_sum, green_sum, blue_sum), weights))
+    return found
 
 
-def treat(colour):
-    """Returns one zone as the bar shows it: a darker black, more colour."""
-    red, green, blue = colour
-    peak = max(red, green, blue)
-    if peak <= DARK:
-        return (0.0, 0.0, 0.0)
-    # The peak goes from DARK..255 to 0..255, and the hue stays.
-    gain = (peak - DARK) * 255.0 / ((255.0 - DARK) * peak)
-    red, green, blue = red * gain, green * gain, blue * gain
-    grey = (red + green + blue) / 3.0
-    red, green, blue = (max(0.0, grey + (channel - grey) * SATURATION)
-                        for channel in (red, green, blue))
-    peak = max(red, green, blue)
-    if peak > 255.0:
+def zones(frame, crop=(0, 0), width=WIDTH, height=HEIGHT):
+    """Returns (mean light, colour, weight) of each zone, from the left.
+
+    The zones divide the picture inside the bars into equal columns. The mean
+    light is that of the screen in the zone. The colour is the mean light
+    weighted by colour, and the weight is the sum of the weights.
+    """
+    rows = crop[0]
+    used = height - 2 * rows
+    columns = _columns(frame, crop, width, height)
+    found = []
+    for parts in _spans(len(columns)):
+        plain = [0.0, 0.0, 0.0]
+        weighted = [0.0, 0.0, 0.0]
+        weight = 0.0
+        count = 0.0
+        for column, part in parts:
+            sums, colour_sums, weights = columns[column]
+            for channel in range(3):
+                plain[channel] += sums[channel] * part
+                weighted[channel] += colour_sums[channel] * part
+            weight += weights * part
+            count += part * used
+        found.append((tuple(value / count for value in plain),
+                      tuple(value / weight for value in weighted), weight))
+    return found
+
+
+def together(found):
+    """Returns one zone with the light of all the zones of `found`."""
+    weight = sum(one[2] for one in found)
+    mean = tuple(sum(one[0][channel] for one in found) / len(found)
+                 for channel in range(3))
+    colour = tuple(sum(one[1][channel] * one[2] for one in found) / weight
+                   for channel in range(3))
+    return mean, colour, weight
+
+
+def _more_colour(light, factor):
+    grey = sum(light) / 3.0
+    light = [max(0.0, grey + (channel - grey) * factor) for channel in light]
+    top = max(light)
+    if top > 1.0:
         # A clamp of one channel changes the hue. A scale of all three does
         # not.
-        scale = 255.0 / peak
-        red, green, blue = red * scale, green * scale, blue * scale
-    return (red, green, blue)
+        light = [channel / top for channel in light]
+    return light
+
+
+def shade(zone, profile=DEFAULT_PROFILE):
+    """Returns the values of the LEDs for one zone, from 0 to 255."""
+    mean, colour = zone[0], zone[1]
+    level = max(mean)
+    if level <= DARK_LIGHT:
+        return (0.0, 0.0, 0.0)
+    if profile == CINEMATIC:
+        light = _more_colour(mean, MORE_COLOUR[CINEMATIC])
+    else:
+        # The colour decides the hue, and the zone decides the light.
+        light = _more_colour(colour, MORE_COLOUR[profile])
+        top = max(light)
+        if top <= 0.0:
+            return (0.0, 0.0, 0.0)
+        want = max(level, LEAST_LIGHT[profile])
+        light = [channel / top * want for channel in light]
+    return tuple(channel * 255.0 for channel in light)
 
 
 class Picture:
     """Makes the colours of the bar from each picture of the screen."""
 
-    def __init__(self):
+    def __init__(self, profile=DEFAULT_PROFILE):
+        self.profile = profile if profile in PROFILES else DEFAULT_PROFILE
         self.crop = Crop()
 
     def colours(self, frame, now):
         crop = self.crop.update(bars(frame), now)
-        return [treat(colour) for colour in zones(frame, crop)]
+        found = zones(frame, crop)
+        if self.profile == SOLID:
+            return [shade(together(found), SOLID)] * ZONES
+        return [shade(zone, self.profile) for zone in found]
 
 
 def encode(colours):
@@ -324,18 +422,16 @@ HOLD = 3.0
 # How long the pipe stays open after the last frame that showed the mirror. A
 # short change of the effect thus does not stop the capture.
 RELEASE = 10.0
-# The time constants of the ease, in seconds. Light comes quickly and goes
-# slowly, as from a lamp.
-RISE = 0.10
-FALL = 0.35
 
 
 class Mirror:
     """The colours of the screen, for the renderer in the LED service."""
 
-    def __init__(self, path=None, clock=time.monotonic):
+    def __init__(self, path=None, clock=time.monotonic,
+                 profile=DEFAULT_PROFILE):
         self.path = FIFO if path is None else path
         self.clock = clock
+        self.rise, self.fall = EASING.get(profile, EASING[DEFAULT_PROFILE])
         self.fd = None
         self.target = None
         self.shown = None
@@ -378,8 +474,8 @@ class Mirror:
             self.shown = list(self.target)
         else:
             step = max(0.0, min(now - self.drawn, 0.25))
-            rise = 1.0 - math.exp(-step / RISE)
-            fall = 1.0 - math.exp(-step / FALL)
+            rise = 1.0 - math.exp(-step / self.rise)
+            fall = 1.0 - math.exp(-step / self.fall)
             for zone, (target, shown) in enumerate(zip(self.target,
                                                        self.shown)):
                 # One speed for the three channels of a zone, so that the
@@ -486,6 +582,8 @@ STATUS_STALE = 15.0
 
 # The error lines that Pipeline keeps, and writes into the log at the end.
 ERROR_LINES = 20
+# How often Watcher looks at the settings file for a new profile.
+PROFILE_SECONDS = 2.0
 
 TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
 
@@ -891,14 +989,56 @@ def read_status(path=None, wall=time.time):
     return found
 
 
+class ProfileFile:
+    """The profile of the mirror in the settings file.
+
+    The file changes while Watcher runs: a person selects a profile on the
+    panel or in the plugin. So it reads the file again after each change of
+    its time, its size or its inode, and at most each PROFILE_SECONDS.
+    `read` gives the profile of the file at a path.
+    """
+
+    def __init__(self, path, read, clock=time.monotonic):
+        self.path = path
+        self.read = read
+        self.clock = clock
+        self.value = DEFAULT_PROFILE
+        self._stamp = None
+        self._looked = -math.inf
+
+    def __call__(self):
+        now = self.clock()
+        if now - self._looked < PROFILE_SECONDS:
+            return self.value
+        self._looked = now
+        try:
+            info = os.stat(self.path)
+            stamp = (info.st_mtime_ns, info.st_size, info.st_ino)
+        except OSError:
+            stamp = None
+        if stamp == self._stamp:
+            return self.value
+        self._stamp = stamp
+        found = DEFAULT_PROFILE
+        if stamp is not None:
+            try:
+                found = self.read(self.path)
+            except (OSError, ValueError, KeyError) as exc:
+                LOG.warning("mirror: cannot read the profile in %s: %s",
+                            self.path, exc)
+        self.value = found if found in PROFILES else DEFAULT_PROFILE
+        return self.value
+
+
 class Watcher:
     """Reads the screen while the LED service shows the mirror."""
 
     def __init__(self, fifo=None, status=None, dump=pw_dump,
                  launch=subprocess.Popen, which=shutil.which,
                  element=has_element, clock=time.monotonic, wall=time.time,
-                 cpu=cpu_seconds):
+                 cpu=cpu_seconds, profile=lambda: DEFAULT_PROFILE):
         self.fifo = FIFO if fifo is None else fifo
+        self.profile = profile
         self.status = status_path() if status is None else status
         self.dump = dump
         self.launch = launch
@@ -1115,6 +1255,10 @@ class Watcher:
 
     def _use(self, now):
         """Sends the colours of the waiting picture to the bar."""
+        profile = self.profile()
+        if profile != self.picture.profile:
+            LOG.info("mirror: the profile is %s", profile)
+            self.picture = Picture(profile)
         self._send(encode(self.picture.colours(self.pending, now)), now)
         self.pending = None
         self.used_at = now

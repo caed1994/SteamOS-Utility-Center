@@ -27,6 +27,14 @@
 //                              below nought is none. "(half) 0" is a room
 //                              left with text in it, and "(written) 0" a
 //                              room of nought that the call wrote to
+//   profile <index>            prints the profile there, or "(none)"
+//   profilefind <key>          prints the place of the profile, or -1
+//   profilename <index> <language>
+//                              prints the name of the profile, in English
+//                              for 0 and German for 1
+//   bodyp <room> <game> <profile>
+//                              prints the body of a change of the effect of
+//                              Game Mode and of the profile, as body does
 //   mirror <room> <language> <fps> <cpu> <state> <source> <detail>
 //                              prints the line of the mirror in a room of
 //                              that size, in English for 0 and German for
@@ -90,6 +98,21 @@ int main(void)
             if (length) printf("%s %zu\n", body, length);
             else if (room == 0) printf("%s 0\n", body[0] == 'x' ? "(empty)" : "(written)");
             else printf("%s 0\n", body[0] ? "(half)" : "(empty)");
+        } else if (sscanf(line, "profilefind %63s", key) == 1) {
+            printf("%d\n", panel_led_profile_find(key));
+        } else if (sscanf(line, "profilename %d %d", &index, &level) == 2) {
+            panel_text_set(level ? PANEL_GERMAN : PANEL_ENGLISH);
+            printf("%s\n", panel_text(panel_led_profile_name(index)));
+        } else if (sscanf(line, "profile %d", &index) == 1) {
+            const char *found = panel_led_profile(index);
+            printf("%s\n", found ? found : "(none)");
+        } else if (sscanf(line, "bodyp %d %63s %63s", &room, other, key) == 3) {
+            panel_led_change_t change = {.brightness = -1};
+            snprintf(change.effect[PANEL_LED_GAME], PANEL_LED_KEY, "%.15s", strcmp(other, "-") ? other : "");
+            snprintf(change.profile, PANEL_LED_KEY, "%.15s", strcmp(key, "-") ? key : "");
+            if (room < 0 || room > (int)sizeof body) room = (int)sizeof body;
+            size_t length = panel_led_body(body, (size_t)room, &change);
+            printf("%s %zu\n", length ? body : "(empty)", length);
         } else if (sscanf(line, "mirror %d %d %d %d %63s %63s %n", &room, &level, &index, &step, key, other,
                           &got) == 6) {
             panel_led_mirror_t mirror = {.fps = index, .cpu = step};

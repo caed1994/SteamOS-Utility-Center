@@ -31,12 +31,14 @@ static unsigned led_changes;
 static char led_last[PANEL_LED_MODES][PANEL_LED_KEY];
 static char led_last_colour[PANEL_LED_COLOUR];
 static int led_last_brightness=-1;
+static char led_last_profile[PANEL_LED_KEY];
 static void led_change(const panel_led_change_t *change)
 {
     led_changes++;
     for(int m=0;m<PANEL_LED_MODES;m++)snprintf(led_last[m],PANEL_LED_KEY,"%s",change->effect[m]);
     snprintf(led_last_colour,sizeof led_last_colour,"%s",change->colour);
     led_last_brightness=change->brightness;
+    snprintf(led_last_profile,sizeof led_last_profile,"%s",change->profile);
 }
 // The profiles of the page of the CPU, as main.c gets them.
 static unsigned cpu_changes;
@@ -2886,6 +2888,45 @@ int main(void)
         t.answers++;
         panel_ui_update(&t);
         assert(label(game,"Mirror")&&label(game,"Mirror runs: 15 fps, CPU 1.2 %, 1280x800"));
+        // With no profile from the PC, no button of the profile.
+        assert(!label(game,"Color Pop"));
+        // The profile: a button beside the name of the mirror. A tap shows
+        // the next profile, and it goes to the PC as an effect does.
+        strcpy(t.led_profile,"pop");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,"Mirror")&&label(game,"Color Pop"));
+        before=led_changes;
+        click_in(game,"Color Pop");
+        assert(label(game,"Solid")&&label(game,panel_text(TXT_CHANGE_APPLYING)));
+        led_wait(1600);
+        assert(led_changes==before+1&&strcmp(led_last_profile,"solid")==0&&!led_last[PANEL_LED_GAME][0]);
+        strcpy(t.led_profile,"solid");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,"Solid")&&!label(game,panel_text(TXT_CHANGE_APPLYING)));
+        // Round the end of the list, and back to the profile of the PC: no
+        // change.
+        click_in(game,"Solid");
+        assert(label(game,"Cinematic"));
+        click_in(game,"Cinematic");
+        click_in(game,"Color Pop");
+        led_wait(1600);
+        assert(led_changes==before+1&&label(game,"Solid"));
+        // A refusal takes the profile back, and says why.
+        click_in(game,"Solid");
+        led_wait(1600);
+        t.led_replies++;t.led_code=403;
+        panel_ui_update(&t);
+        assert(label(game,"Solid")&&label(game,panel_text(TXT_CHANGE_NO_RULE)));
+        lv_tick_inc(9000);
+        t.answers++;
+        panel_ui_update(&t);
+        // A service with no profiles: no button.
+        t.led_profile[0]=0;
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,"Mirror")&&!label(game,"Solid")&&!label(game,"Cinematic"));
         strcpy(t.led_mirror.state,"busy");strcpy(t.led_mirror.detail,"steam");
         t.answers++;
         panel_ui_update(&t);

@@ -1189,7 +1189,15 @@ class LedTest(unittest.TestCase):
         self.assertEqual(companion.led(reader, present=lambda path: True),
                          {"desktop": "fire", "game": "ooze",
                           "desktop_color": "#ff8000",
-                          "desktop_brightness": 200})
+                          "desktop_brightness": 200,
+                          "mirror_profile": "pop"})
+
+    def test_the_profile_of_the_mirror_comes_from_the_file(self):
+        reader = companion.LedSettings(self.settings(
+            "RAINBOW_SHOWS=mirror\nMIRROR_PROFILE=cinematic\n"))
+        found = companion.led(reader, present=lambda path: True,
+                              mirror=lambda: {"state": "idle"})
+        self.assertEqual(found["mirror_profile"], "cinematic")
 
     def test_the_mirror_says_what_it_does(self):
         """Only with the mirror in Game Mode: the panel shows it below that
@@ -1222,7 +1230,9 @@ class LedTest(unittest.TestCase):
             self.assertEqual(reader.read(),
                              {"desktop": "steam", "game": "rainbow",
                               "desktop_color": "#ffffff",
-                              "desktop_brightness": 128}, text)
+                              "desktop_brightness": 128,
+                              "mirror_profile": screen.DEFAULT_PROFILE},
+                             text)
 
     def test_each_form_of_a_colour_comes_in_the_form_of_the_panel(self):
         """The file takes "#RRGGBB", "r,g,b" and the name of a kind of
@@ -1290,6 +1300,16 @@ class LedChangeTest(unittest.TestCase):
         (code, _), wrote = self.change({"desktop": "off", "game": "load"})
         self.assertEqual(wrote, [{"DESKTOP_SCENE": "off",
                                   "RAINBOW_SHOWS": "load"}])
+
+    def test_each_profile_of_the_mirror_can_be_chosen(self):
+        for profile in screen.PROFILES:
+            (code, _), wrote = self.change({"mirror_profile": profile})
+            self.assertEqual((code, wrote),
+                             (200, [{"MIRROR_PROFILE": profile}]), profile)
+        (code, _), wrote = self.change({"mirror_profile": "disco"})
+        self.assertEqual((code, wrote), (400, []))
+        self.assertEqual(companion.LED_MIRROR["mirror_profile"],
+                         ("MIRROR_PROFILE", screen.PROFILES))
 
     def test_every_effect_of_the_service_can_be_chosen(self):
         for key, (name, allowed) in companion.LED_CHOICES.items():

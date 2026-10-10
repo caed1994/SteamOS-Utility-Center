@@ -17,6 +17,7 @@ from . import link
 from . import notify
 from . import phone
 from . import render
+from . import screen
 from .serialport import BAUD_CONSTANTS
 
 LOG = logging.getLogger(__name__)
@@ -107,6 +108,7 @@ DEFAULTS = {
     "DESKTOP_BRIGHTNESS": 128,
     "DESKTOP_SPEED": 1.0,
     "RAINBOW_SHOWS": "rainbow",
+    "MIRROR_PROFILE": screen.DEFAULT_PROFILE,
     "LOAD_CPU_COLOR": "#ff6e00",
     "LOAD_GPU_COLOR": "#1a9fff",
     "LOAD_SWAP": False,
@@ -286,6 +288,7 @@ MAPPINGS = ("stretch", "repeat", "crop")
 NOTIFY_STYLES = notify.STYLES
 RAINBOW_CHOICES = render.RAINBOW_CHOICES
 DESKTOP_SCENES = desktop.SCENES
+MIRROR_PROFILES = screen.PROFILES
 
 # What the ESP can draw while the machine sleeps. The name is here and the
 # number is in link.py: this file holds what a person writes, and the protocol
@@ -376,6 +379,9 @@ def validate(config):
     if config["RAINBOW_SHOWS"] not in RAINBOW_CHOICES:
         raise ConfigError("RAINBOW_SHOWS must be one of: %s"
                           % ", ".join(RAINBOW_CHOICES))
+    if config["MIRROR_PROFILE"] not in MIRROR_PROFILES:
+        raise ConfigError("MIRROR_PROFILE must be one of: %s"
+                          % ", ".join(MIRROR_PROFILES))
     if config["STANDBY_SHOWS"] not in STANDBY_SHAPES:
         raise ConfigError("STANDBY_SHOWS must be one of: %s"
                           % ", ".join(sorted(STANDBY_SHAPES)))

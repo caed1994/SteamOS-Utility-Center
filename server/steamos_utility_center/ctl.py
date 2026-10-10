@@ -52,6 +52,7 @@ from . import nanoleaf
 from . import pairing
 from . import pegboard
 from . import power
+from . import screen
 from . import shim
 from . import syssettings
 
@@ -266,6 +267,10 @@ def strip_offers():
     return {"MAPPING": list(config_module.MAPPINGS),
             "NOTIFY_STYLE": list(config_module.NOTIFY_STYLES),
             "RAINBOW_SHOWS": list(config_module.RAINBOW_CHOICES),
+            # With the names, which are in screen alone.
+            "MIRROR_PROFILE": [{"value": name,
+                                "label": screen.PROFILE_NAMES[name]}
+                               for name in config_module.MIRROR_PROFILES],
             "DESKTOP_SCENE": list(config_module.DESKTOP_SCENES)}
 
 

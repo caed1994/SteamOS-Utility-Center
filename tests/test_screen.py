@@ -126,16 +126,34 @@ class CropTest(unittest.TestCase):
                          (0, 0))
 
 
+def light(colour):
+    """The light of a colour of the screen, from 0 to 1 for each channel."""
+    return tuple(screen.LIGHT[int(channel)] for channel in colour)
+
+
+def saturation(colour):
+    top = max(colour)
+    return 0.0 if top <= 0 else (top - min(colour)) / top
+
+
+def one(colour):
+    """A zone of one colour, as zones() gives it."""
+    return (light(colour), light(colour), 1.0)
+
+
 class ZonesTest(unittest.TestCase):
 
-    def test_each_zone_takes_its_stripe_from_the_left(self):
+    def test_each_zone_takes_the_light_of_its_stripe(self):
         colours = spectrum()
         found = screen.zones(stripes(colours))
         self.assertEqual(len(found), screen.ZONES)
-        for zone, (want, got) in enumerate(zip(colours, found)):
+        for zone, (want, (mean, colour, _weight)) in enumerate(
+                zip(colours, found)):
             for channel in range(3):
-                self.assertAlmostEqual(got[channel], want[channel], delta=0.5,
-                                       msg="zone %d" % zone)
+                self.assertAlmostEqual(mean[channel], light(want)[channel],
+                                       places=6, msg="zone %d" % zone)
+                self.assertAlmostEqual(colour[channel], light(want)[channel],
+                                       places=6, msg="zone %d" % zone)
 
     def test_the_zones_span_the_picture_inside_the_bars(self):
         """34 columns inside the bars: two for each zone."""
@@ -143,13 +161,22 @@ class ZonesTest(unittest.TestCase):
         found = screen.zones(stripes(colours, left=17, top=5), crop=(5, 17))
         for zone, (want, got) in enumerate(zip(colours, found)):
             for channel in range(3):
-                self.assertAlmostEqual(got[channel], want[channel], delta=0.5,
-                                       msg="zone %d" % zone)
+                self.assertAlmostEqual(got[0][channel], light(want)[channel],
+                                       places=6, msg="zone %d" % zone)
 
     def test_the_bars_do_not_darken_the_zones(self):
         found = screen.zones(stripes([RED], top=6), crop=(6, 0))
-        for colour in found:
-            self.assertAlmostEqual(colour[0], RED[0], delta=0.01)
+        for mean, _colour, _weight in found:
+            self.assertAlmostEqual(mean[0], light(RED)[0], places=6)
+
+    def test_colour_counts_more_than_grey_in_the_colour_of_a_zone(self):
+        """Three quarters grey, one quarter red: the mean is pale, and the
+        colour of the zone is red."""
+        frame = picture(lambda column, row: RED if row >= 27
+                        else (128, 128, 128))
+        mean, colour, _weight = screen.zones(frame)[0]
+        self.assertLess(saturation(mean), 0.6)
+        self.assertGreater(saturation(colour), 0.85)
 
     def test_a_column_on_a_border_counts_in_both_zones(self):
         """52 columns: each zone has three columns and a twelfth."""
@@ -166,38 +193,130 @@ class ZonesTest(unittest.TestCase):
             self.assertAlmostEqual(total, 1.0, msg=column)
 
 
-class TreatTest(unittest.TestCase):
+class ShadeTest(unittest.TestCase):
 
     def test_a_dark_zone_is_black(self):
-        self.assertEqual(screen.treat((screen.DARK, 10.0, 0.0)),
-                         (0.0, 0.0, 0.0))
+        for profile in screen.PROFILES:
+            self.assertEqual(screen.shade(one((screen.DARK, 10, 0)), profile),
+                             (0.0, 0.0, 0.0), profile)
 
     def test_white_stays_white(self):
-        for got in screen.treat((255.0, 255.0, 255.0)):
-            self.assertAlmostEqual(got, 255.0)
+        for profile in screen.PROFILES:
+            for got in screen.shade(one((255, 255, 255)), profile):
+                self.assertAlmostEqual(got, 255.0, msg=profile)
 
     def test_grey_stays_grey(self):
-        red, green, blue = screen.treat((120.0, 120.0, 120.0))
-        self.assertAlmostEqual(red, green)
-        self.assertAlmostEqual(green, blue)
+        for profile in screen.PROFILES:
+            red, green, blue = screen.shade(one((120, 120, 120)), profile)
+            self.assertAlmostEqual(red, green, msg=profile)
+            self.assertAlmostEqual(green, blue, msg=profile)
 
-    def test_a_colour_gets_further_from_grey(self):
-        before = (150.0, 100.0, 80.0)
-        after = screen.treat(before)
-        self.assertGreater(after[0] - after[2], before[0] - before[2])
+    def test_the_bar_gets_the_light_of_the_screen(self):
+        """The cause of the pale bar. 128 on a screen is a fifth of the light
+        of 255, and 128 on an LED is half. So the middle tones were too
+        bright, and each colour went pale."""
+        red, green, blue = screen.shade(one((128, 128, 128)),
+                                        screen.CINEMATIC)
+        self.assertAlmostEqual(red, screen.LIGHT[128] * 255.0, places=6)
+        self.assertLess(red, 60.0)
+
+    def test_each_profile_gives_more_colour(self):
+        colour = (150, 100, 80)
+        for profile in screen.PROFILES:
+            self.assertGreater(saturation(screen.shade(one(colour), profile)),
+                               saturation(light(colour)), profile)
 
     def test_a_bright_colour_keeps_its_hue(self):
         """A clamp of one channel changes the hue, and a scale does not."""
-        red, green, blue = screen.treat((255.0, 200.0, 40.0))
-        self.assertLessEqual(max(red, green, blue), 255.0 + 1e-9)
-        self.assertAlmostEqual(red, 255.0)
-        self.assertGreater(green, blue)
-        self.assertGreater(green, 0.0)
+        for profile in screen.PROFILES:
+            red, green, blue = screen.shade(one((255, 200, 40)), profile)
+            self.assertLessEqual(max(red, green, blue), 255.0 + 1e-9)
+            self.assertAlmostEqual(red, max(red, green, blue))
+            self.assertGreater(green, blue, profile)
+            self.assertGreater(green, 0.0, profile)
 
-    def test_the_picture_gives_one_treated_colour_for_each_zone(self):
-        found = screen.Picture().colours(stripes([RED]), 0.0)
+    def test_pop_gives_a_dim_colour_some_light(self):
+        dim = one((60, 20, 10))
+        self.assertAlmostEqual(max(screen.shade(dim, screen.POP)),
+                               screen.LEAST_LIGHT[screen.POP] * 255.0)
+        self.assertLess(max(screen.shade(dim, screen.CINEMATIC)), 20.0)
+
+    def test_pop_takes_the_colour_and_cinematic_the_mean(self):
+        frame = picture(lambda column, row: RED if row >= 27
+                        else (128, 128, 128))
+        zone = screen.zones(frame)[0]
+        self.assertGreater(saturation(screen.shade(zone, screen.POP)), 0.95)
+        self.assertLess(saturation(screen.shade(zone, screen.CINEMATIC)), 0.6)
+
+
+class PictureTest(unittest.TestCase):
+
+    def test_the_picture_gives_one_shade_for_each_zone(self):
+        frame = stripes(spectrum())
+        for profile in (screen.CINEMATIC, screen.POP):
+            found = screen.Picture(profile).colours(frame, 0.0)
+            self.assertEqual(len(found), screen.ZONES)
+            self.assertEqual(found, [screen.shade(zone, profile)
+                                     for zone in screen.zones(frame)])
+
+    def test_solid_gives_the_whole_bar_one_colour(self):
+        frame = stripes(spectrum())
+        found = screen.Picture(screen.SOLID).colours(frame, 0.0)
         self.assertEqual(len(found), screen.ZONES)
-        self.assertEqual(found[0], screen.treat(RED))
+        self.assertEqual(len(set(found)), 1)
+        self.assertEqual(found[0], screen.shade(
+            screen.together(screen.zones(frame)), screen.SOLID))
+
+    def test_solid_takes_the_colour_of_the_screen(self):
+        """A grey screen with one red stripe: the bar is red, not grey."""
+        frame = stripes([(128, 128, 128)] * (screen.ZONES - 1) + [RED])
+        red, green, blue = screen.Picture(screen.SOLID).colours(frame, 0.0)[0]
+        self.assertGreater(red, 4 * max(green, blue, 1.0))
+
+    def test_an_unknown_profile_is_the_default(self):
+        self.assertEqual(screen.Picture("disco").profile,
+                         screen.DEFAULT_PROFILE)
+        self.assertEqual(screen.DEFAULT_PROFILE, screen.POP)
+
+
+class ProfileFileTest(unittest.TestCase):
+    """Watcher reads the profile from the settings file of the LED service."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.path = os.path.join(self.dir, "steamos-utility-center.conf")
+        self.clock = Clock()
+        self.profile = screen.ProfileFile(
+            self.path, lambda path: config.load(path)["MIRROR_PROFILE"],
+            clock=self.clock)
+
+    def write(self, text):
+        # As the applier: a new file in place of the old one.
+        temporary = self.path + ".new"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temporary, self.path)
+
+    def test_it_reads_the_profile_of_the_file(self):
+        self.write("MIRROR_PROFILE=solid\n")
+        self.assertEqual(self.profile(), "solid")
+
+    def test_a_change_comes_after_the_wait(self):
+        self.write("MIRROR_PROFILE=solid\n")
+        self.profile()
+        self.write("MIRROR_PROFILE=cinematic\n")
+        self.clock.now += screen.PROFILE_SECONDS - 0.5
+        self.assertEqual(self.profile(), "solid")
+        self.clock.now += 0.5
+        self.assertEqual(self.profile(), "cinematic")
+
+    def test_no_file_or_a_bad_file_gives_the_default(self):
+        self.assertEqual(self.profile(), screen.DEFAULT_PROFILE)
+        self.write("MIRROR_PROFILE=disco\n")
+        self.clock.now += screen.PROFILE_SECONDS
+        with self.assertLogs(screen.LOG, "WARNING"):
+            self.assertEqual(self.profile(), screen.DEFAULT_PROFILE)
 
 
 class MessageTest(unittest.TestCase):
@@ -311,6 +430,26 @@ class MirrorTest(PipeCase):
         self.assertGreater(fall, 0.0)
         self.assertGreater(rise, fall)
         self.assertLess(shown[0][0], 200.0)
+
+    def test_cinematic_changes_more_calmly_than_pop(self):
+        """The same change, 0.1 s after it, with each profile."""
+        moved = {}
+        for profile in (screen.POP, screen.CINEMATIC):
+            path = os.path.join(self.dir, profile)
+            mirror = screen.Mirror(path, clock=self.clock, profile=profile)
+            mirror.create()
+            self.addCleanup(mirror.close)
+            mirror.colours()
+            fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+            self.writers.append(fd)
+            os.write(fd, screen.encode([(100.0,) * 3] * screen.ZONES))
+            mirror.colours()
+            os.write(fd, screen.encode([(200.0,) * 3] * screen.ZONES))
+            self.clock.now += 0.1
+            moved[profile] = mirror.colours()[0][0] - 100.0
+            self.clock.now -= 0.1
+        self.assertGreater(moved[screen.CINEMATIC], 0.0)
+        self.assertGreater(moved[screen.POP], 2 * moved[screen.CINEMATIC])
 
     def test_the_bar_gives_up_the_picture_after_the_hold(self):
         self.mirror.colours()
@@ -519,7 +658,7 @@ class WatcherTest(WatcherCase):
             if colours:
                 break
             self.watcher.step()
-        want = [round(channel) for channel in screen.treat(RED)]
+        want = [round(channel) for channel in screen.shade(one(RED))]
         self.assertEqual([list(colour) for colour in colours],
                          [want] * screen.ZONES)
         argv = self.argvs[0]
@@ -691,6 +830,21 @@ class WatcherTest(WatcherCase):
         self.assertTrue(any("assertion failed" in line
                             for line in logged.output))
 
+    def test_a_new_profile_reaches_the_next_picture(self):
+        self.mirror.colours()
+        profile = [screen.POP]
+        self.watcher.profile = lambda: profile[0]
+        self.until(screen.RUNNING)
+        self.assertEqual(self.watcher.picture.profile, screen.POP)
+        profile[0] = screen.SOLID
+        deadline = time.monotonic() + 1.0
+        while self.watcher.pending is None and time.monotonic() < deadline:
+            self.watcher.step()
+        self.clock.now += 1.0 / screen.RATE
+        self.watcher.step()
+        self.assertEqual(self.watcher.picture.profile, screen.SOLID)
+        self.assertEqual(self.watcher.frames, 2)
+
     def test_the_status_goes_away_with_the_watcher(self):
         self.watcher.step()
         self.assertTrue(os.path.exists(self.status))
@@ -754,9 +908,9 @@ class CommandTest(unittest.TestCase):
         self.assertGreater(len(done.stdout), 0)
         self.assertEqual(len(done.stdout) % screen.FRAME, 0)
         frame = done.stdout[:screen.FRAME]
-        for colour in screen.zones(frame):
-            self.assertGreater(colour[0], 240)
-            self.assertLess(colour[1], 15)
+        for mean, _colour, _weight in screen.zones(frame):
+            self.assertGreater(mean[0], screen.LIGHT[240])
+            self.assertLess(mean[1], screen.LIGHT[15])
 
 
 class ReadersTest(unittest.TestCase):
@@ -1034,6 +1188,15 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(mirror.path, self.fifo)
         self.assertTrue(stat.S_ISFIFO(os.lstat(self.fifo).st_mode))
 
+    def test_the_bar_eases_as_its_profile_says(self):
+        with unittest.mock.patch.object(screen, "FIFO", self.fifo):
+            for profile in screen.PROFILES:
+                conf = self.conf("mirror")
+                conf["MIRROR_PROFILE"] = profile
+                mirror = service.build_mirror(conf)
+                self.assertEqual((mirror.rise, mirror.fall),
+                                 screen.EASING[profile])
+
     def test_a_pipe_that_cannot_be_made_is_a_warning(self):
         missing = os.path.join(self.dir, "no", "mirror")
         with unittest.mock.patch.object(screen, "FIFO", missing), \
@@ -1120,6 +1283,19 @@ class StatusPageTest(unittest.TestCase):
         part = ledpanel.mirror_part("mirror", {"state": "waiting"})
         self.assertTrue(part.ok)
         self.assertIn("screen changes", part.verdict)
+
+    def test_the_card_names_the_profile(self):
+        part = ledpanel.mirror_part("mirror", {"state": "running"}, "solid")
+        self.assertIn("Profile: Solid", part.detail)
+        self.assertIn("steamos-utility-center-mirror", part.detail[-1])
+        part = ledpanel.mirror_part("mirror", {"state": "running"})
+        self.assertFalse([line for line in part.detail
+                          if line.startswith("Profile")])
+
+    def test_the_menu_of_the_profiles_has_the_names_of_screen(self):
+        self.assertEqual(ledpanel.mirror_profiles(),
+                         (("Cinematic", "cinematic"), ("Color Pop", "pop"),
+                          ("Solid", "solid")))
 
     def test_no_capture_service_is_a_fault(self):
         part = ledpanel.mirror_part("mirror", {"state": "gone"})

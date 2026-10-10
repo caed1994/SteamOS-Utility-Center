@@ -217,7 +217,8 @@ class RequestTest(unittest.TestCase):
         body = json.dumps(dict({mode: longest
                                 for mode in companion.LED_CHOICES},
                                desktop_color="#ffffff",
-                               desktop_brightness=255),
+                               desktop_brightness=255,
+                               mirror_profile=max(screen.PROFILES, key=len)),
                           separators=(",", ":"))
         self.assertLessEqual(len(body), companion.BODY_LIMIT)
         found = re.search(r"static int led_request\(.*?char body\[(\d+)\];",
@@ -488,6 +489,51 @@ class HarnessTest(unittest.TestCase):
             self.assertEqual(code_, 200, body)
             self.assertEqual(wrote, [{names[key]: value
                                       for key, value in wanted.items()}])
+
+    def test_the_profiles_are_those_of_the_service(self):
+        found = re.search(r"\} profiles\[PANEL_LED_PROFILES\] = \{(.*?)\};",
+                          code("panel_led.c"), re.S)
+        self.assertIsNotNone(found)
+        self.assertEqual(tuple(re.findall(r'\{"([a-z]+)", TXT_\w+\}',
+                                          found.group(1))), screen.PROFILES)
+        self.assertEqual(number("PANEL_LED_PROFILES", code("panel_led.h")),
+                         len(screen.PROFILES))
+        self.assertIn('#define PANEL_LED_PROFILE_KEY "%s"'
+                      % list(companion.LED_MIRROR)[0], code("panel_led.h"))
+        self.assertEqual(self.ask("profile 0", "profile 3", "profile -1",
+                                  "profilefind solid", "profilefind disco"),
+                         ["cinematic", "(none)", "(none)", "2", "-1"])
+
+    def test_the_names_of_the_profiles_are_those_of_screen_in_each_language(self):
+        for language in (0, 1):
+            self.assertEqual(
+                self.ask(*["profilename %d %d" % (index, language)
+                           for index in range(len(screen.PROFILES))]),
+                [screen.PROFILE_NAMES[name] for name in screen.PROFILES])
+
+    def test_each_profile_the_panel_builds_is_taken(self):
+        for game in ("-", "mirror"):
+            for profile in screen.PROFILES:
+                body, length = self.ask("bodyp 160 %s %s" % (game, profile))[0] \
+                    .rsplit(" ", 1)
+                self.assertEqual(int(length), len(body))
+                wanted = {"mirror_profile": profile}
+                if game != "-":
+                    wanted["game"] = game
+                self.assertEqual(json.loads(body), wanted)
+                wrote = []
+                code_, _ = companion.led_change(json.loads(body),
+                                                write=wrote.append)
+                self.assertEqual(code_, 200, body)
+                self.assertEqual(wrote[0]["MIRROR_PROFILE"], profile)
+
+    def test_a_profile_the_service_does_not_know_is_no_body(self):
+        self.assertEqual(self.ask("bodyp 160 - disco", "bodyp 160 mirror disco"),
+                         ["(empty) 0"] * 2)
+
+    def test_the_profile_is_read_with_the_name_of_panel_led_h(self):
+        self.assertIn("pc_text(state.led_profile,sizeof state.led_profile,led,"
+                      "PANEL_LED_PROFILE_KEY);", code("main.c"))
 
     def test_a_colour_or_brightness_the_service_cannot_read_is_no_body(self):
         """The panel builds neither, and a body with one would be half an

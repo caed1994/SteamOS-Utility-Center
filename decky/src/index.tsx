@@ -339,6 +339,9 @@ function Content() {
     () => options(held.strip?.offers?.RAINBOW_SHOWS), [held.strip]);
   const sceneOptions = useMemo(
     () => options(held.strip?.offers?.DESKTOP_SCENE), [held.strip]);
+  // The command sends a label with each profile, from the table of screen.py.
+  const profileOptions = useMemo(
+    () => labelled(held.strip?.offers?.MIRROR_PROFILE), [held.strip]);
   const effectOptions = useMemo(
     () => labelled(held.pegboard?.offers?.EFFECT), [held.pegboard]);
   // The effects of each device, by the token that names it. The names come
@@ -469,6 +472,8 @@ function Content() {
                         "rainbow");
   const scene = shown("strip", "DESKTOP_SCENE", settings.DESKTOP_SCENE,
                       "steam");
+  const profile = shown("strip", "MIRROR_PROFILE", settings.MIRROR_PROFILE,
+                        "pop");
   const effect = shown("pegboard", "EFFECT", board.EFFECT, "rainbow");
   // Whether a board answered on the USB bus. The settings are kept either
   // way, and a person in Game Mode cannot look in /sys to find out why the
@@ -570,6 +575,17 @@ function Content() {
             onPick={(value) => pick("strip", "RAINBOW_SHOWS", value)}
           />
         </PanelSectionRow>
+        {rainbow === "mirror" && (
+        <PanelSectionRow>
+          <Choice
+            label="Mirror profile"
+            options={profileOptions}
+            value={profile}
+            disabled={held.busy || !held.strip?.ok}
+            onPick={(value) => pick("strip", "MIRROR_PROFILE", value)}
+          />
+        </PanelSectionRow>
+        )}
         <PanelSectionRow>
           <Choice
             label="Desktop scene"

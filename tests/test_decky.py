@@ -315,6 +315,15 @@ class PageTest(unittest.TestCase):
             one = part[:part.index("/>")]
             self.assertNotIn("pegboard", one, one[:200])
 
+    def test_the_profile_of_the_mirror_is_there_with_the_mirror(self):
+        """Its names come from the command, as the effects of the board do."""
+        self.assertIn("labelled(held.strip?.offers?.MIRROR_PROFILE)",
+                      self.text)
+        self.assertIn('rainbow === "mirror" && (', self.text)
+        self.assertIn('pick("strip", "MIRROR_PROFILE", value)', self.text)
+        for name in ("Color Pop", "Cinematic"):
+            self.assertNotIn(name, self.text)
+
     def test_the_board_names_its_effects_from_the_command(self):
         """And not from a table in this file.
 
@@ -709,7 +718,7 @@ class BuiltTest(unittest.TestCase):
     def test_it_was_built_from_this_source(self):
         built = read("dist", "index.js")
         for sign in ("SteamOS Utility Center", "Rainbow slot", "RAINBOW_SHOWS",
-                     "get_full_status"):
+                     "get_full_status", "Mirror profile", "MIRROR_PROFILE"):
             self.assertIn(sign, built, sign)
 
 

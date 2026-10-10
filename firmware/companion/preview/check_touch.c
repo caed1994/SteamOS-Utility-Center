@@ -188,6 +188,18 @@ int main(void)
         lv_obj_scroll_to_view(lv_obj_get_child(band,p),LV_ANIM_OFF);
         screen(pages[p]);
     }
+    /* The LED bar with the mirror, which has the button of its profile. */
+    snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"mirror");
+    snprintf(s.led_profile,sizeof s.led_profile,"pop");
+    s.answers++;
+    panel_ui_update(&s);
+    assert(find_label(lv_screen_active(),"Color Pop"));
+    lv_obj_update_layout(band);
+    lv_obj_scroll_to_view(lv_obj_get_child(band,5),LV_ANIM_OFF);
+    screen("the LED bar with the mirror");
+    snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"fire");
+    s.answers++;
+    panel_ui_update(&s);
     /* The alarm, from its button in the corner of the clock card. */
     lv_obj_scroll_to_view(lv_obj_get_child(band,3),LV_ANIM_OFF);
     lv_obj_update_layout(band);

@@ -41,14 +41,20 @@ typedef enum { PANEL_LED_DESKTOP, PANEL_LED_GAME, PANEL_LED_MODES } panel_led_mo
 #define PANEL_LED_COLOUR_KEY "desktop_color"
 #define PANEL_LED_BRIGHTNESS_KEY "desktop_brightness"
 
+/* The profiles of the mirror: screen.PROFILES, in its order. The key of
+ * the profile in the status and in a change: companion.LED_MIRROR. The
+ * names are English in each language, as the owner asked. */
+#define PANEL_LED_PROFILES 3
+#define PANEL_LED_PROFILE_KEY "mirror_profile"
 /* A change of the page: the key of the new effect of each mode, the new
- * colour of the desktop scenes, and their new brightness from 0 to 255.
- * An empty key or colour, and a brightness below nought, keep what the PC
- * has. */
+ * colour of the desktop scenes, their new brightness from 0 to 255, and the
+ * new profile of the mirror. An empty key, colour or profile, and a
+ * brightness below nought, keep what the PC has. */
 typedef struct {
     char effect[PANEL_LED_MODES][PANEL_LED_KEY];
     char colour[PANEL_LED_COLOUR];
     int brightness;
+    char profile[PANEL_LED_KEY];
 } panel_led_change_t;
 
 /* How many effects the mode has. */
@@ -82,6 +88,13 @@ const char *panel_led_colour(int index);
 int panel_led_colour_find(const char *colour);
 /* The name of the colour at "index" on the screen. */
 panel_text_id_t panel_led_colour_name(int index);
+/* The key of the profile at "index", or NULL for an index outside the
+ * list. */
+const char *panel_led_profile(int index);
+/* The place of a profile, or -1 for one that this firmware does not know. */
+int panel_led_profile_find(const char *key);
+/* The name of the profile at "index" on the screen. */
+panel_text_id_t panel_led_profile_name(int index);
 /* A colour "#rrggbb" as the number 0xRRGGBB. false, and nothing in "rgb",
  * for a text that is no such colour. */
 bool panel_led_rgb(const char *colour, uint32_t *rgb);
@@ -90,12 +103,12 @@ bool panel_led_rgb(const char *colour, uint32_t *rgb);
 int panel_led_percent(int brightness);
 int panel_led_brightness(int percent);
 /* The body of a change for the companion service: a JSON object with the
- * key of each mode that has one, the colour and the brightness, as
- * {"desktop":"breath","desktop_color":"#ff0000"}. What keeps the value of
- * the PC is left out. Answers the length, and nought for nothing to send,
- * for too little room, and for a colour that is no "#rrggbb" or a
- * brightness above 255. The keys come from the lists above, which hold
- * letters and nothing to escape. */
+ * key of each mode that has one, the colour, the brightness and the
+ * profile, as {"desktop":"breath","desktop_color":"#ff0000"}. What keeps
+ * the value of the PC is left out. Answers the length, and nought for
+ * nothing to send, for too little room, for a colour that is no "#rrggbb",
+ * a brightness above 255 and a profile that is not in the list. The keys
+ * come from the lists above, which hold letters and nothing to escape. */
 size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change);
 
 /* The room for the detail and for the size of the screen in the status of

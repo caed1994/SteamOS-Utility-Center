@@ -357,6 +357,9 @@
     X(TXT_MIRROR_STARTING, "Mirror starts ...",     "Spiegel startet ...") \
     X(TXT_MIRROR_WAITING,  "Mirror waits for a picture", \
                            "Spiegel wartet auf ein Bild") \
+    X(TXT_PROFILE_CINEMATIC,"Cinematic",            "Cinematic") \
+    X(TXT_PROFILE_POP,     "Color Pop",             "Color Pop") \
+    X(TXT_PROFILE_SOLID,   "Solid",                 "Solid") \
     X(TXT_MIRROR_NO_SCREEN,"Mirror waits for Game Mode", \
                            "Spiegel wartet auf den Spielmodus") \
     X(TXT_MIRROR_BUSY,     "Mirror paused: %s reads the screen", \

@@ -179,7 +179,7 @@ def build_mirror(config):
     """
     if config["RAINBOW_SHOWS"] != render.SHOWS_MIRROR:
         return None
-    mirror = screen.Mirror()
+    mirror = screen.Mirror(profile=config["MIRROR_PROFILE"])
     try:
         mirror.create()
     except OSError as exc:
@@ -1600,11 +1600,14 @@ def run_watch_phone(config, print_only=False):
 def run_mirror():
     """The user service of the mirror. See screen.Watcher.
 
-    It needs no configuration. The LED service opens the pipe while the bar
-    shows the mirror, and that is the one signal.
+    The LED service opens the pipe while the bar shows the mirror, and that
+    is the one signal to start. The settings file gives only the profile,
+    and Watcher reads it again after each change.
     """
     _interrupt_on_sigterm()
-    watcher = screen.Watcher()
+    watcher = screen.Watcher(profile=screen.ProfileFile(
+        config_module.DEFAULT_CONFIG_PATH,
+        lambda path: config_module.load(path)["MIRROR_PROFILE"]))
     LOG.info("mirror: the status is in %s", watcher.status)
     try:
         watcher.run()

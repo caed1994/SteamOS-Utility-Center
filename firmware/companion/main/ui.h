@@ -255,8 +255,11 @@ typedef struct {
     uint32_t led_replies;
     int led_code;
     /* What the mirror of the LED bar does on the PC, for the line under
-     * the Game Mode card. See panel_led.h. */
+     * the Game Mode card. See panel_led.h. led_profile is the key of the
+     * profile of the mirror, and empty from a service older than this
+     * firmware, which has no profiles. */
     panel_led_mirror_t led_mirror;
+    char led_profile[PANEL_LED_KEY];
     /* The pairing with the PC, for its screen: where it is, the code while
      * a person must compare it, the name of the PC and its address, and
      * whether the panel has a secret already, which it can keep. */

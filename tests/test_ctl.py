@@ -180,6 +180,13 @@ class AreaTest(unittest.TestCase):
         self.assertEqual(ctl.get("strip")["offers"]["MAPPING"],
                          list(config_module.MAPPINGS))
 
+    def test_the_profiles_of_the_mirror_come_with_their_names(self):
+        """The plugin shows the label, and screen.py holds the one table."""
+        from steamos_utility_center import screen
+        self.assertEqual(ctl.get("strip")["offers"]["MIRROR_PROFILE"],
+                         [{"value": name, "label": screen.PROFILE_NAMES[name]}
+                          for name in screen.PROFILES])
+
 
 class KeyboardTest(unittest.TestCase):
     """The one area that needs no rights at all."""

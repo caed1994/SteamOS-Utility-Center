@@ -78,6 +78,16 @@ static const struct {
     {"#ffffff", TXT_COLOUR_WHITE},
 };
 
+/* screen.PROFILES, in its order. */
+static const struct {
+    const char *key;
+    panel_text_id_t name;
+} profiles[PANEL_LED_PROFILES] = {
+    {"cinematic", TXT_PROFILE_CINEMATIC},
+    {"pop", TXT_PROFILE_POP},
+    {"solid", TXT_PROFILE_SOLID},
+};
+
 static const effect_t *effects(panel_led_mode_t mode, int *count)
 {
     if (mode == PANEL_LED_DESKTOP) {
@@ -170,6 +180,23 @@ panel_text_id_t panel_led_colour_name(int index)
     return index >= 0 && index < PANEL_LED_COLOURS ? colours[index].name : TXT_COLOUR_OWN;
 }
 
+const char *panel_led_profile(int index)
+{
+    return index >= 0 && index < PANEL_LED_PROFILES ? profiles[index].key : NULL;
+}
+
+int panel_led_profile_find(const char *key)
+{
+    for (int i = 0; key && i < PANEL_LED_PROFILES; i++)
+        if (strcmp(profiles[i].key, key) == 0) return i;
+    return -1;
+}
+
+panel_text_id_t panel_led_profile_name(int index)
+{
+    return index >= 0 && index < PANEL_LED_PROFILES ? profiles[index].name : TXT_LED_UNKNOWN;
+}
+
 bool panel_led_rgb(const char *colour, uint32_t *rgb)
 {
     if (!colour || colour[0] != '#' || strlen(colour) != 7) return false;
@@ -225,6 +252,7 @@ size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
      * the service reads, so a body is never half an object. */
     if (change->colour[0] && !panel_led_rgb(change->colour, NULL)) return 0;
     if (change->brightness > 255) return 0;
+    if (change->profile[0] && panel_led_profile_find(change->profile) < 0) return 0;
     size_t at = 0;
     out[at++] = '{';
     for (int mode = 0; mode < PANEL_LED_MODES; mode++) {
@@ -239,6 +267,11 @@ size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
     }
     if (change->brightness >= 0
         && !add(out, room, &at, "\"%s\":%d", PANEL_LED_BRIGHTNESS_KEY, change->brightness)) {
+        out[0] = 0;
+        return 0;
+    }
+    if (change->profile[0]
+        && !add(out, room, &at, "\"%s\":\"%s\"", PANEL_LED_PROFILE_KEY, change->profile)) {
         out[0] = 0;
         return 0;
     }

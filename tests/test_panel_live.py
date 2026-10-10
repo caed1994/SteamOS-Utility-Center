@@ -314,6 +314,18 @@ class LiveWindowTest(unittest.TestCase):
                              self._shown("TEMPERATURE_MIN"),
                              "the marks and the sensor are one decision too")
 
+    def test_the_profile_of_the_mirror_is_there_for_the_mirror_alone(self):
+        self.panel.notebook.select(self._page_named("Effects"))
+        self.root.update()
+        slot = self.panel.vars["RAINBOW_SHOWS"][0]
+        for label, wanted in (("Mirror the screen", True), ("Fire", False),
+                              ("Rainbow", False)):
+            slot.set(label)
+            self.root.update()
+            self.assertEqual(self._shown("MIRROR_PROFILE"), wanted, label)
+        self.assertEqual(self.panel._label_for("MIRROR_PROFILE", "pop"),
+                         "Color Pop")
+
     def test_a_desktop_scene_brings_the_same_rows_back(self):
         """Two places ask for these gauges, and either one puts them in play.
 
