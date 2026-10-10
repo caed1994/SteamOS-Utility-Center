@@ -188,7 +188,9 @@ show what it does. The log is
 
 gamescope sends a picture only when the screen changes. On a still screen the
 bar keeps the last picture. A capture that starts on a still screen waits for
-the first change, and the panel shows "Mirror waits for a picture".
+the first change, and the panel shows "Mirror waits for a picture". Until the
+first picture comes, the bar stays dark. The rainbow of Steam shows only when
+the mirror cannot run.
 
 Three profiles give the colours of the screen to the bar in different ways.
 Game Mode and the desktop each have a profile of their own. The wall panel,

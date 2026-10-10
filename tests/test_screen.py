@@ -394,7 +394,7 @@ class MirrorTest(PipeCase):
         with self.assertRaises(OSError) as caught:
             self.writer()
         self.assertEqual(caught.exception.errno, errno.ENXIO)
-        self.assertIsNone(self.mirror.colours())
+        self.mirror.colours()
         self.writer()
 
     def test_the_newest_message_is_the_one_shown(self):
@@ -410,7 +410,7 @@ class MirrorTest(PipeCase):
         first = screen.encode([(10, 20, 30)] * screen.ZONES)
         second = screen.encode([RED] * screen.ZONES)
         os.write(fd, first[:30])
-        self.assertIsNone(self.mirror.colours())
+        self.assertEqual(self.mirror.colours(), list(screen.DARK_BAR))
         os.write(fd, first[30:] + second)
         self.assertEqual(self.mirror.colours(), [RED] * screen.ZONES)
 
@@ -451,6 +451,41 @@ class MirrorTest(PipeCase):
             self.clock.now -= 0.1
         self.assertGreater(moved[screen.CINEMATIC], 0.0)
         self.assertGreater(moved[screen.POP], 2 * moved[screen.CINEMATIC])
+
+    def test_a_capture_that_starts_gives_a_dark_bar_and_no_rainbow(self):
+        dark = list(screen.DARK_BAR)
+        # The user service looks for the pipe in its first seconds.
+        self.assertEqual(self.mirror.colours(), dark)
+        fd = self.writer()
+        self.clock.now += screen.START_GRACE - 0.1
+        self.assertEqual(self.mirror.colours(), dark)
+        # Then it says that a capture starts, and the bar stays dark.
+        os.write(fd, screen.START)
+        self.clock.now += screen.HOLD - 0.1
+        self.assertEqual(self.mirror.colours(), dark)
+        os.write(fd, screen.encode([RED] * screen.ZONES))
+        self.assertEqual(self.mirror.colours(), [RED] * screen.ZONES)
+
+    def test_a_mirror_that_cannot_run_gives_the_slot_back(self):
+        """No message after the first seconds, or an old start: the rainbow
+        of Steam."""
+        self.mirror.colours()
+        fd = self.writer()
+        self.clock.now += screen.START_GRACE + 0.1
+        self.assertIsNone(self.mirror.colours())
+        os.write(fd, screen.START)
+        self.assertEqual(self.mirror.colours(), list(screen.DARK_BAR))
+        self.clock.now += screen.HOLD + 0.1
+        self.assertIsNone(self.mirror.colours())
+
+    def test_a_pipe_that_opens_again_waits_again(self):
+        self.mirror.colours()
+        os.write(self.writer(), screen.encode([RED] * screen.ZONES))
+        self.assertEqual(self.mirror.colours(), [RED] * screen.ZONES)
+        self.clock.now += screen.RELEASE + 1.0
+        self.mirror.poll()
+        self.assertIsNone(self.mirror.fd)
+        self.assertEqual(self.mirror.colours(), list(screen.DARK_BAR))
 
     def test_the_bar_gives_up_the_picture_after_the_hold(self):
         self.mirror.colours()
@@ -821,6 +856,23 @@ class WatcherTest(WatcherCase):
                 self.clock.now += screen.CHECK_SECONDS
                 self.watcher.step()
                 self.assertEqual(self.watcher.state, screen.RUNNING)
+
+    def test_a_capture_that_starts_keeps_the_bar_dark(self):
+        self.mirror.colours()
+        self.mode = "silent"
+        self.until(screen.STARTING)
+        self.clock.now += screen.START_GRACE + 1.0
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.STARTING)
+        self.assertEqual(self.mirror.colours(), list(screen.DARK_BAR))
+
+    def test_a_mirror_that_cannot_run_lets_the_bar_show_the_rainbow(self):
+        self.missing.add(screen.GST_LAUNCH)
+        self.mirror.colours()
+        self.until(screen.NO_GSTREAMER)
+        self.clock.now += screen.START_GRACE + 1.0
+        self.watcher.step()
+        self.assertIsNone(self.mirror.colours())
 
     def test_a_still_screen_at_the_start_is_no_failure(self):
         """gamescope sends no picture until the screen changes."""

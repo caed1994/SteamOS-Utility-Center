@@ -77,6 +77,10 @@ FIFO_MODE = 0o622
 # smaller than PIPE_BUF, so each write arrives whole.
 KIND_COLOURS = 1
 MESSAGE = 1 + 3 * ZONES
+# A message with no colours: a capture starts, and its first picture comes
+# soon. The bar then stays dark and does not show the rainbow of Steam.
+KIND_START = 2
+START = bytes([KIND_START]) + bytes(MESSAGE - 1)
 
 # The file of the status, in the runtime directory of the user.
 STATUS_NAME = "steamos-utility-center-mirror.json"
@@ -426,8 +430,13 @@ def demo(fraction):
 # -- the LED service: the colours for the renderer -------------------------
 
 # How long the bar keeps the last colours with no new message. After that the
-# renderer gives the slot back to the rainbow of Steam, as with no sensor.
+# renderer gives the slot back to the rainbow of Steam, as with no sensor. A
+# capture that starts gives a dark bar in place of the rainbow (DARK_BAR).
 HOLD = 3.0
+# The user service looks for the pipe each LOOK_SECONDS (2 s). So in this
+# time after the pipe opens, a bar with no message is a capture that starts.
+START_GRACE = 4.0
+DARK_BAR = ((0.0, 0.0, 0.0),) * ZONES
 # How long the pipe stays open after the last frame that showed the mirror. A
 # short change of the effect thus does not stop the capture.
 RELEASE = 10.0
@@ -452,6 +461,9 @@ class Mirror:
         self.arrived = None
         self.drawn = None
         self.wanted = None
+        # The time of the pipe open, and of the last message of a start.
+        self.opened_at = None
+        self.started_at = None
         self._rest = b""
         self._warned = False
 
@@ -485,7 +497,8 @@ class Mirror:
         if self.target is None or now - self.arrived > HOLD:
             self.shown = None
             self.drawn = now
-            return None
+            # The rainbow of Steam is for a mirror that cannot run.
+            return list(DARK_BAR) if self._starting(now) else None
         if self.shown is None:
             self.shown = list(self.target)
         else:
@@ -501,6 +514,17 @@ class Mirror:
                                          for old, new in zip(shown, target))
         self.drawn = now
         return list(self.shown)
+
+    def _starting(self, now):
+        """Returns whether a capture starts, so that a picture comes soon.
+
+        The user service says so each REPEAT_SECONDS. Before its first
+        message, the time after the open of the pipe says so.
+        """
+        if self.started_at is not None:
+            return now - self.started_at <= HOLD
+        return (self.arrived is None and self.opened_at is not None
+                and now - self.opened_at < START_GRACE)
 
     def poll(self, now=None):
         """Closes the pipe when no frame asked for the mirror for a time.
@@ -519,6 +543,8 @@ class Mirror:
             self.fd = None
         self.target = None
         self.shown = None
+        self.arrived = None
+        self.started_at = None
         self._rest = b""
 
     def _open(self):
@@ -529,6 +555,7 @@ class Mirror:
                 LOG.warning("mirror: cannot open %s: %s", self.path, exc)
                 self._warned = True
             return
+        self.opened_at = self.clock()
         LOG.info("mirror: the bar shows the screen, so the pipe is open")
 
     def _read(self, now):
@@ -552,10 +579,13 @@ class Mirror:
             whole = len(data) - len(data) % MESSAGE
             self._rest = data[whole:]
             if whole:
-                colours = decode(data[whole - MESSAGE:whole])
+                last = data[whole - MESSAGE:whole]
+                colours = decode(last)
                 if colours is not None:
                     self.target = colours
                     self.arrived = now
+                elif last[0] == KIND_START:
+                    self.started_at = now
             if more < size:
                 return
 
@@ -1135,6 +1165,8 @@ class Watcher:
         self.refused = None
         self.refused_by = None
         self.asked_at = 0.0
+        # The time of the last message of a start to the LED service.
+        self.said_at = -math.inf
         self.status = status_path() if status is None else status
         self.dump = dump
         self.launch = launch
@@ -1213,6 +1245,8 @@ class Watcher:
         else:
             self._watch()
             wait = 0.0
+        if self.sent is None and self.state in (ASKING, STARTING, WAITING):
+            self._say_start(self.clock())
         self._report(self.clock())
         return wait
 
@@ -1275,6 +1309,21 @@ class Watcher:
             return
         self.sent = message
         self.sent_at = now
+
+    def _say_start(self, now):
+        """Tells the LED service that a picture comes, each REPEAT_SECONDS.
+
+        A capture that starts has no colours to send yet. With this message
+        the bar stays dark and does not show the rainbow of Steam.
+        """
+        if self.out is None or now - self.said_at < REPEAT_SECONDS:
+            return
+        try:
+            os.write(self.out, START)
+        except OSError:
+            # The pipe is full or gone. The next step tries again.
+            return
+        self.said_at = now
 
     # -- the capture -------------------------------------------------------
 
