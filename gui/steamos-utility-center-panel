@@ -163,7 +163,8 @@ EFFECTS = [
         # first effect that asked for it.
         ("RAINBOW_SHOWS", "The Rainbow entry shows", "named",
          ledpanel.rainbow_choices(config_module.RAINBOW_CHOICES), None, None),
-        # How the mirror makes the colours of the bar. See screen.PROFILES.
+        # How the mirror makes the colours of the bar in Game Mode. The
+        # desktop has its own, beside its scene. See screen.PROFILES.
         ("MIRROR_PROFILE", "Mirror profile", "named",
          ledpanel.mirror_profiles(), None, None),
         # The bar takes one colour, and these two marks give the position on
@@ -204,6 +205,8 @@ DESKTOP = [
     (None, [
         ("DESKTOP_SCENE", "In Desktop Mode show", "named",
          ledpanel.desktop_choices(config_module.DESKTOP_SCENES), None, None),
+        ("DESKTOP_MIRROR_PROFILE", "Mirror profile", "named",
+         ledpanel.mirror_profiles(), None, None),
         ("DESKTOP_COLOR", "Colour", "named",
          ledpanel.NOTIFICATION_COLOURS, None, None),
         ("DESKTOP_BRIGHTNESS", "Brightness", "int", 0, 255, 1),
@@ -578,7 +581,8 @@ SOON = {}
 # would both have to be true, which is the opposite meaning.
 TEMPERATURE_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "temperature")
 LOAD_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "load")
-MIRROR_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "mirror")
+MIRROR_SHOWN = (("RAINBOW_SHOWS",), "mirror")
+DESKTOP_MIRROR_SHOWN = (("DESKTOP_SCENE",), "mirror")
 SCENE_HAS_COLOUR = ("DESKTOP_SCENE", ("color", "breath", "patrol"))
 
 # The effects of the Nanoleaf board that draw in one colour.
@@ -618,6 +622,7 @@ DEPENDS_ON = {
     "DESKTOP_SPEED": (SCENE_MOVES,),
     "PEGBOARD_COLOR": (PEGBOARD_TAKES_COLOUR,),
     "MIRROR_PROFILE": (MIRROR_SHOWN,),
+    "DESKTOP_MIRROR_PROFILE": (DESKTOP_MIRROR_SHOWN,),
     "LOAD_CPU_COLOR": (LOAD_SHOWN,),
     "LOAD_GPU_COLOR": (LOAD_SHOWN,),
     "LOAD_SWAP": (LOAD_SHOWN,),

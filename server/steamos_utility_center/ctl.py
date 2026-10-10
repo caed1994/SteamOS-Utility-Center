@@ -264,13 +264,14 @@ def strip_read(home=None):
 
 def strip_offers():
     """The menus of the strip, so a front end does not carry its own copy."""
+    mirror_profiles = [{"value": name, "label": screen.PROFILE_NAMES[name]}
+                       for name in config_module.MIRROR_PROFILES]
     return {"MAPPING": list(config_module.MAPPINGS),
             "NOTIFY_STYLE": list(config_module.NOTIFY_STYLES),
             "RAINBOW_SHOWS": list(config_module.RAINBOW_CHOICES),
             # With the names, which are in screen alone.
-            "MIRROR_PROFILE": [{"value": name,
-                                "label": screen.PROFILE_NAMES[name]}
-                               for name in config_module.MIRROR_PROFILES],
+            "MIRROR_PROFILE": mirror_profiles,
+            "DESKTOP_MIRROR_PROFILE": mirror_profiles,
             "DESKTOP_SCENE": list(config_module.DESKTOP_SCENES)}
 
 

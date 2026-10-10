@@ -41,20 +41,22 @@ typedef enum { PANEL_LED_DESKTOP, PANEL_LED_GAME, PANEL_LED_MODES } panel_led_mo
 #define PANEL_LED_COLOUR_KEY "desktop_color"
 #define PANEL_LED_BRIGHTNESS_KEY "desktop_brightness"
 
-/* The profiles of the mirror: screen.PROFILES, in its order. The key of
- * the profile in the status and in a change: companion.LED_MIRROR. The
- * names are English in each language, as the owner asked. */
+/* The profiles of the mirror: screen.PROFILES, in its order. Each mode
+ * has its own profile, with its own key in the status and in a change:
+ * companion.LED_MIRROR. The names are English in each language, as the
+ * owner asked. */
 #define PANEL_LED_PROFILES 3
 #define PANEL_LED_PROFILE_KEY "mirror_profile"
+#define PANEL_LED_DESKTOP_PROFILE_KEY "desktop_mirror_profile"
 /* A change of the page: the key of the new effect of each mode, the new
  * colour of the desktop scenes, their new brightness from 0 to 255, and the
- * new profile of the mirror. An empty key, colour or profile, and a
- * brightness below nought, keep what the PC has. */
+ * new profile of the mirror of each mode. An empty key, colour or profile,
+ * and a brightness below nought, keep what the PC has. */
 typedef struct {
     char effect[PANEL_LED_MODES][PANEL_LED_KEY];
     char colour[PANEL_LED_COLOUR];
     int brightness;
-    char profile[PANEL_LED_KEY];
+    char profile[PANEL_LED_MODES][PANEL_LED_KEY];
 } panel_led_change_t;
 
 /* How many effects the mode has. */
@@ -97,6 +99,9 @@ int panel_led_profile_find(const char *key);
 panel_text_id_t panel_led_profile_name(int index);
 /* What the profile at "index" does, in a few words for its menu. */
 panel_text_id_t panel_led_profile_what(int index);
+/* The key of the profile of a mode in the status and in a change, or NULL
+ * for a mode that is not there. */
+const char *panel_led_profile_key(panel_led_mode_t mode);
 /* A colour "#rrggbb" as the number 0xRRGGBB. false, and nothing in "rgb",
  * for a text that is no such colour. */
 bool panel_led_rgb(const char *colour, uint32_t *rgb);

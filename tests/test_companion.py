@@ -1190,14 +1190,18 @@ class LedTest(unittest.TestCase):
                          {"desktop": "fire", "game": "ooze",
                           "desktop_color": "#ff8000",
                           "desktop_brightness": 200,
-                          "mirror_profile": "pop"})
+                          "mirror_profile": "pop",
+                          "desktop_mirror_profile": "pop"})
 
     def test_the_profile_of_the_mirror_comes_from_the_file(self):
         reader = companion.LedSettings(self.settings(
-            "RAINBOW_SHOWS=mirror\nMIRROR_PROFILE=cinematic\n"))
+            "RAINBOW_SHOWS=mirror\nMIRROR_PROFILE=cinematic\n"
+            "DESKTOP_MIRROR_PROFILE=solid\n"))
         found = companion.led(reader, present=lambda path: True,
                               mirror=lambda: {"state": "idle"})
+        # Each mode has its own.
         self.assertEqual(found["mirror_profile"], "cinematic")
+        self.assertEqual(found["desktop_mirror_profile"], "solid")
 
     def test_the_mirror_says_what_it_does(self):
         """Only with the mirror in Game Mode: the panel shows it below that
@@ -1231,7 +1235,9 @@ class LedTest(unittest.TestCase):
                              {"desktop": "steam", "game": "rainbow",
                               "desktop_color": "#ffffff",
                               "desktop_brightness": 128,
-                              "mirror_profile": screen.DEFAULT_PROFILE},
+                              "mirror_profile": screen.DEFAULT_PROFILE,
+                              "desktop_mirror_profile":
+                                  screen.DEFAULT_PROFILE},
                              text)
 
     def test_each_form_of_a_colour_comes_in_the_form_of_the_panel(self):
@@ -1302,14 +1308,15 @@ class LedChangeTest(unittest.TestCase):
                                   "RAINBOW_SHOWS": "load"}])
 
     def test_each_profile_of_the_mirror_can_be_chosen(self):
-        for profile in screen.PROFILES:
-            (code, _), wrote = self.change({"mirror_profile": profile})
-            self.assertEqual((code, wrote),
-                             (200, [{"MIRROR_PROFILE": profile}]), profile)
-        (code, _), wrote = self.change({"mirror_profile": "disco"})
-        self.assertEqual((code, wrote), (400, []))
-        self.assertEqual(companion.LED_MIRROR["mirror_profile"],
-                         ("MIRROR_PROFILE", screen.PROFILES))
+        for key, name in (("mirror_profile", "MIRROR_PROFILE"),
+                          ("desktop_mirror_profile", "DESKTOP_MIRROR_PROFILE")):
+            for profile in screen.PROFILES:
+                (code, _), wrote = self.change({key: profile})
+                self.assertEqual((code, wrote), (200, [{name: profile}]),
+                                 profile)
+            (code, _), wrote = self.change({key: "disco"})
+            self.assertEqual((code, wrote), (400, []))
+            self.assertEqual(companion.LED_MIRROR[key], (name, screen.PROFILES))
 
     def test_every_effect_of_the_service_can_be_chosen(self):
         for key, (name, allowed) in companion.LED_CHOICES.items():

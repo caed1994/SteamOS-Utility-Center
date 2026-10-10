@@ -319,8 +319,10 @@ class PageTest(unittest.TestCase):
         """Its names come from the command, as the effects of the board do."""
         self.assertIn("labelled(held.strip?.offers?.MIRROR_PROFILE)",
                       self.text)
-        # Either mode can show the mirror, and the two share one profile.
-        self.assertIn('(rainbow === "mirror" || scene === "mirror") && (',
+        self.assertIn('rainbow === "mirror" && (', self.text)
+        # The desktop has a profile of its own, beside its scene.
+        self.assertIn('scene === "mirror" && (', self.text)
+        self.assertIn('pick("strip", "DESKTOP_MIRROR_PROFILE", value)',
                       self.text)
         self.assertIn('pick("strip", "MIRROR_PROFILE", value)', self.text)
         for name in ("Color Pop", "Cinematic"):

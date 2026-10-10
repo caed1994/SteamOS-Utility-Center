@@ -308,12 +308,12 @@ int main(int argc,char **argv)
         if(profiles||strcmp(argv[2],"led-mirror")==0){
             snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"mirror");
             s.led_mirror=(panel_led_mirror_t){.state="running",.fps=15,.cpu=12,.source="2560x1440"};
-            snprintf(s.led_profile,sizeof s.led_profile,"pop");
+            for(int m=0;m<PANEL_LED_MODES;m++)snprintf(s.led_profile[m],sizeof s.led_profile[m],"pop");
         }
         if(strcmp(argv[2],"led-mirror-desktop")==0){
             snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"mirror");
             s.led_mirror=(panel_led_mirror_t){.state="asking"};
-            snprintf(s.led_profile,sizeof s.led_profile,"pop");
+            for(int m=0;m<PANEL_LED_MODES;m++)snprintf(s.led_profile[m],sizeof s.led_profile[m],"pop");
             s.game_mode=false;
         }
         panel_ui_update(&s);

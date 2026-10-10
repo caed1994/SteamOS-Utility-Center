@@ -187,10 +187,12 @@ CPU_PATH = "/v1/cpu"
 CPU_WORD = 23
 LED_CHOICES = {"desktop": ("DESKTOP_SCENE", config_module.DESKTOP_SCENES),
                "game": ("RAINBOW_SHOWS", config_module.RAINBOW_CHOICES)}
-# The profile of the mirror, for the mirror in Game Mode only. It is not in
-# LED_CHOICES, because the panel has one card for each key of that table.
+# The profile of the mirror in each mode. It is not in LED_CHOICES, because
+# the panel has one card for each key of that table.
 LED_MIRROR = {"mirror_profile": ("MIRROR_PROFILE",
-                                 config_module.MIRROR_PROFILES)}
+                                 config_module.MIRROR_PROFILES),
+              "desktop_mirror_profile": ("DESKTOP_MIRROR_PROFILE",
+                                         config_module.MIRROR_PROFILES)}
 # The colour and the brightness of the scenes on the desktop. The same key is
 # in the status and in a change, and the value is the setting of the LED
 # service that the key names. desktop.SCENES_WITH_COLOUR and

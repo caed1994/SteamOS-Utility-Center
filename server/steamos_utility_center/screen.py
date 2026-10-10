@@ -437,10 +437,13 @@ class Mirror:
     """The colours of the screen, for the renderer in the LED service."""
 
     def __init__(self, path=None, clock=time.monotonic,
-                 profile=DEFAULT_PROFILE):
+                 profile=DEFAULT_PROFILE, desktop_profile=None):
         self.path = FIFO if path is None else path
         self.clock = clock
-        self.rise, self.fall = EASING.get(profile, EASING[DEFAULT_PROFILE])
+        # The easing of Game Mode and of the desktop. ease_for selects one.
+        self.easings = tuple(EASING.get(name, EASING[DEFAULT_PROFILE])
+                             for name in (profile, desktop_profile or profile))
+        self.rise, self.fall = self.easings[0]
         self.fd = None
         self.target = None
         self.shown = None
@@ -451,6 +454,10 @@ class Mirror:
         self.wanted = None
         self._rest = b""
         self._warned = False
+
+    def ease_for(self, desktop):
+        """Eases by the profile of the mode that shows the mirror now."""
+        self.rise, self.fall = self.easings[1 if desktop else 0]
 
     def create(self):
         """Makes the pipe. The LED service calls this one time at its start."""
@@ -1106,9 +1113,11 @@ class Watcher:
                  launch=subprocess.Popen, which=shutil.which,
                  element=has_element, clock=time.monotonic, wall=time.time,
                  cpu=cpu_seconds, profile=lambda: DEFAULT_PROFILE,
-                 share=None, desktop=lambda: None, wanted=lambda: False):
+                 share=None, desktop=lambda: None, wanted=lambda: False,
+                 desktop_profile=lambda: DEFAULT_PROFILE):
         self.fifo = FIFO if fifo is None else fifo
         self.profile = profile
+        self.desktop_profile = desktop_profile
         self.start_share = share
         self.desktop = desktop
         self.wanted = wanted
@@ -1427,8 +1436,12 @@ class Watcher:
             self._check(now)
 
     def _use(self, now):
-        """Sends the colours of the waiting picture to the bar."""
-        profile = self.profile()
+        """Sends the colours of the waiting picture to the bar.
+
+        The desktop has a profile of its own, for the screen of the share.
+        """
+        profile = (self.desktop_profile() if self.share is not None
+                   else self.profile())
         if profile != self.picture.profile:
             LOG.info("mirror: the profile is %s", profile)
             self.picture = Picture(profile)

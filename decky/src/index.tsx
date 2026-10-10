@@ -474,6 +474,9 @@ function Content() {
                       "steam");
   const profile = shown("strip", "MIRROR_PROFILE", settings.MIRROR_PROFILE,
                         "pop");
+  // The desktop has a profile of its own, from the same list.
+  const desktopProfile = shown("strip", "DESKTOP_MIRROR_PROFILE",
+                               settings.DESKTOP_MIRROR_PROFILE, "pop");
   const effect = shown("pegboard", "EFFECT", board.EFFECT, "rainbow");
   // Whether a board answered on the USB bus. The settings are kept either
   // way, and a person in Game Mode cannot look in /sys to find out why the
@@ -575,7 +578,7 @@ function Content() {
             onPick={(value) => pick("strip", "RAINBOW_SHOWS", value)}
           />
         </PanelSectionRow>
-        {(rainbow === "mirror" || scene === "mirror") && (
+        {rainbow === "mirror" && (
         <PanelSectionRow>
           <Choice
             label="Mirror profile"
@@ -595,6 +598,17 @@ function Content() {
             onPick={(value) => pick("strip", "DESKTOP_SCENE", value)}
           />
         </PanelSectionRow>
+        {scene === "mirror" && (
+        <PanelSectionRow>
+          <Choice
+            label="Desktop mirror profile"
+            options={profileOptions}
+            value={desktopProfile}
+            disabled={held.busy || !held.strip?.ok}
+            onPick={(value) => pick("strip", "DESKTOP_MIRROR_PROFILE", value)}
+          />
+        </PanelSectionRow>
+        )}
         <PanelSectionRow>
           <ToggleField
             label="Notifications"

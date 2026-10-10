@@ -1035,7 +1035,9 @@ static int request(const char *path, const char *body, int wait_ms)
     pc_text(state.led_mirror.state,sizeof state.led_mirror.state,mirror,"state");
     pc_text(state.led_mirror.detail,sizeof state.led_mirror.detail,mirror,"detail");
     pc_text(state.led_mirror.source,sizeof state.led_mirror.source,mirror,"source");
-    pc_text(state.led_profile,sizeof state.led_profile,led,PANEL_LED_PROFILE_KEY);
+    for(int mode=0;mode<PANEL_LED_MODES;mode++)
+        pc_text(state.led_profile[mode],sizeof state.led_profile[mode],led,
+                panel_led_profile_key((panel_led_mode_t)mode));
     cJSON *rate=cJSON_GetObjectItemCaseSensitive(mirror,"fps");
     cJSON *share=cJSON_GetObjectItemCaseSensitive(mirror,"cpu");
     state.led_mirror.fps=cJSON_IsNumber(rate)&&rate->valuedouble>=0&&rate->valuedouble<=1000
@@ -1816,11 +1818,12 @@ static void network_task(void *arg)
         xSemaphoreGive(lock);
         if (led_now) {
             int code=led_online && connected() ? led_request(&led_next) : 0;
-            ESP_LOGI("panel_led","desktop=%s game=%s colour=%s brightness=%d profile=%s: %d",
+            ESP_LOGI("panel_led","desktop=%s game=%s colour=%s brightness=%d profiles=%s/%s: %d",
                      led_next.effect[PANEL_LED_DESKTOP][0]?led_next.effect[PANEL_LED_DESKTOP]:"-",
                      led_next.effect[PANEL_LED_GAME][0]?led_next.effect[PANEL_LED_GAME]:"-",
                      led_next.colour[0]?led_next.colour:"-",led_next.brightness,
-                     led_next.profile[0]?led_next.profile:"-",code);
+                     led_next.profile[PANEL_LED_DESKTOP][0]?led_next.profile[PANEL_LED_DESKTOP]:"-",
+                     led_next.profile[PANEL_LED_GAME][0]?led_next.profile[PANEL_LED_GAME]:"-",code);
             xSemaphoreTake(lock,portMAX_DELAY);
             state.led_code=code;
             state.led_replies++;

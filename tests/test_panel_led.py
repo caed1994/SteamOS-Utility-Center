@@ -498,8 +498,16 @@ class HarnessTest(unittest.TestCase):
                                           found.group(1))), screen.PROFILES)
         self.assertEqual(number("PANEL_LED_PROFILES", code("panel_led.h")),
                          len(screen.PROFILES))
+        # The key of each mode, as the service names its setting.
+        keys = {name: key for key, (name, _) in companion.LED_MIRROR.items()}
         self.assertIn('#define PANEL_LED_PROFILE_KEY "%s"'
-                      % list(companion.LED_MIRROR)[0], code("panel_led.h"))
+                      % keys["MIRROR_PROFILE"], code("panel_led.h"))
+        self.assertIn('#define PANEL_LED_DESKTOP_PROFILE_KEY "%s"'
+                      % keys["DESKTOP_MIRROR_PROFILE"], code("panel_led.h"))
+        self.assertEqual(self.ask("profilekey 0", "profilekey 1",
+                                  "profilekey 2"),
+                         [keys["DESKTOP_MIRROR_PROFILE"],
+                          keys["MIRROR_PROFILE"], "(none)"])
         self.assertEqual(self.ask("profile 0", "profile 3", "profile -1",
                                   "profilefind solid", "profilefind disco"),
                          ["cinematic", "(none)", "(none)", "2", "-1"])
@@ -539,22 +547,39 @@ class HarnessTest(unittest.TestCase):
                 self.assertEqual(code_, 200, body)
                 self.assertEqual(wrote[0]["MIRROR_PROFILE"], profile)
 
+    def test_the_profile_of_the_desktop_has_its_own_key(self):
+        for profile in screen.PROFILES:
+            body, _length = self.ask("bodyp 160 - - %s" % profile)[0] \
+                .rsplit(" ", 1)
+            self.assertEqual(json.loads(body),
+                             {"desktop_mirror_profile": profile})
+            wrote = []
+            code_, _ = companion.led_change(json.loads(body),
+                                            write=wrote.append)
+            self.assertEqual((code_, wrote),
+                             (200, [{"DESKTOP_MIRROR_PROFILE": profile}]))
+        body, _length = self.ask("bodyp 160 - pop solid")[0].rsplit(" ", 1)
+        self.assertEqual(json.loads(body), {"mirror_profile": "pop",
+                                            "desktop_mirror_profile": "solid"})
+
     def test_a_profile_the_service_does_not_know_is_no_body(self):
-        self.assertEqual(self.ask("bodyp 160 - disco", "bodyp 160 mirror disco"),
-                         ["(empty) 0"] * 2)
+        self.assertEqual(self.ask("bodyp 160 - disco", "bodyp 160 mirror disco",
+                                  "bodyp 160 - - disco",
+                                  "bodyp 160 - pop disco"),
+                         ["(empty) 0"] * 4)
 
     def test_a_tap_of_the_profile_alone_reaches_the_body(self):
         """main.c merges each tap into the change that waits. The profile
         was left out there, so a profile alone sent nothing, and the page
         said that the PC did not take it."""
         self.assertEqual(
-            self.ask("merge 160 - - - -1 - - - - -1 solid")[0],
+            self.ask("merge 160 - - - -1 - - - - - -1 solid -")[0],
             '{"mirror_profile":"solid"} 26')
 
     def test_two_taps_before_a_request_give_one_change_with_both(self):
-        answers = self.ask("merge 160 - mirror - -1 - - - - -1 pop",
-                           "merge 160 - - - -1 cinematic - - - -1 solid",
-                           "merge 160 - - - -1 solid breath - #ff0000 200 -")
+        answers = self.ask("merge 160 - mirror - -1 - - - - - -1 pop -",
+                           "merge 160 - - - -1 cinematic - - - - -1 solid -",
+                           "merge 160 - - - -1 solid - breath - #ff0000 200 - -")
         self.assertEqual([json.loads(answer.rsplit(" ", 1)[0])
                           for answer in answers],
                          [{"game": "mirror", "mirror_profile": "pop"},
@@ -563,14 +588,27 @@ class HarnessTest(unittest.TestCase):
                            "desktop_brightness": 200,
                            "mirror_profile": "solid"}])
 
+    def test_the_two_profiles_merge_each_on_its_own(self):
+        """A tap on each card before the request: both go, and a second tap
+        on one card replaces only its own."""
+        answers = self.ask("merge 160 - - - -1 pop - - - - -1 - solid",
+                           "merge 160 - - - -1 - cinematic - - - -1 - solid")
+        self.assertEqual([json.loads(answer.rsplit(" ", 1)[0])
+                          for answer in answers],
+                         [{"mirror_profile": "pop",
+                           "desktop_mirror_profile": "solid"},
+                          {"desktop_mirror_profile": "solid"}])
+
     def test_main_merges_with_panel_led(self):
         main = code("main.c")
         self.assertIn("panel_led_merge(&led_wanted,change);", main)
         self.assertNotIn("led_wanted.colour", main)
 
     def test_the_profile_is_read_with_the_name_of_panel_led_h(self):
-        self.assertIn("pc_text(state.led_profile,sizeof state.led_profile,led,"
-                      "PANEL_LED_PROFILE_KEY);", code("main.c"))
+        main = code("main.c")
+        self.assertIn("pc_text(state.led_profile[mode],sizeof "
+                      "state.led_profile[mode],led,", main)
+        self.assertIn("panel_led_profile_key((panel_led_mode_t)mode));", main)
 
     def test_a_colour_or_brightness_the_service_cannot_read_is_no_body(self):
         """The panel builds neither, and a body with one would be half an

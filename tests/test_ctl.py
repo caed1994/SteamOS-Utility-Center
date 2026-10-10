@@ -183,9 +183,12 @@ class AreaTest(unittest.TestCase):
     def test_the_profiles_of_the_mirror_come_with_their_names(self):
         """The plugin shows the label, and screen.py holds the one table."""
         from steamos_utility_center import screen
-        self.assertEqual(ctl.get("strip")["offers"]["MIRROR_PROFILE"],
-                         [{"value": name, "label": screen.PROFILE_NAMES[name]}
-                          for name in screen.PROFILES])
+        offers = ctl.get("strip")["offers"]
+        for key in ("MIRROR_PROFILE", "DESKTOP_MIRROR_PROFILE"):
+            self.assertEqual(offers[key],
+                             [{"value": name,
+                               "label": screen.PROFILE_NAMES[name]}
+                              for name in screen.PROFILES], key)
 
 
 class KeyboardTest(unittest.TestCase):

@@ -326,7 +326,7 @@ class LiveWindowTest(unittest.TestCase):
         self.assertEqual(self.panel._label_for("MIRROR_PROFILE", "pop"),
                          "Color Pop")
 
-    def test_the_mirror_scene_of_the_desktop_brings_the_profile_too(self):
+    def test_the_mirror_scene_of_the_desktop_has_a_profile_of_its_own(self):
         self.panel.notebook.select(self._page_named("Strip"))
         self.root.update()
         self.panel.vars["RAINBOW_SHOWS"][0].set("Fire")
@@ -334,7 +334,22 @@ class LiveWindowTest(unittest.TestCase):
         for label, wanted in (("Mirror", True), ("Off", False)):
             scene.set(label)
             self.root.update()
-            self.assertEqual(self._shown("MIRROR_PROFILE"), wanted, label)
+            self.assertEqual(self._shown("DESKTOP_MIRROR_PROFILE"), wanted,
+                             label)
+            # The profile of Game Mode goes with the rainbow slot alone.
+            self.assertFalse(self._shown("MIRROR_PROFILE"), label)
+        self.assertEqual(
+            self.panel._label_for("DESKTOP_MIRROR_PROFILE", "solid"), "Solid")
+
+    def test_the_status_page_names_the_profile_of_the_desktop(self):
+        self.panel.config = dict(self.panel.config, RAINBOW_SHOWS="fire",
+                                 DESKTOP_SCENE="mirror",
+                                 DESKTOP_MIRROR_PROFILE="solid")
+        here = self.panel._module_here
+        self.panel._module_here = lambda name: name == "led" or here(name)
+        part = [one for one in self.panel._read_parts()
+                if one.key == "mirror"][0]
+        self.assertIn("Profile on the desktop: Solid", part.detail)
 
     def test_a_desktop_scene_brings_the_same_rows_back(self):
         """Two places ask for these gauges, and either one puts them in play.

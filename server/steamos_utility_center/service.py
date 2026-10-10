@@ -179,7 +179,8 @@ def build_mirror(config):
     """
     if not anything_shows(config, render.SHOWS_MIRROR):
         return None
-    mirror = screen.Mirror(profile=config["MIRROR_PROFILE"])
+    mirror = screen.Mirror(profile=config["MIRROR_PROFILE"],
+                           desktop_profile=config["DESKTOP_MIRROR_PROFILE"])
     try:
         mirror.create()
     except OSError as exc:
@@ -664,6 +665,9 @@ class Runner:
                 self._hold_for_steam()
                 continue
             if payload is None:
+                if self.mirror is not None:
+                    # The scene of the desktop has a profile of its own.
+                    self.mirror.ease_for(showing is self.scene)
                 payload = self.renderer.render(showing, now - started,
                                                self._shows(showing))
             if self._breathing_for_steam:
@@ -1615,6 +1619,9 @@ def run_mirror():
     watcher = screen.Watcher(
         profile=screen.ProfileFile(
             path, lambda path: config_module.load(path)["MIRROR_PROFILE"]),
+        desktop_profile=screen.ProfileFile(
+            path,
+            lambda path: config_module.load(path)["DESKTOP_MIRROR_PROFILE"]),
         share=portal.Share, desktop=portal.desktop_runs,
         wanted=lambda: scene() == desktop.SCENE_MIRROR)
     LOG.info("mirror: the status is in %s", watcher.status)

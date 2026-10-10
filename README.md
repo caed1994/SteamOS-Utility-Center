@@ -191,8 +191,9 @@ bar keeps the last picture. A capture that starts on a still screen waits for
 the first change, and the panel shows "Mirror waits for a picture".
 
 Three profiles give the colours of the screen to the bar in different ways.
-The wall panel, the control panel and the Game Mode plugin select one, or
-`MIRROR_PROFILE` in the settings file:
+Game Mode and the desktop each have a profile of their own. The wall panel,
+the control panel and the Game Mode plugin select them. In the settings file,
+`MIRROR_PROFILE` is for Game Mode and `DESKTOP_MIRROR_PROFILE` for the desktop:
 
 | Profile | What the bar shows |
 | --- | --- |

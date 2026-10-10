@@ -31,14 +31,14 @@ static unsigned led_changes;
 static char led_last[PANEL_LED_MODES][PANEL_LED_KEY];
 static char led_last_colour[PANEL_LED_COLOUR];
 static int led_last_brightness=-1;
-static char led_last_profile[PANEL_LED_KEY];
+static char led_last_profile[PANEL_LED_MODES][PANEL_LED_KEY];
 static void led_change(const panel_led_change_t *change)
 {
     led_changes++;
     for(int m=0;m<PANEL_LED_MODES;m++)snprintf(led_last[m],PANEL_LED_KEY,"%s",change->effect[m]);
     snprintf(led_last_colour,sizeof led_last_colour,"%s",change->colour);
     led_last_brightness=change->brightness;
-    snprintf(led_last_profile,sizeof led_last_profile,"%s",change->profile);
+    for(int m=0;m<PANEL_LED_MODES;m++)snprintf(led_last_profile[m],PANEL_LED_KEY,"%s",change->profile[m]);
 }
 // The profiles of the page of the CPU, as main.c gets them.
 static unsigned cpu_changes;
@@ -2899,7 +2899,7 @@ int main(void)
         // The profile: a button beside the name of the mirror. A tap opens
         // the menu of the profiles, each with what it does and a mark on
         // the profile of the PC.
-        strcpy(t.led_profile,"pop");
+        strcpy(t.led_profile[PANEL_LED_GAME],"pop");
         t.answers++;
         panel_ui_update(&t);
         assert(label(game,"Mirror")&&label(game,"Color Pop")&&!profile_box());
@@ -2919,8 +2919,9 @@ int main(void)
         assert(!profile_box()&&strcmp(panel_ui_where(),"the profile of the mirror")!=0);
         assert(label(game,"Solid")&&label(game,panel_text(TXT_CHANGE_APPLYING)));
         led_wait(1600);
-        assert(led_changes==before+1&&strcmp(led_last_profile,"solid")==0&&!led_last[PANEL_LED_GAME][0]);
-        strcpy(t.led_profile,"solid");
+        assert(led_changes==before+1&&strcmp(led_last_profile[PANEL_LED_GAME],"solid")==0);
+        assert(!led_last[PANEL_LED_GAME][0]&&!led_last_profile[PANEL_LED_DESKTOP][0]);
+        strcpy(t.led_profile[PANEL_LED_GAME],"solid");
         t.answers++;
         panel_ui_update(&t);
         assert(label(game,"Solid")&&!label(game,panel_text(TXT_CHANGE_APPLYING)));
@@ -2937,7 +2938,7 @@ int main(void)
         // A profile that the PC takes from somewhere else moves the mark of
         // the open menu.
         click_in(game,"Solid");
-        strcpy(t.led_profile,"cinematic");
+        strcpy(t.led_profile[PANEL_LED_GAME],"cinematic");
         t.answers++;
         panel_ui_update(&t);
         box=profile_box();
@@ -2945,7 +2946,7 @@ int main(void)
         // A refusal takes the profile back, and says why.
         click_in(box,"Color Pop");
         led_wait(1600);
-        assert(led_changes==before+2&&strcmp(led_last_profile,"pop")==0);
+        assert(led_changes==before+2&&strcmp(led_last_profile[PANEL_LED_GAME],"pop")==0);
         t.led_replies++;t.led_code=403;
         panel_ui_update(&t);
         assert(label(game,"Cinematic")&&label(game,panel_text(TXT_CHANGE_NO_RULE)));
@@ -2955,7 +2956,7 @@ int main(void)
         // A service with no profiles: no button, and the open menu closes.
         click_in(game,"Cinematic");
         assert(profile_box());
-        t.led_profile[0]=0;
+        t.led_profile[PANEL_LED_GAME][0]=0;
         t.answers++;
         panel_ui_update(&t);
         assert(!profile_box());
@@ -2982,14 +2983,16 @@ int main(void)
         t.game_mode=false;t.led_look=true;t.led_brightness=128;
         strcpy(t.led_effect[PANEL_LED_DESKTOP],"mirror");
         strcpy(t.led_effect[PANEL_LED_GAME],"mirror");
-        strcpy(t.led_profile,"pop");
+        // Each mode has its own profile.
+        strcpy(t.led_profile[PANEL_LED_DESKTOP],"pop");
+        strcpy(t.led_profile[PANEL_LED_GAME],"cinematic");
         t.led_mirror=(panel_led_mirror_t){.state="asking"};
         t.answers++;
         panel_ui_update(&t);
         assert(label(desktop,"Mirror")&&label(desktop,"Color Pop"));
         assert(label(desktop,panel_text(TXT_MIRROR_ASKING)));
         assert(!label(desktop,look_words_for(TXT_COLOUR_RED,50,false)));
-        assert(label(game,"Color Pop")&&label(game,panel_text(TXT_LED_GAME_WHAT)));
+        assert(label(game,"Cinematic")&&label(game,panel_text(TXT_LED_GAME_WHAT)));
         assert(!label(game,panel_text(TXT_MIRROR_ASKING)));
         static const struct { const char *state; panel_text_id_t line; } desktop_lines[]={
             {"refused",TXT_MIRROR_REFUSED},{"no-portal",TXT_MIRROR_NO_PORTAL},
@@ -3006,22 +3009,50 @@ int main(void)
         panel_ui_update(&t);
         assert(label(desktop,look_words_for(TXT_COLOUR_RED,50,false)));
         assert(!label(desktop,"Mirror runs: 15 fps, CPU 0.9 %, 2194x1234"));
+        // The menu of each card marks the profile of its own mode.
+        click_in(game,"Cinematic");
+        assert(label(profile_box(),LV_SYMBOL_OK "  Cinematic"));
+        // A new answer of the PC keeps the mark of the card of the menu.
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(profile_box(),LV_SYMBOL_OK "  Cinematic"));
+        assert(!label(profile_box(),LV_SYMBOL_OK "  Color Pop"));
+        lv_obj_send_event(lv_obj_get_parent(profile_box()),LV_EVENT_CLICKED,NULL);
         // A profile chosen on the card of the desktop: that card says that
-        // it goes, and both buttons show it. One change goes.
+        // it goes, and only its own button shows it. One change goes, for
+        // the profile of the desktop alone.
         before=led_changes;
         click_in(desktop,"Color Pop");
-        assert(profile_box());
+        assert(label(profile_box(),LV_SYMBOL_OK "  Color Pop"));
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(profile_box(),LV_SYMBOL_OK "  Color Pop"));
+        assert(!label(profile_box(),LV_SYMBOL_OK "  Cinematic"));
         click_in(profile_box(),"Solid");
         assert(label(desktop,panel_text(TXT_CHANGE_APPLYING))&&!label(game,panel_text(TXT_CHANGE_APPLYING)));
-        assert(label(desktop,"Solid")&&label(game,"Solid"));
+        assert(label(desktop,"Solid")&&label(game,"Cinematic"));
         led_wait(1600);
-        assert(led_changes==before+1&&strcmp(led_last_profile,"solid")==0);
+        assert(led_changes==before+1&&strcmp(led_last_profile[PANEL_LED_DESKTOP],"solid")==0);
+        assert(!led_last_profile[PANEL_LED_GAME][0]);
         // Its refusal goes to the same card.
         t.led_replies++;t.led_code=403;
         panel_ui_update(&t);
         assert(label(desktop,panel_text(TXT_CHANGE_NO_RULE))&&!label(game,panel_text(TXT_CHANGE_NO_RULE)));
-        assert(label(desktop,"Color Pop")&&label(game,"Color Pop"));
+        assert(label(desktop,"Color Pop")&&label(game,"Cinematic"));
         lv_tick_inc(9000);
+        // The profile of Game Mode, chosen on its card, goes alone too.
+        t.answers++;
+        panel_ui_update(&t);
+        before=led_changes;
+        click_in(game,"Cinematic");
+        click_in(profile_box(),"Solid");
+        assert(label(game,"Solid")&&label(desktop,"Color Pop"));
+        led_wait(1600);
+        assert(led_changes==before+1&&strcmp(led_last_profile[PANEL_LED_GAME],"solid")==0);
+        assert(!led_last_profile[PANEL_LED_DESKTOP][0]);
+        strcpy(t.led_profile[PANEL_LED_GAME],"solid");
+        t.answers++;
+        panel_ui_update(&t);
         // In Game Mode the line goes to the card of Game Mode, and the card
         // of the desktop has the button of the brightness.
         t.game_mode=true;
@@ -3034,8 +3065,9 @@ int main(void)
         strcpy(t.led_effect[PANEL_LED_DESKTOP],"aurora");
         t.answers++;
         panel_ui_update(&t);
-        assert(!label(desktop,"Color Pop")&&label(game,"Color Pop"));
-        strcpy(t.led_effect[PANEL_LED_GAME],"fire");t.led_profile[0]=0;t.led_look=false;
+        assert(!label(desktop,"Color Pop")&&label(game,"Solid"));
+        strcpy(t.led_effect[PANEL_LED_GAME],"fire");t.led_look=false;
+        t.led_profile[PANEL_LED_DESKTOP][0]=0;t.led_profile[PANEL_LED_GAME][0]=0;
         t.answers++;
         panel_ui_update(&t);
         // A PC with no LED module: no effect, no arrow to press, and the

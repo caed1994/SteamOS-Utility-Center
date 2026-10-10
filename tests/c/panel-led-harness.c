@@ -34,11 +34,14 @@
 //                              for 0 and German for 1
 //   profilewhat <index> <language>
 //                              prints what the profile does, as profilename
-//   bodyp <room> <game> <profile>
+//   bodyp <room> <game> <profile> [<desktop profile>]
 //                              prints the body of a change of the effect of
-//                              Game Mode and of the profile, as body does
+//                              Game Mode and of the profiles of the two
+//                              modes, as body does
+//   profilekey <mode>          prints the key of the profile of the mode, or
+//                              "(none)"
 //   merge <room> <desktop> <game> <colour> <brightness> <profile>
-//         <desktop> <game> <colour> <brightness> <profile>
+//         <desktop profile> and the same six again
 //                              merges the two changes, the first and then the
 //                              second, into an empty one, and prints its
 //                              body as body does; "-" is no value
@@ -53,13 +56,16 @@
 #include "panel_led.h"
 
 static void fill(panel_led_change_t *change, const char *desktop, const char *game,
-                 const char *colour, int brightness, const char *profile)
+                 const char *colour, int brightness, const char *profile,
+                 const char *desktop_profile)
 {
     *change = (panel_led_change_t){.brightness = brightness};
     snprintf(change->effect[PANEL_LED_DESKTOP], PANEL_LED_KEY, "%.15s", strcmp(desktop, "-") ? desktop : "");
     snprintf(change->effect[PANEL_LED_GAME], PANEL_LED_KEY, "%.15s", strcmp(game, "-") ? game : "");
     snprintf(change->colour, PANEL_LED_COLOUR, "%.7s", strcmp(colour, "-") ? colour : "");
-    snprintf(change->profile, PANEL_LED_KEY, "%.15s", strcmp(profile, "-") ? profile : "");
+    snprintf(change->profile[PANEL_LED_GAME], PANEL_LED_KEY, "%.15s", strcmp(profile, "-") ? profile : "");
+    snprintf(change->profile[PANEL_LED_DESKTOP], PANEL_LED_KEY, "%.15s",
+             strcmp(desktop_profile, "-") ? desktop_profile : "");
 }
 
 int main(void)
@@ -127,25 +133,30 @@ int main(void)
             const char *found = panel_led_profile(index);
             printf("%s\n", found ? found : "(none)");
         } else if (strncmp(line, "merge ", 6) == 0) {
-            char d[2][16], g[2][16], c[2][8], p[2][16];
+            char d[2][16], g[2][16], c[2][8], p[2][16], q[2][16];
             int b[2];
-            if (sscanf(line, "merge %d %15s %15s %7s %d %15s %15s %15s %7s %d %15s", &room, d[0], g[0],
-                       c[0], &b[0], p[0], d[1], g[1], c[1], &b[1], p[1]) != 11) {
+            if (sscanf(line, "merge %d %15s %15s %7s %d %15s %15s %15s %15s %7s %d %15s %15s", &room,
+                       d[0], g[0], c[0], &b[0], p[0], q[0], d[1], g[1], c[1], &b[1], p[1], q[1]) != 13) {
                 printf("?\n");
                 continue;
             }
             panel_led_change_t into = {.brightness = -1}, one;
             for (int i = 0; i < 2; i++) {
-                fill(&one, d[i], g[i], c[i], b[i], p[i]);
+                fill(&one, d[i], g[i], c[i], b[i], p[i], q[i]);
                 panel_led_merge(&into, &one);
             }
             if (room < 0 || room > (int)sizeof body) room = (int)sizeof body;
             size_t length = panel_led_body(body, (size_t)room, &into);
             printf("%s %zu\n", length ? body : "(empty)", length);
-        } else if (sscanf(line, "bodyp %d %63s %63s", &room, other, key) == 3) {
+        } else if (sscanf(line, "profilekey %d", &index) == 1) {
+            const char *found = panel_led_profile_key((panel_led_mode_t)index);
+            printf("%s\n", found ? found : "(none)");
+        } else if ((got = sscanf(line, "bodyp %d %63s %63s %15s", &room, other, key, colour)) >= 3) {
             panel_led_change_t change = {.brightness = -1};
             snprintf(change.effect[PANEL_LED_GAME], PANEL_LED_KEY, "%.15s", strcmp(other, "-") ? other : "");
-            snprintf(change.profile, PANEL_LED_KEY, "%.15s", strcmp(key, "-") ? key : "");
+            snprintf(change.profile[PANEL_LED_GAME], PANEL_LED_KEY, "%.15s", strcmp(key, "-") ? key : "");
+            if (got == 4 && strcmp(colour, "-"))
+                snprintf(change.profile[PANEL_LED_DESKTOP], PANEL_LED_KEY, "%.15s", colour);
             if (room < 0 || room > (int)sizeof body) room = (int)sizeof body;
             size_t length = panel_led_body(body, (size_t)room, &change);
             printf("%s %zu\n", length ? body : "(empty)", length);

@@ -192,7 +192,7 @@ int main(void)
      * of its profile. */
     snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"mirror");
     snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"mirror");
-    snprintf(s.led_profile,sizeof s.led_profile,"pop");
+    for(int m=0;m<PANEL_LED_MODES;m++)snprintf(s.led_profile[m],sizeof s.led_profile[m],"pop");
     s.answers++;
     panel_ui_update(&s);
     assert(find_label(lv_screen_active(),"Color Pop"));

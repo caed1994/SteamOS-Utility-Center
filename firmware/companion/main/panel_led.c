@@ -207,6 +207,13 @@ panel_text_id_t panel_led_profile_what(int index)
     return index >= 0 && index < PANEL_LED_PROFILES ? profiles[index].what : TXT_LED_UNKNOWN;
 }
 
+const char *panel_led_profile_key(panel_led_mode_t mode)
+{
+    if (mode == PANEL_LED_DESKTOP) return PANEL_LED_DESKTOP_PROFILE_KEY;
+    if (mode == PANEL_LED_GAME) return PANEL_LED_PROFILE_KEY;
+    return NULL;
+}
+
 bool panel_led_rgb(const char *colour, uint32_t *rgb)
 {
     if (!colour || colour[0] != '#' || strlen(colour) != 7) return false;
@@ -261,7 +268,9 @@ void panel_led_merge(panel_led_change_t *into, const panel_led_change_t *change)
             snprintf(into->effect[mode], sizeof into->effect[mode], "%s", change->effect[mode]);
     if (change->colour[0]) snprintf(into->colour, sizeof into->colour, "%s", change->colour);
     if (change->brightness >= 0) into->brightness = change->brightness;
-    if (change->profile[0]) snprintf(into->profile, sizeof into->profile, "%s", change->profile);
+    for (int mode = 0; mode < PANEL_LED_MODES; mode++)
+        if (change->profile[mode][0])
+            snprintf(into->profile[mode], sizeof into->profile[mode], "%s", change->profile[mode]);
 }
 
 size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
@@ -273,7 +282,8 @@ size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
      * the service reads, so a body is never half an object. */
     if (change->colour[0] && !panel_led_rgb(change->colour, NULL)) return 0;
     if (change->brightness > 255) return 0;
-    if (change->profile[0] && panel_led_profile_find(change->profile) < 0) return 0;
+    for (int mode = 0; mode < PANEL_LED_MODES; mode++)
+        if (change->profile[mode][0] && panel_led_profile_find(change->profile[mode]) < 0) return 0;
     size_t at = 0;
     out[at++] = '{';
     for (int mode = 0; mode < PANEL_LED_MODES; mode++) {
@@ -291,10 +301,10 @@ size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
         out[0] = 0;
         return 0;
     }
-    if (change->profile[0]
-        && !add(out, room, &at, "\"%s\":\"%s\"", PANEL_LED_PROFILE_KEY, change->profile)) {
-        out[0] = 0;
-        return 0;
+    for (int mode = 0; mode < PANEL_LED_MODES; mode++) {
+        if (!change->profile[mode][0]) continue;
+        if (!add(out, room, &at, "\"%s\":\"%s\"", panel_led_profile_key((panel_led_mode_t)mode),
+                 change->profile[mode])) { out[0] = 0; return 0; }
     }
     if (at == 1 || at + 2 > room) { out[0] = 0; return 0; }
     out[at++] = '}';

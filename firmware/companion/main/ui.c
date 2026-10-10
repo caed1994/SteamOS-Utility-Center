@@ -1972,13 +1972,13 @@ static bool look_with_colours;
 /* The button of the profile of the mirror on each card, with its words.
  * It stands beside the name of the effect while that effect is the mirror,
  * and the name then makes room for it. A tap opens the menu of the
- * profiles, and the profile goes to the PC as a colour does. The two modes
- * share one profile, so the two buttons show the same one. */
+ * profiles, and the profile goes to the PC as a colour does. Each mode has
+ * its own profile, and its own choice of it. */
 static lv_obj_t *profile_buttons[PANEL_LED_MODES],*profile_words[PANEL_LED_MODES];
-static led_pick_t profile_pick={.wanted=-1};
+static led_pick_t profile_picks[PANEL_LED_MODES]={{.wanted=-1},{.wanted=-1}};
 static bool profile_beside[PANEL_LED_MODES];
-/* The card of the button that chose the profile. Its line says that the
- * change goes, or why the PC refused it. */
+/* The card of the button that opened the menu: the menu sets the profile
+ * of that mode. */
 static panel_led_mode_t profile_card=PANEL_LED_GAME;
 /* The name on each row of the menu, and what the row shows: -1 for
  * nothing yet, 0 dark, 1 lit. */
@@ -2019,11 +2019,16 @@ static void led_show(const panel_state_t *s)
             c->wanted=-1;c->sent=false;
             c->refused=true;c->refusal=change_refusal(s->led_code,TXT_LED_NO_MODULE);c->refused_at=lv_tick_get();
         }
-        for(int i=0;i<3&&s->led_code!=200;i++){
-            led_pick_t *pick=i==2?&profile_pick:i?&look_level:&look_colour;
+        /* Each choice that is no effect, and the card that says so. */
+        struct { led_pick_t *pick; panel_led_mode_t card; } picks[]={
+            {&look_colour,PANEL_LED_DESKTOP},{&look_level,PANEL_LED_DESKTOP},
+            {&profile_picks[PANEL_LED_DESKTOP],PANEL_LED_DESKTOP},
+            {&profile_picks[PANEL_LED_GAME],PANEL_LED_GAME}};
+        for(size_t i=0;i<sizeof picks/sizeof picks[0]&&s->led_code!=200;i++){
+            led_pick_t *pick=picks[i].pick;
             if(pick->wanted<0||!pick->sent)continue;
             pick->wanted=-1;pick->sent=false;
-            led_card_t *c=&led_cards[i==2?profile_card:PANEL_LED_DESKTOP];
+            led_card_t *c=&led_cards[picks[i].card];
             c->refused=true;c->refusal=change_refusal(s->led_code,TXT_LED_NO_MODULE);c->refused_at=lv_tick_get();
         }
     }
@@ -2033,9 +2038,12 @@ static void led_show(const panel_state_t *s)
                           ||lv_tick_elaps(look_colour.sent_at)>LED_SHOWN_MS)){look_colour.wanted=-1;look_colour.sent=false;}
     if(look_level.sent&&(s->led_brightness==look_level.wanted
                          ||lv_tick_elaps(look_level.sent_at)>LED_SHOWN_MS)){look_level.wanted=-1;look_level.sent=false;}
-    const char *profile=panel_led_profile(profile_pick.wanted);
-    if(profile_pick.sent&&(!profile||strcmp(s->led_profile,profile)==0
-                           ||lv_tick_elaps(profile_pick.sent_at)>LED_SHOWN_MS)){profile_pick.wanted=-1;profile_pick.sent=false;}
+    for(int m=0;m<PANEL_LED_MODES;m++){
+        led_pick_t *pick=&profile_picks[m];
+        const char *profile=panel_led_profile(pick->wanted);
+        if(pick->sent&&(!profile||strcmp(s->led_profile[m],profile)==0
+                        ||lv_tick_elaps(pick->sent_at)>LED_SHOWN_MS)){pick->wanted=-1;pick->sent=false;}
+    }
     bool usable=s->online&&s->led_here;
     for(int m=0;m<PANEL_LED_MODES;m++){
         led_card_t *c=&led_cards[m];
@@ -2065,7 +2073,7 @@ static void led_show(const panel_state_t *s)
          * that card alone. */
         bool here=(m==PANEL_LED_GAME)==s->game_mode;
         if(c->wanted>=0||(m==PANEL_LED_DESKTOP&&(look_colour.wanted>=0||look_level.wanted>=0))
-           ||(m==(int)profile_card&&profile_pick.wanted>=0))
+           ||profile_picks[m].wanted>=0)
             note=panel_text(TXT_CHANGE_APPLYING);
         else if(c->refused)note=panel_text(c->refusal);
         else if(s->online&&!s->led_here){
@@ -2098,7 +2106,7 @@ static void led_show(const panel_state_t *s)
         set_text(c->note,note);
         if(m==PANEL_LED_DESKTOP)look_button_show(s,index,look);
         /* The profile, for the mirror and from a service that has them. */
-        profile_show(s,(panel_led_mode_t)m,mirror&&s->led_profile[0]);
+        profile_show(s,(panel_led_mode_t)m,mirror&&s->led_profile[m][0]);
     }
     look_show(s);
 }
@@ -2130,12 +2138,14 @@ static void led_due(lv_timer_t *timer)
         if(last_state_valid&&last_state.led_brightness==look_level.wanted)look_level.wanted=-1;
         else{change.brightness=look_level.wanted;look_level.sent=true;look_level.sent_at=lv_tick_get();any=true;}
     }
-    if(profile_pick.wanted>=0&&!profile_pick.sent){
-        const char *chosen=panel_led_profile(profile_pick.wanted);
-        if(!chosen||(last_state_valid&&strcmp(last_state.led_profile,chosen)==0))profile_pick.wanted=-1;
+    for(int m=0;m<PANEL_LED_MODES;m++){
+        led_pick_t *pick=&profile_picks[m];
+        if(pick->wanted<0||pick->sent)continue;
+        const char *chosen=panel_led_profile(pick->wanted);
+        if(!chosen||(last_state_valid&&strcmp(last_state.led_profile[m],chosen)==0))pick->wanted=-1;
         else{
-            snprintf(change.profile,sizeof change.profile,"%s",chosen);
-            profile_pick.sent=true;profile_pick.sent_at=lv_tick_get();any=true;
+            snprintf(change.profile[m],sizeof change.profile[m],"%s",chosen);
+            pick->sent=true;pick->sent_at=lv_tick_get();any=true;
         }
     }
     if(any&&led_send)led_send(&change);
@@ -2191,8 +2201,9 @@ static void profile_chosen(lv_event_t *e)
     int row=(int)(intptr_t)lv_event_get_user_data(e);
     feedback();
     profile_close();
-    if(!profile_pick.sent&&row==panel_led_profile_find(last_state.led_profile))profile_pick.wanted=-1;
-    else{profile_pick.wanted=row;profile_pick.sent=false;led_later();}
+    led_pick_t *pick=&profile_picks[profile_card];
+    if(!pick->sent&&row==panel_led_profile_find(last_state.led_profile[profile_card]))pick->wanted=-1;
+    else{pick->wanted=row;pick->sent=false;led_later();}
     led_cards[profile_card].refused=false;
     led_show(&last_state);
 }
@@ -2219,7 +2230,8 @@ static void profile_open(void)
         lv_obj_set_style_text_align(what,LV_TEXT_ALIGN_RIGHT,0);
         profile_lit[i]=-1;
     }
-    profile_mark(profile_pick.wanted>=0?profile_pick.wanted:panel_led_profile_find(last_state.led_profile));
+    const led_pick_t *pick=&profile_picks[profile_card];
+    profile_mark(pick->wanted>=0?pick->wanted:panel_led_profile_find(last_state.led_profile[profile_card]));
 }
 /* The button shows only for a PC that can take a profile. */
 static void profile_clicked(lv_event_t *e)
@@ -2244,9 +2256,11 @@ static void profile_show(const panel_state_t *s,panel_led_mode_t m,bool show)
         return;
     }
     /* A profile of a later service has no name here, and shows as it is. */
-    int index=profile_pick.wanted>=0?profile_pick.wanted:panel_led_profile_find(s->led_profile);
-    set_text(profile_words[m],index>=0?panel_text(panel_led_profile_name(index)):s->led_profile);
-    profile_mark(index);
+    int wanted=profile_picks[m].wanted;
+    int index=wanted>=0?wanted:panel_led_profile_find(s->led_profile[m]);
+    set_text(profile_words[m],index>=0?panel_text(panel_led_profile_name(index)):s->led_profile[m]);
+    /* The open menu marks the profile of the card that opened it. */
+    if(m==profile_card)profile_mark(index);
 }
 /* The effect that the card of the desktop shows: the choice, or the PC's. */
 static int look_scene(const panel_state_t *s)
@@ -2989,7 +3003,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     /* The cards of the LED bar, and a choice that waits to go: a change
      * that the old screen made goes with it. */
     for(int m=0;m<PANEL_LED_MODES;m++)led_cards[m]=(led_card_t){.wanted=-1};
-    look_colour=look_level=profile_pick=(led_pick_t){.wanted=-1};
+    look_colour=look_level=(led_pick_t){.wanted=-1};
+    for(int m=0;m<PANEL_LED_MODES;m++)profile_picks[m]=(led_pick_t){.wanted=-1};
     look_button=NULL;look_dot=NULL;look_words=NULL;
     for(int m=0;m<PANEL_LED_MODES;m++){profile_buttons[m]=NULL;profile_words[m]=NULL;profile_beside[m]=false;}
     profile_card=PANEL_LED_GAME;

@@ -387,14 +387,16 @@ MIRROR_SAYS = {
 MIRROR_LOG = "journalctl --user -u steamos-utility-center-mirror -f"
 
 
-def mirror_part(rainbow_shows, status, profile=None, desktop_scene=None):
+def mirror_part(rainbow_shows, status, profile=None, desktop_scene=None,
+                desktop_profile=None):
     """Returns the mirror, or None while neither mode shows it.
 
     The capture runs as a service of the user, and it writes what it does
     into a file. `status` is that file, as screen.read_status gives it.
-    `profile` is MIRROR_PROFILE of the settings, and `desktop_scene` is
-    DESKTOP_SCENE. A refused share of the desktop screen gets a button
-    that asks again.
+    `profile` is MIRROR_PROFILE of the settings, for Game Mode, and
+    `desktop_scene` and `desktop_profile` are DESKTOP_SCENE and
+    DESKTOP_MIRROR_PROFILE. A refused share of the desktop screen gets a
+    button that asks again.
     """
     if render_module.SHOWS_MIRROR not in (rainbow_shows, desktop_scene):
         return None
@@ -410,8 +412,14 @@ def mirror_part(rainbow_shows, status, profile=None, desktop_scene=None):
             detail.append("Processor: %g %% of one core" % status["cpu"])
         if "source" in status:
             detail.append("Screen: %s" % status["source"])
-    if profile in screen_module.PROFILE_NAMES:
-        detail.append("Profile: " + screen_module.PROFILE_NAMES[profile])
+    # The profile of each mode that shows the mirror.
+    for shows, name, where in ((rainbow_shows, profile, "in Game Mode"),
+                               (desktop_scene, desktop_profile,
+                                "on the desktop")):
+        if (shows == render_module.SHOWS_MIRROR
+                and name in screen_module.PROFILE_NAMES):
+            detail.append("Profile %s: %s"
+                          % (where, screen_module.PROFILE_NAMES[name]))
     detail.append("Log: " + MIRROR_LOG)
     return Part("mirror", "Mirror", ok, said, detail,
                 repair="ask-screen" if state == screen_module.REFUSED else "")

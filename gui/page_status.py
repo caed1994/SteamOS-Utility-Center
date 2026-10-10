@@ -110,7 +110,8 @@ class StatusPage:
             ledpanel.mirror_part(self.config.get("RAINBOW_SHOWS"),
                                  screen.read_status(),
                                  self.config.get("MIRROR_PROFILE"),
-                                 self.config.get("DESKTOP_SCENE"))
+                                 self.config.get("DESKTOP_SCENE"),
+                                 self.config.get("DESKTOP_MIRROR_PROFILE"))
             if self._module_here("led") else None,
             ledpanel.power_part(self.power, power.available()),
             ledpanel.gpu_part(self._gpu, self._gpu_error,

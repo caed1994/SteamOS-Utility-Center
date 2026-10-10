@@ -1076,6 +1076,14 @@ class DesktopWatcherTest(WatcherCase):
         self.assertEqual(self.watcher.state, screen.NO_SCREEN)
         self.assertEqual(self.shares, [])
 
+    def test_the_screen_of_the_desktop_has_its_own_profile(self):
+        self.watcher.profile = lambda: screen.POP
+        self.watcher.desktop_profile = lambda: screen.SOLID
+        share = self.asking()
+        share.give(self.stream)
+        self.until(screen.RUNNING)
+        self.assertEqual(self.watcher.picture.profile, screen.SOLID)
+
     def test_the_stream_of_gamescope_comes_first(self):
         self.dumped = objects()
         self.mirror.colours()
@@ -1471,6 +1479,9 @@ class FakeScreen:
         self.asked += 1
         return None if self.picture is None else list(self.picture)
 
+    def ease_for(self, desktop):
+        self.desktop = desktop
+
 
 def renderer(**options):
     return render.Renderer(led_count=shim.LOGICAL_LEDS,
@@ -1603,6 +1614,58 @@ class LoopTest(unittest.TestCase):
                 self.assertEqual((mirror.rise, mirror.fall),
                                  screen.EASING[profile])
 
+    def test_the_scene_of_the_desktop_alone_makes_the_pipe_too(self):
+        conf = self.conf("fire")
+        conf["DESKTOP_SCENE"] = "mirror"
+        with unittest.mock.patch.object(screen, "FIFO", self.fifo):
+            self.assertIsNotNone(service.build_mirror(conf))
+
+    def test_each_mode_eases_as_its_own_profile_says(self):
+        conf = self.conf("mirror")
+        conf.update(MIRROR_PROFILE=screen.POP,
+                    DESKTOP_MIRROR_PROFILE=screen.CINEMATIC)
+        with unittest.mock.patch.object(screen, "FIFO", self.fifo):
+            mirror = service.build_mirror(conf)
+        mirror.ease_for(desktop=True)
+        self.assertEqual((mirror.rise, mirror.fall),
+                         screen.EASING[screen.CINEMATIC])
+        mirror.ease_for(desktop=False)
+        self.assertEqual((mirror.rise, mirror.fall), screen.EASING[screen.POP])
+
+    def test_the_two_profiles_are_settings_of_their_own(self):
+        for key in ("MIRROR_PROFILE", "DESKTOP_MIRROR_PROFILE"):
+            self.assertEqual(config.DEFAULTS[key], screen.DEFAULT_PROFILE)
+            conf = self.conf("mirror")
+            conf[key] = "disco"
+            with self.assertRaises(config.ConfigError) as caught:
+                config.validate(conf)
+            self.assertIn(key, str(caught.exception))
+
+    def test_the_user_unit_reads_each_setting_from_the_file(self):
+        path = os.path.join(self.dir, "settings.conf")
+        with open(path, "w") as handle:
+            handle.write("MIRROR_PROFILE=cinematic\n"
+                         "DESKTOP_MIRROR_PROFILE=solid\n"
+                         "DESKTOP_SCENE=mirror\n")
+        made = {}
+
+        class Watcher:
+            status = "status"
+
+            def __init__(self, **options):
+                made.update(options)
+
+            def run(self):
+                pass
+
+        with unittest.mock.patch.object(config, "DEFAULT_CONFIG_PATH", path), \
+                unittest.mock.patch.object(screen, "Watcher", Watcher), \
+                unittest.mock.patch.object(service, "_interrupt_on_sigterm"):
+            self.assertEqual(service.run_mirror(), 0)
+        self.assertEqual(made["profile"](), screen.CINEMATIC)
+        self.assertEqual(made["desktop_profile"](), screen.SOLID)
+        self.assertTrue(made["wanted"]())
+
     def test_a_pipe_that_cannot_be_made_is_a_warning(self):
         missing = os.path.join(self.dir, "no", "mirror")
         with unittest.mock.patch.object(screen, "FIFO", missing), \
@@ -1628,6 +1691,8 @@ class LoopTest(unittest.TestCase):
         self.assertGreater(pipe.polls, 0)
         self.assertGreater(pipe.asked, 0)
         self.assertEqual(runner.link.sent[-1][:3], bytes((200, 100, 50)))
+        # Steam has the bar, so the bar eases by the profile of Game Mode.
+        self.assertIs(pipe.desktop, False)
 
 
 class DemoTest(unittest.TestCase):
@@ -1717,11 +1782,22 @@ class StatusPageTest(unittest.TestCase):
 
     def test_the_card_names_the_profile(self):
         part = ledpanel.mirror_part("mirror", {"state": "running"}, "solid")
-        self.assertIn("Profile: Solid", part.detail)
+        self.assertIn("Profile in Game Mode: Solid", part.detail)
         self.assertIn("steamos-utility-center-mirror", part.detail[-1])
         part = ledpanel.mirror_part("mirror", {"state": "running"})
         self.assertFalse([line for line in part.detail
                           if line.startswith("Profile")])
+
+    def test_the_card_names_the_profile_of_each_mode_with_the_mirror(self):
+        part = ledpanel.mirror_part("mirror", {"state": "running"}, "pop",
+                                    "mirror", "cinematic")
+        self.assertIn("Profile in Game Mode: Color Pop", part.detail)
+        self.assertIn("Profile on the desktop: Cinematic", part.detail)
+        part = ledpanel.mirror_part("fire", {"state": "running"}, "pop",
+                                    "mirror", "solid")
+        self.assertEqual([line for line in part.detail
+                          if line.startswith("Profile")],
+                         ["Profile on the desktop: Solid"])
 
     def test_the_menu_of_the_profiles_has_the_names_of_screen(self):
         self.assertEqual(ledpanel.mirror_profiles(),
