@@ -188,8 +188,10 @@ int main(void)
         lv_obj_scroll_to_view(lv_obj_get_child(band,p),LV_ANIM_OFF);
         screen(pages[p]);
     }
-    /* The LED bar with the mirror, which has the button of its profile. */
+    /* The LED bar with the mirror in both modes: each card has the button
+     * of its profile. */
     snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"mirror");
+    snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"mirror");
     snprintf(s.led_profile,sizeof s.led_profile,"pop");
     s.answers++;
     panel_ui_update(&s);
@@ -203,6 +205,7 @@ int main(void)
     screen("the profiles of the mirror");
     panel_ui_home();
     snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"fire");
+    snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"breath");
     s.answers++;
     panel_ui_update(&s);
     /* The alarm, from its button in the corner of the clock card. */

@@ -23,6 +23,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import unittest.mock
 
@@ -505,6 +506,17 @@ elif mode == "videorate":
     while True:
         os.write(1, frame)
         time.sleep(0.02)
+elif mode == "limit":
+    # A stream that cannot take the limit of the rate.
+    if "video/x-raw,max-framerate=15/1" in sys.argv[2:]:
+        sys.stderr.write("ERROR: from element /GstPipeline:pipeline0/"
+                         "GstPipeWireSrc:pipewiresrc0: Internal data stream "
+                         "error.\nstreaming stopped, reason not-negotiated "
+                         "(-4)\n")
+        sys.exit(1)
+    while True:
+        os.write(1, frame)
+        time.sleep(0.02)
 elif mode == "old":
     sys.stderr.write('WARNING: erroneous pipeline: no property '
                      '"target-object" in element "pipewiresrc0"\n')
@@ -882,6 +894,199 @@ class WatcherTest(WatcherCase):
         self.assertTrue(os.path.exists(self.status))
         self.watcher.close()
         self.assertFalse(os.path.exists(self.status))
+
+
+class FakeShare:
+    """A share of the portal, as portal.Share gives it to Watcher."""
+
+    def __init__(self, state=screen.SHARE_ASKING, stream=None, error=None):
+        self.state = state
+        self.stream = stream
+        self.error = error
+        self.closed = False
+        self.stopped = 0
+        self.finished = threading.Event()
+
+    def stop(self):
+        self.stopped += 1
+        self.state = screen.SHARE_ENDED
+        self.finished.set()
+
+    def give(self, stream):
+        self.stream = stream
+        self.state = screen.SHARE_READY
+
+    def end(self, closed=False, error=None):
+        self.closed = closed
+        self.error = error
+        self.state = screen.SHARE_ENDED
+        self.finished.set()
+
+
+class DesktopWatcherTest(WatcherCase):
+    """The desktop: the screen that the portal shares, for the mirror scene."""
+
+    def setUp(self):
+        super().setUp()
+        self.dumped = []
+        self.compositor = 4242
+        self.scene = True
+        self.shares = []
+        read, write = os.pipe()
+        self.addCleanup(os.close, read)
+        self.addCleanup(os.close, write)
+        self.stream = types.SimpleNamespace(node=77, fd=read, width=2194,
+                                            height=1234, token=None)
+        self.watcher.start_share = self.share
+        self.watcher.desktop = lambda: self.compositor
+        self.watcher.wanted = lambda: self.scene
+
+    def share(self):
+        self.shares.append(FakeShare())
+        return self.shares[-1]
+
+    def asking(self):
+        self.mirror.colours()
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.ASKING)
+        return self.shares[-1]
+
+    def test_the_scene_asks_the_portal_and_reads_its_screen(self):
+        share = self.asking()
+        self.assertEqual(self.written()["state"], "asking")
+        self.assertEqual(self.argvs, [])
+        self.assertEqual(self.watcher.step(), screen.ASK_SECONDS)
+        share.give(self.stream)
+        self.until(screen.RUNNING)
+        argv = self.argvs[0]
+        self.assertEqual(argv[2:5], ["pipewiresrc", "fd=%d" % self.stream.fd,
+                                     "path=77"])
+        self.assertIn("video/x-raw,max-framerate=15/1", argv)
+        self.clock.now += screen.CHECK_SECONDS
+        self.watcher.step()
+        self.watcher._report(self.clock.now + screen.STATUS_SECONDS)
+        self.assertEqual(self.written()["source"], "2194x1234")
+        self.assertEqual(len(self.shares), 1)
+
+    def test_with_a_different_scene_on_the_desktop_nothing_asks(self):
+        self.scene = False
+        self.mirror.colours()
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.NO_SCREEN)
+        self.assertEqual(self.shares, [])
+
+    def test_with_no_desktop_nothing_asks(self):
+        self.compositor = None
+        self.mirror.colours()
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.NO_SCREEN)
+        self.assertEqual(self.shares, [])
+
+    def test_the_stream_of_gamescope_comes_first(self):
+        self.dumped = objects()
+        self.mirror.colours()
+        self.until(screen.RUNNING)
+        self.assertEqual(self.shares, [])
+        self.assertIn("target-object=gamescope", self.argvs[0])
+        self.assertNotIn("video/x-raw,max-framerate=15/1", self.argvs[0])
+
+    def test_a_refused_dialog_holds_until_a_new_desktop(self):
+        share = self.asking()
+        share.end(error=types.SimpleNamespace(state=screen.REFUSED, detail=""))
+        self.watcher.step()
+        self.assertEqual(self.written()["state"], "refused")
+        self.clock.now += screen.CHECK_SECONDS
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.REFUSED)
+        self.assertEqual(len(self.shares), 1)
+        # Game Mode and back: a new compositor asks again.
+        self.compositor = 5151
+        self.clock.now += screen.CHECK_SECONDS
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.ASKING)
+        self.assertEqual(len(self.shares), 2)
+
+    def test_a_share_that_the_person_stops_is_a_refusal(self):
+        share = self.asking()
+        share.give(self.stream)
+        self.until(screen.RUNNING)
+        share.end(closed=True)
+        self.clock.now += screen.CHECK_SECONDS
+        self.until(screen.REFUSED)
+        self.assertEqual(self.watcher.detail, "stopped")
+        self.assertIsNone(self.watcher.pipeline)
+        self.assertGreaterEqual(share.stopped, 1)
+        self.clock.now += screen.CHECK_SECONDS
+        self.watcher.step()
+        self.assertEqual(len(self.shares), 1)
+
+    def test_a_share_that_ends_with_the_desktop_is_no_refusal(self):
+        share = self.asking()
+        share.give(self.stream)
+        self.until(screen.RUNNING)
+        share.end(closed=True)
+        self.compositor = None
+        self.clock.now += screen.CHECK_SECONDS
+        self.until(screen.NO_SCREEN)
+        self.compositor = 5151
+        self.clock.now += screen.CHECK_SECONDS
+        self.until(screen.ASKING)
+
+    def test_a_desktop_with_no_portal_says_so_and_waits(self):
+        share = self.asking()
+        share.end(error=types.SimpleNamespace(
+            state=screen.NO_PORTAL, detail="ServiceUnknown: no portal"))
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.NO_PORTAL)
+        self.assertIn("ServiceUnknown", self.written()["detail"])
+        self.clock.now += screen.RETRY_MOST - 1
+        self.watcher.step()
+        self.assertEqual(len(self.shares), 1)
+
+    def test_a_stream_that_cannot_take_the_limit_runs_with_none(self):
+        self.mode = "limit"
+        share = self.asking()
+        share.give(self.stream)
+        for _turn in range(80):
+            self.watcher.step()
+            if len(self.shares) > 1:
+                self.shares[-1].give(self.stream)
+            if self.watcher.state == screen.RUNNING:
+                break
+        self.assertEqual(self.watcher.state, screen.RUNNING)
+        self.assertIn("video/x-raw,max-framerate=15/1", self.argvs[0])
+        self.assertNotIn("video/x-raw,max-framerate=15/1", self.argvs[-1])
+        self.assertEqual(share.stopped, 1)
+
+    def test_a_dialog_waits_through_a_start_of_the_led_service(self):
+        share = self.asking()
+        # The LED service starts again: its pipe goes and comes back.
+        self.mirror.close()
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.ASKING)
+        self.assertEqual(share.stopped, 0)
+        self.mirror.colours()
+        self.clock.now += 1.0
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.ASKING)
+        self.assertEqual((share.stopped, len(self.shares)), (0, 1))
+
+    def test_a_dialog_with_no_reader_goes_after_the_keep_time(self):
+        share = self.asking()
+        self.mirror.close()
+        self.watcher.step()
+        self.clock.now += screen.KEEP_SECONDS + 1
+        self.watcher.step()
+        self.assertEqual(share.stopped, 1)
+        self.assertIsNone(self.watcher.share)
+
+    def test_a_dialog_of_a_desktop_that_ended_goes(self):
+        share = self.asking()
+        self.compositor = None
+        self.clock.now += screen.CHECK_SECONDS
+        self.watcher.step()
+        self.assertEqual(share.stopped, 1)
+        self.assertEqual(self.watcher.state, screen.NO_SCREEN)
 
 
 class CommandTest(unittest.TestCase):
@@ -1288,6 +1493,31 @@ class StatusPageTest(unittest.TestCase):
 
     def test_each_state_has_a_sentence(self):
         self.assertEqual(set(ledpanel.MIRROR_SAYS), set(screen.STATES))
+
+    def test_the_mirror_scene_of_the_desktop_has_the_card_too(self):
+        part = ledpanel.mirror_part("fire", {"state": "asking"},
+                                    desktop_scene="mirror")
+        self.assertIsNotNone(part)
+        self.assertIn("dialog of KDE", part.verdict)
+        self.assertIsNone(ledpanel.mirror_part("fire", {"state": "asking"},
+                                               desktop_scene="off"))
+
+    def test_a_refused_share_has_a_button_that_asks_again(self):
+        part = ledpanel.mirror_part("fire", {"state": "refused"},
+                                    desktop_scene="mirror")
+        self.assertIs(part.ok, False)
+        self.assertEqual(part.repair, "ask-screen")
+        self.assertIn(part.repair, ledpanel.REPAIR_LABELS)
+        self.assertEqual(ledpanel.mirror_part("mirror", {"state": "running"})
+                         .repair, "")
+        # The button starts the unit of the capture again, which forgets the
+        # refusal.
+        command = ledpanel.restart_mirror_command()
+        self.assertEqual(command[:3], ["systemctl", "--user", "restart"])
+        unit = os.path.join(HERE, "..", "server", command[3])
+        self.assertTrue(os.path.isfile(unit), command[3])
+        with open(unit, encoding="utf-8") as handle:
+            self.assertIn("--mirror", handle.read())
 
     def test_a_running_mirror_gives_its_numbers(self):
         part = ledpanel.mirror_part("mirror", {

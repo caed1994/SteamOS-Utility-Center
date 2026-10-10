@@ -106,10 +106,11 @@ class StatusPage:
         self._checks = checks           # kept for the foot of the window
         parts = [
             ledpanel.led_part(checks, self._module_here("led")),
-            # Only while the rainbow slot shows the mirror. See screen.py.
+            # Only while a mode shows the mirror. See screen.py.
             ledpanel.mirror_part(self.config.get("RAINBOW_SHOWS"),
                                  screen.read_status(),
-                                 self.config.get("MIRROR_PROFILE"))
+                                 self.config.get("MIRROR_PROFILE"),
+                                 self.config.get("DESKTOP_SCENE"))
             if self._module_here("led") else None,
             ledpanel.power_part(self.power, power.available()),
             ledpanel.gpu_part(self._gpu, self._gpu_error,
@@ -321,6 +322,9 @@ class StatusPage:
             self.reinstall()
         elif name == "install-cec":
             self._install_cec()
+        elif name == "ask-screen":
+            self.runner.start(ledpanel.restart_mirror_command(),
+                              lambda _code: self._after_change())
 
     def refresh_status(self):
         """Read every part again and draw the page from what they said."""

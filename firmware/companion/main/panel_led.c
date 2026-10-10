@@ -29,6 +29,7 @@ static const effect_t desktop[] = {
     {"ooze", TXT_LED_OOZE, false, true},
     {"temperature", TXT_LED_TEMPERATURE, false, true},
     {"load", TXT_LED_LOAD, false, false},
+    {"mirror", TXT_LED_MIRROR, false, true},
 };
 
 /* render.RAINBOW_CHOICES of the LED service, in its order. */
@@ -54,6 +55,9 @@ static const struct {
     {"no-gstreamer", TXT_MIRROR_NO_GSTREAMER},
     {"no-plugin", TXT_MIRROR_NO_PLUGIN},
     {"no-screen", TXT_MIRROR_NO_SCREEN},
+    {"asking", TXT_MIRROR_ASKING},
+    {"refused", TXT_MIRROR_REFUSED},
+    {"no-portal", TXT_MIRROR_NO_PORTAL},
     {"busy", TXT_MIRROR_BUSY},
     {"starting", TXT_MIRROR_STARTING},
     {"waiting", TXT_MIRROR_WAITING},

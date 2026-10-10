@@ -326,6 +326,16 @@ class LiveWindowTest(unittest.TestCase):
         self.assertEqual(self.panel._label_for("MIRROR_PROFILE", "pop"),
                          "Color Pop")
 
+    def test_the_mirror_scene_of_the_desktop_brings_the_profile_too(self):
+        self.panel.notebook.select(self._page_named("Strip"))
+        self.root.update()
+        self.panel.vars["RAINBOW_SHOWS"][0].set("Fire")
+        scene = self.panel.vars["DESKTOP_SCENE"][0]
+        for label, wanted in (("Mirror", True), ("Off", False)):
+            scene.set(label)
+            self.root.update()
+            self.assertEqual(self._shown("MIRROR_PROFILE"), wanted, label)
+
     def test_a_desktop_scene_brings_the_same_rows_back(self):
         """Two places ask for these gauges, and either one puts them in play.
 
@@ -4787,6 +4797,13 @@ class MirrorLookAgainTest(unittest.TestCase):
         self._wait(self.panel_module.MIRROR_LOOK + 150)
         self.assertEqual(len(self.read), 2)
         self.assertIsNone(self.panel._mirror_look)
+
+    def test_with_the_mirror_of_the_desktop_it_reads_again_too(self):
+        self.panel.config["RAINBOW_SHOWS"] = "fire"
+        self.panel.config["DESKTOP_SCENE"] = "mirror"
+        self.panel._after_change()
+        self._wait(self.panel_module.MIRROR_LOOK + 150)
+        self.assertEqual(len(self.read), 2)
 
     def test_with_a_different_effect_it_reads_one_time(self):
         self.panel.config["RAINBOW_SHOWS"] = "fire"

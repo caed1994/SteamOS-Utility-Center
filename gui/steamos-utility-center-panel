@@ -578,7 +578,7 @@ SOON = {}
 # would both have to be true, which is the opposite meaning.
 TEMPERATURE_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "temperature")
 LOAD_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "load")
-MIRROR_SHOWN = (("RAINBOW_SHOWS",), "mirror")
+MIRROR_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "mirror")
 SCENE_HAS_COLOUR = ("DESKTOP_SCENE", ("color", "breath", "patrol"))
 
 # The effects of the Nanoleaf board that draw in one colour.
@@ -588,7 +588,8 @@ SCENE_HAS_COLOUR = ("DESKTOP_SCENE", ("color", "breath", "patrol"))
 # rates were pinned before they came off the page.
 PEGBOARD_TAKES_COLOUR = ("PEGBOARD_EFFECT", ("patrol",))
 SCENE_IS_LIT = ("DESKTOP_SCENE", ("color", "breath", "patrol", "rainbow",
-                                  "fire", "aurora", "ooze", "temperature"))
+                                  "fire", "aurora", "ooze", "temperature",
+                                  "mirror"))
 # This does not include the temperature gauge, which is one colour with no
 # movement. It draws again when the sensor value changes, and there is no
 # cycle for the slider to scale. It does not include the load gauge either.
@@ -3725,7 +3726,8 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
     def _after_change(self):
         """Reads the status after a change, and the mirror again later."""
         self.refresh_status()
-        if self.config.get("RAINBOW_SHOWS") != render.SHOWS_MIRROR:
+        if render.SHOWS_MIRROR not in (self.config.get("RAINBOW_SHOWS"),
+                                       self.config.get("DESKTOP_SCENE")):
             return
         if getattr(self, "_mirror_look", None) is not None:
             self.root.after_cancel(self._mirror_look)

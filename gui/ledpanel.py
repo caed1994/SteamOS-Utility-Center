@@ -52,6 +52,7 @@ SERVICE = "steamos-utility-center.service"
 WATCHER = "steamos-utility-center-achievements.service"
 PHONE_BRIDGE = "steamos-utility-center-phone.service"
 COMPANION_SERVICE = "steamos-utility-center-companion.service"
+MIRROR_SERVICE = "steamos-utility-center-mirror.service"
 
 # The time to wait for an answer from KDE Connect. After this time, the panel
 # reports no answer. This time is shorter than the wait of the service,
@@ -327,6 +328,7 @@ class Part:
 REPAIR_LABELS = {
     "reinstall": "Rebuild and reinstall",
     "install-cec": "Reinstall HDMI CEC",
+    "ask-screen": "Ask again for the screen",
 }
 
 
@@ -361,11 +363,18 @@ def led_part(checks, installed=True):
 MIRROR_SAYS = {
     screen_module.RUNNING: (True, "Runs."),
     screen_module.STARTING: (True, "Starts."),
-    screen_module.WAITING: (True, "Waits for a picture. gamescope sends one "
-                                  "when the screen changes."),
+    screen_module.WAITING: (True, "Waits for a picture. One comes when the "
+                                  "screen changes."),
     screen_module.IDLE: (True, "Ready. It runs when the LED menu of Steam is "
                                "on Rainbow."),
-    screen_module.NO_SCREEN: (True, "Ready. It runs in Game Mode."),
+    screen_module.NO_SCREEN: (True, "Ready. It runs in Game Mode, and on the "
+                                    "desktop with the scene Mirror."),
+    screen_module.ASKING: (True, "Waits for the share of the screen. Allow "
+                                 "it in the dialog of KDE."),
+    screen_module.REFUSED: (False, "The share of the screen is off. Ask "
+                                   "again to start it."),
+    screen_module.NO_PORTAL: (False, "The desktop has no screen cast portal: "
+                                     "%s."),
     screen_module.BUSY: (True, "Paused, because %s reads the screen."),
     screen_module.NO_GSTREAMER: (False, "GStreamer is not on this machine."),
     screen_module.NO_PLUGIN: (False, "The GStreamer element %s is not on "
@@ -378,14 +387,16 @@ MIRROR_SAYS = {
 MIRROR_LOG = "journalctl --user -u steamos-utility-center-mirror -f"
 
 
-def mirror_part(rainbow_shows, status, profile=None):
-    """Returns the mirror, or None while the slot shows a different effect.
+def mirror_part(rainbow_shows, status, profile=None, desktop_scene=None):
+    """Returns the mirror, or None while neither mode shows it.
 
     The capture runs as a service of the user, and it writes what it does
     into a file. `status` is that file, as screen.read_status gives it.
-    `profile` is MIRROR_PROFILE of the settings.
+    `profile` is MIRROR_PROFILE of the settings, and `desktop_scene` is
+    DESKTOP_SCENE. A refused share of the desktop screen gets a button
+    that asks again.
     """
-    if rainbow_shows != render_module.SHOWS_MIRROR:
+    if render_module.SHOWS_MIRROR not in (rainbow_shows, desktop_scene):
         return None
     state = status.get("state", screen_module.GONE)
     ok, said = MIRROR_SAYS.get(state, MIRROR_SAYS[screen_module.GONE])
@@ -402,7 +413,8 @@ def mirror_part(rainbow_shows, status, profile=None):
     if profile in screen_module.PROFILE_NAMES:
         detail.append("Profile: " + screen_module.PROFILE_NAMES[profile])
     detail.append("Log: " + MIRROR_LOG)
-    return Part("mirror", "Mirror", ok, said, detail)
+    return Part("mirror", "Mirror", ok, said, detail,
+                repair="ask-screen" if state == screen_module.REFUSED else "")
 
 
 def power_part(current, available):
@@ -1919,6 +1931,15 @@ def panel_log_command(source_dir, port, seconds=COMPANION_LOG_SECONDS):
 def companion_running():
     """Whether the panel's service answers in this session."""
     return Probe().unit_active(COMPANION_SERVICE, user=True)
+
+
+def restart_mirror_command():
+    """Returns the command that starts the capture of the mirror again.
+
+    A new start forgets a refused share of the desktop screen, so the portal
+    asks again. A kept approval then starts with no dialog.
+    """
+    return ["systemctl", "--user", "restart", MIRROR_SERVICE]
 
 
 def restart_companion_command():

@@ -319,7 +319,9 @@ class PageTest(unittest.TestCase):
         """Its names come from the command, as the effects of the board do."""
         self.assertIn("labelled(held.strip?.offers?.MIRROR_PROFILE)",
                       self.text)
-        self.assertIn('rainbow === "mirror" && (', self.text)
+        # Either mode can show the mirror, and the two share one profile.
+        self.assertIn('(rainbow === "mirror" || scene === "mirror") && (',
+                      self.text)
         self.assertIn('pick("strip", "MIRROR_PROFILE", value)', self.text)
         for name in ("Color Pop", "Cinematic"):
             self.assertNotIn(name, self.text)

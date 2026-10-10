@@ -1969,13 +1969,17 @@ static int32_t look_dot_rgb=-1;
 static lv_obj_t *look_slider,*look_value,*look_swatches[PANEL_LED_COLOURS];
 static int8_t look_lit[PANEL_LED_COLOURS];
 static bool look_with_colours;
-/* The button of the profile of the mirror, with its words. It stands
- * beside the name of the effect on the card of Game Mode, for the mirror
- * alone, and the name then makes room for it. A tap opens the menu of the
- * profiles, and the profile goes to the PC as a colour does. */
-static lv_obj_t *profile_button,*profile_words;
+/* The button of the profile of the mirror on each card, with its words.
+ * It stands beside the name of the effect while that effect is the mirror,
+ * and the name then makes room for it. A tap opens the menu of the
+ * profiles, and the profile goes to the PC as a colour does. The two modes
+ * share one profile, so the two buttons show the same one. */
+static lv_obj_t *profile_buttons[PANEL_LED_MODES],*profile_words[PANEL_LED_MODES];
 static led_pick_t profile_pick={.wanted=-1};
-static bool profile_beside;
+static bool profile_beside[PANEL_LED_MODES];
+/* The card of the button that chose the profile. Its line says that the
+ * change goes, or why the PC refused it. */
+static panel_led_mode_t profile_card=PANEL_LED_GAME;
 /* The name on each row of the menu, and what the row shows: -1 for
  * nothing yet, 0 dark, 1 lit. */
 static lv_obj_t *profile_names[PANEL_LED_PROFILES];
@@ -1999,8 +2003,8 @@ static panel_text_id_t change_refusal(int code,panel_text_id_t no_module)
 }
 static void look_button_show(const panel_state_t *s,int index,bool show);
 static void look_show(const panel_state_t *s);
-static void profile_show(const panel_state_t *s,bool show);
-/* The line of the mirror under the Game Mode card. */
+static void profile_show(const panel_state_t *s,panel_led_mode_t m,bool show);
+/* The line of the mirror on its card. */
 static char mirror_note[96];
 static void led_show(const panel_state_t *s)
 {
@@ -2019,7 +2023,7 @@ static void led_show(const panel_state_t *s)
             led_pick_t *pick=i==2?&profile_pick:i?&look_level:&look_colour;
             if(pick->wanted<0||!pick->sent)continue;
             pick->wanted=-1;pick->sent=false;
-            led_card_t *c=&led_cards[i==2?PANEL_LED_GAME:PANEL_LED_DESKTOP];
+            led_card_t *c=&led_cards[i==2?profile_card:PANEL_LED_DESKTOP];
             c->refused=true;c->refusal=change_refusal(s->led_code,TXT_LED_NO_MODULE);c->refused_at=lv_tick_get();
         }
     }
@@ -2055,8 +2059,13 @@ static void led_show(const panel_state_t *s)
         }
         const char *note="";
         bool look=false;
+        const char *key=panel_led_key((panel_led_mode_t)m,index);
+        bool mirror=usable&&key&&strcmp(key,"mirror")==0;
+        /* The capture serves the mode that the PC is in, so its line is on
+         * that card alone. */
+        bool here=(m==PANEL_LED_GAME)==s->game_mode;
         if(c->wanted>=0||(m==PANEL_LED_DESKTOP&&(look_colour.wanted>=0||look_level.wanted>=0))
-           ||(m==PANEL_LED_GAME&&profile_pick.wanted>=0))
+           ||(m==(int)profile_card&&profile_pick.wanted>=0))
             note=panel_text(TXT_CHANGE_APPLYING);
         else if(c->refused)note=panel_text(c->refusal);
         else if(s->online&&!s->led_here){
@@ -2069,11 +2078,17 @@ static void led_show(const panel_state_t *s)
         else if(m==PANEL_LED_GAME){
             /* The mirror says what it does on the PC, so a person sees why
              * the bar does not follow the screen. */
-            const char *key=panel_led_key(PANEL_LED_GAME,index);
-            if(usable&&key&&strcmp(key,"mirror")==0){
+            if(mirror&&here){
                 panel_led_mirror_line(mirror_note,sizeof mirror_note,&s->led_mirror);
                 note=mirror_note;
             }else note=panel_text(TXT_LED_GAME_WHAT);
+        }
+        /* On the desktop the line of the mirror stays until the mirror
+         * runs, because a person has to allow the share of the screen
+         * there. The button of the brightness then takes its place. */
+        else if(mirror&&here&&s->led_mirror.state[0]&&strcmp(s->led_mirror.state,"running")!=0){
+            panel_led_mirror_line(mirror_note,sizeof mirror_note,&s->led_mirror);
+            note=mirror_note;
         }
         /* The button of the colour and the brightness takes the place of
          * the line, for a scene that uses them. A service that sends
@@ -2083,8 +2098,7 @@ static void led_show(const panel_state_t *s)
         set_text(c->note,note);
         if(m==PANEL_LED_DESKTOP)look_button_show(s,index,look);
         /* The profile, for the mirror and from a service that has them. */
-        const char *key=panel_led_key((panel_led_mode_t)m,index);
-        if(m==PANEL_LED_GAME)profile_show(s,usable&&s->led_profile[0]&&key&&strcmp(key,"mirror")==0);
+        profile_show(s,(panel_led_mode_t)m,mirror&&s->led_profile[0]);
     }
     look_show(s);
 }
@@ -2179,7 +2193,7 @@ static void profile_chosen(lv_event_t *e)
     profile_close();
     if(!profile_pick.sent&&row==panel_led_profile_find(last_state.led_profile))profile_pick.wanted=-1;
     else{profile_pick.wanted=row;profile_pick.sent=false;led_later();}
-    led_cards[PANEL_LED_GAME].refused=false;
+    led_cards[profile_card].refused=false;
     led_show(&last_state);
 }
 /* The profiles from the top, each with what it does, and a mark on the
@@ -2210,24 +2224,28 @@ static void profile_open(void)
 /* The button shows only for a PC that can take a profile. */
 static void profile_clicked(lv_event_t *e)
 {
-    (void)e;
+    profile_card=(panel_led_mode_t)(intptr_t)lv_event_get_user_data(e);
     feedback();
     profile_open();
 }
-static void profile_show(const panel_state_t *s,bool show)
+static void profile_show(const panel_state_t *s,panel_led_mode_t m,bool show)
 {
-    if(!profile_button)return;
-    if(show!=profile_beside){
-        profile_beside=show;
-        if(show)lv_obj_remove_flag(profile_button,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(profile_button,LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_width(led_cards[PANEL_LED_GAME].name,show?PROFILE_NAME_WIDE:270);
+    if(!profile_buttons[m])return;
+    if(show!=profile_beside[m]){
+        profile_beside[m]=show;
+        if(show)lv_obj_remove_flag(profile_buttons[m],LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(profile_buttons[m],LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_width(led_cards[m].name,show?PROFILE_NAME_WIDE:270);
     }
-    /* A PC that goes, or an effect that is no mirror: the menu has nothing
-     * left to set. */
-    if(!show){profile_close();return;}
+    /* A PC that goes, or an effect that is no mirror: the menu of this
+     * card has nothing left to set. */
+    if(!show){
+        if(m==profile_card)profile_close();
+        return;
+    }
     /* A profile of a later service has no name here, and shows as it is. */
     int index=profile_pick.wanted>=0?profile_pick.wanted:panel_led_profile_find(s->led_profile);
-    set_text(profile_words,index>=0?panel_text(panel_led_profile_name(index)):s->led_profile);
+    set_text(profile_words[m],index>=0?panel_text(panel_led_profile_name(index)):s->led_profile);
     profile_mark(index);
 }
 /* The effect that the card of the desktop shows: the choice, or the PC's. */
@@ -2501,16 +2519,14 @@ static void led_card(lv_obj_t *page,panel_led_mode_t m,int y)
     center_text(c->name);
     c->note=text_at(card,"",14,m==PANEL_LED_DESKTOP?118:108,430,&panel_font_12,MUTED);
     center_text(c->note);
-    if(m==PANEL_LED_GAME){
-        /* Hidden until the mirror. profile_show sets what it holds. */
-        profile_button=button(card,"",PROFILE_X,48,PROFILE_WIDE,52,profile_clicked,0);
-        lv_obj_add_flag(profile_button,LV_OBJ_FLAG_HIDDEN);
-        profile_words=text_at(profile_button,"",0,(52-2-lv_font_get_line_height(&panel_font_16))/2,
-                              PROFILE_WIDE-2,&panel_font_16,TEXT);
-        center_text(profile_words);
-        profile_beside=false;
-        return;
-    }
+    /* Hidden until the mirror. profile_show sets what it holds. */
+    profile_buttons[m]=button(card,"",PROFILE_X,48,PROFILE_WIDE,52,profile_clicked,m);
+    lv_obj_add_flag(profile_buttons[m],LV_OBJ_FLAG_HIDDEN);
+    profile_words[m]=text_at(profile_buttons[m],"",0,(52-2-lv_font_get_line_height(&panel_font_16))/2,
+                             PROFILE_WIDE-2,&panel_font_16,TEXT);
+    center_text(profile_words[m]);
+    profile_beside[m]=false;
+    if(m==PANEL_LED_GAME)return;
     /* Hidden until a scene that uses it. look_button_show sets what it holds,
      * and where. */
     look_button=button(card,"",14,108,430,36,look_clicked,0);
@@ -2975,7 +2991,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     for(int m=0;m<PANEL_LED_MODES;m++)led_cards[m]=(led_card_t){.wanted=-1};
     look_colour=look_level=profile_pick=(led_pick_t){.wanted=-1};
     look_button=NULL;look_dot=NULL;look_words=NULL;
-    profile_button=NULL;profile_words=NULL;profile_beside=false;
+    for(int m=0;m<PANEL_LED_MODES;m++){profile_buttons[m]=NULL;profile_words[m]=NULL;profile_beside[m]=false;}
+    profile_card=PANEL_LED_GAME;
     if(led_timer)lv_timer_pause(led_timer);
     for(int p=0;p<PANEL_CPU_PROFILES;p++){cpu_buttons[p]=NULL;cpu_lit[p]=-1;}
     cpu_running=NULL;cpu_driver_line=NULL;cpu_note=NULL;cpu_wanted=-1;cpu_refused=false;

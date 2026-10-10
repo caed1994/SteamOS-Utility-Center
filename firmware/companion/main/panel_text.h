@@ -368,6 +368,12 @@
                            "Eine Farbe für die Leiste") \
     X(TXT_MIRROR_NO_SCREEN,"Mirror waits for Game Mode", \
                            "Spiegel wartet auf den Spielmodus") \
+    X(TXT_MIRROR_ASKING,   "Mirror: allow the share of the screen on the PC", \
+                           "Spiegel: Bildschirmfreigabe am PC erlauben") \
+    X(TXT_MIRROR_REFUSED,  "Mirror: the screen of the PC is not shared", \
+                           "Spiegel: Bildschirm des PCs nicht freigegeben") \
+    X(TXT_MIRROR_NO_PORTAL,"Mirror: the desktop has no screen portal", \
+                           "Spiegel: Desktop ohne Bildschirm-Portal") \
     X(TXT_MIRROR_BUSY,     "Mirror paused: %s reads the screen", \
                            "Spiegel pausiert: %s liest das Bild") \
     X(TXT_MIRROR_NO_GSTREAMER,"Mirror: GStreamer is not on the PC", \

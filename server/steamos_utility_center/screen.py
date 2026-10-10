@@ -87,14 +87,23 @@ IDLE = "idle"                   # the bar shows a different effect now
 NO_GSTREAMER = "no-gstreamer"   # gst-launch-1.0 is not on this machine
 NO_PLUGIN = "no-plugin"         # an element of the pipeline is not there
 NO_SCREEN = "no-screen"         # no stream of gamescope: no Game Mode
+ASKING = "asking"               # the portal asks for the desktop screen
+REFUSED = "refused"             # the person refused or stopped the share
+NO_PORTAL = "no-portal"         # the desktop has no screen cast portal
 BUSY = "busy"                   # a different program reads the screen
 STARTING = "starting"           # the capture runs and has no picture yet
 WAITING = "waiting"             # it is connected, and the screen is still
 RUNNING = "running"
 FAILED = "failed"
 GONE = "gone"                   # no recent status: Watcher does not run
-STATES = (OFF, IDLE, NO_GSTREAMER, NO_PLUGIN, NO_SCREEN, BUSY, STARTING,
-          WAITING, RUNNING, FAILED, GONE)
+STATES = (OFF, IDLE, NO_GSTREAMER, NO_PLUGIN, NO_SCREEN, ASKING, REFUSED,
+          NO_PORTAL, BUSY, STARTING, WAITING, RUNNING, FAILED, GONE)
+
+# The states of a share of the desktop screen (portal.Share): it asks, it
+# gives the screen, or it is over.
+SHARE_ASKING = ASKING
+SHARE_READY = "ready"
+SHARE_ENDED = "ended"
 
 # The longest detail in the status. The panel has one line for it.
 DETAIL_CHARS = 40
@@ -570,6 +579,11 @@ RETRY_SECONDS = 5.0
 RETRY_MOST = 60.0
 # How long a new capture can take to connect to the stream of gamescope.
 LINK_SECONDS = 10.0
+# How often Watcher looks at a share while the portal asks a person.
+ASK_SECONDS = 0.5
+# How long Watcher waits for the end of a share after the end of its capture.
+# KWin can end the stream a moment before the portal closes the session.
+SHARE_SECONDS = 1.0
 # How long a capture waits for a new reader of the pipe. The LED service
 # starts again at each change of its settings, and its pipe goes and comes
 # back. A new capture is a new reader of the stream of gamescope, so the
@@ -593,13 +607,17 @@ PROFILE_SECONDS = 2.0
 TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
 
 
-def command(target, by_id=False, rate=True, fd=None):
+def command(target, by_id=False, rate=True, fd=None, cap=False):
     """Returns the argument list of the pipeline.
 
     GStreamer before 1.22 has no target-object. A pipeline for that version
     names the node by its id with path=. The screen cast portal gives the id
     of its node and a file descriptor that reads only that node, so a
     pipeline with fd also names the node by its id.
+
+    With cap, the pipeline asks the stream for RATE pictures each second at
+    the most. KWin can then copy fewer pictures for it. A stream with no
+    such limit takes the request (measured with the test stream).
 
     videorate drops the pictures that come too soon. Its output must have a
     fixed rate: the stream of gamescope has the rate 0/1 and no duration on
@@ -610,6 +628,8 @@ def command(target, by_id=False, rate=True, fd=None):
     source = ["pipewiresrc"] + (["fd=%d" % fd] if fd is not None else [])
     source += [("path=%s" if by_id or fd is not None else "target-object=%s")
                % target, "client-name=" + CLIENT, "do-timestamp=true"]
+    if cap:
+        source += ["!", "video/x-raw,max-framerate=%d/1" % RATE]
     if rate:
         source += ["!", "videorate", "drop-only=true",
                    "!", "video/x-raw,framerate=%d/1" % RATE]
@@ -1001,19 +1021,23 @@ def read_status(path=None, wall=time.time):
 
 
 class ProfileFile:
-    """The profile of the mirror in the settings file.
+    """The profile of the mirror in the settings file, or a different value.
 
     The file changes while Watcher runs: a person selects a profile on the
     panel or in the plugin. So it reads the file again after each change of
     its time, its size or its inode, and at most each PROFILE_SECONDS.
-    `read` gives the profile of the file at a path.
+    `read` gives the value in the file at a path. A value that is not one of
+    `choices` gives `default`.
     """
 
-    def __init__(self, path, read, clock=time.monotonic):
+    def __init__(self, path, read, clock=time.monotonic, choices=PROFILES,
+                 default=DEFAULT_PROFILE):
         self.path = path
         self.read = read
         self.clock = clock
-        self.value = DEFAULT_PROFILE
+        self.choices = choices
+        self.default = default
+        self.value = default
         self._stamp = None
         self._looked = -math.inf
 
@@ -1030,26 +1054,46 @@ class ProfileFile:
         if stamp == self._stamp:
             return self.value
         self._stamp = stamp
-        found = DEFAULT_PROFILE
+        found = self.default
         if stamp is not None:
             try:
                 found = self.read(self.path)
             except (OSError, ValueError, KeyError) as exc:
-                LOG.warning("mirror: cannot read the profile in %s: %s",
+                LOG.warning("mirror: cannot read the settings in %s: %s",
                             self.path, exc)
-        self.value = found if found in PROFILES else DEFAULT_PROFILE
+        self.value = found if found in self.choices else self.default
         return self.value
 
 
 class Watcher:
-    """Reads the screen while the LED service shows the mirror."""
+    """Reads the screen while the LED service shows the mirror.
+
+    In Game Mode it reads the stream of gamescope. On the desktop it reads
+    the screen that the portal shares, but only for the mirror scene of the
+    desktop. share starts a share (portal.Share), and wanted says if the
+    scene of the desktop is the mirror. desktop gives the process id of the
+    compositor of the desktop, or None while no desktop runs.
+    """
 
     def __init__(self, fifo=None, status=None, dump=pw_dump,
                  launch=subprocess.Popen, which=shutil.which,
                  element=has_element, clock=time.monotonic, wall=time.time,
-                 cpu=cpu_seconds, profile=lambda: DEFAULT_PROFILE):
+                 cpu=cpu_seconds, profile=lambda: DEFAULT_PROFILE,
+                 share=None, desktop=lambda: None, wanted=lambda: False):
         self.fifo = FIFO if fifo is None else fifo
         self.profile = profile
+        self.start_share = share
+        self.desktop = desktop
+        self.wanted = wanted
+        self.share = None
+        self.node = None
+        # A refusal of the share holds for the desktop of the compositor
+        # refused_by. It is None with no refusal, "" for the dialog, and
+        # "stopped" for a share that the person stopped.
+        self.refused = None
+        self.refused_by = None
+        self.asked_at = 0.0
+        self.cap = True
         self.status = status_path() if status is None else status
         self.dump = dump
         self.launch = launch
@@ -1103,9 +1147,10 @@ class Watcher:
             # again. A capture waits KEEP_SECONDS for a new reader.
             self._disconnect()
             self.lost_at = now
-            if self.pipeline is None:
+            if self.pipeline is None and self.share is None:
                 self._set(IDLE)
-        keeping = self.pipeline is not None
+        # A share keeps its dialog through the gap too.
+        keeping = self.pipeline is not None or self.share is not None
         if self.out is None and not self._connect(quiet=keeping):
             if not keeping:
                 wait = LOOK_SECONDS
@@ -1113,6 +1158,8 @@ class Watcher:
                 self._stop()
                 self._connect()
                 wait = LOOK_SECONDS
+            elif self.pipeline is None:
+                wait = ASK_SECONDS
             else:
                 # The pictures go nowhere until the new pipe is there.
                 self._watch()
@@ -1201,6 +1248,8 @@ class Watcher:
         return None
 
     def _begin(self, now):
+        if self.share is not None:
+            return self._begin_desktop(now)
         if now < self.retry_at:
             return min(self.retry_at - now, LOOK_SECONDS)
         missing = self._missing()
@@ -1214,19 +1263,63 @@ class Watcher:
             return LOOK_SECONDS
         node = screen_node(objects)
         if node is None:
-            # Each question costs a run of pw-dump, and Game Mode does not
-            # start in a moment.
-            self._set(NO_SCREEN)
-            self.retry_at = now + CHECK_SECONDS
-            return LOOK_SECONDS
+            return self._begin_desktop(now)
         others = readers(objects, node)
         if others:
             self._set(BUSY, others[0])
             self.retry_at = now + CHECK_SECONDS
             return LOOK_SECONDS
-        pipeline = Pipeline(command(node if self.by_id else SCREEN_NODE,
-                                    self.by_id, self.rate),
-                            launch=self.launch)
+        return self._launch(now, command(node if self.by_id else SCREEN_NODE,
+                                         self.by_id, self.rate))
+
+    def _begin_desktop(self, now):
+        """Starts a share of the desktop screen, and then its capture."""
+        share = self.share
+        if share is not None and now - self.asked_at >= CHECK_SECONDS:
+            # A dialog of a desktop that ended gets no answer.
+            self.asked_at = now
+            if self.desktop() is None:
+                self._stop()
+                share = None
+        if share is None:
+            running = self.desktop()
+            if self.refused is not None and self.refused_by != running:
+                # A new desktop asks again.
+                self.refused = None
+            if self.start_share is None or running is None or not self.wanted():
+                # Each question costs a run of pw-dump, and Game Mode does
+                # not start in a moment.
+                self._set(NO_SCREEN)
+                self.retry_at = now + CHECK_SECONDS
+                return LOOK_SECONDS
+            if self.refused is not None:
+                self._set(REFUSED, self.refused)
+                self.retry_at = now + CHECK_SECONDS
+                return LOOK_SECONDS
+            share = self.share = self.start_share()
+            self.asked_at = now
+        if share.state == SHARE_ASKING:
+            self._set(ASKING)
+            return ASK_SECONDS
+        if share.state != SHARE_READY or share.stream is None:
+            error = share.error
+            self._stop()
+            if error is not None and error.state == REFUSED:
+                self._refuse("")
+            elif error is None or error.state == FAILED:
+                self._fail(now, error.detail if error else "the share ended")
+            else:
+                self._set(NO_PORTAL, error.detail or error.state)
+                self.retry_at = now + RETRY_MOST
+            return LOOK_SECONDS
+        stream = share.stream
+        self.node = stream.node
+        return self._launch(now, command(str(stream.node), rate=self.rate,
+                                         fd=stream.fd, cap=self.cap),
+                            keep=(stream.fd,))
+
+    def _launch(self, now, argv, keep=()):
+        pipeline = Pipeline(argv, launch=self.launch, keep=keep)
         try:
             pipeline.start()
         except (OSError, ValueError) as exc:
@@ -1266,6 +1359,18 @@ class Watcher:
             for line in pipeline.said():
                 LOG.warning("mirror: %s said: %s", GST_LAUNCH, line)
             detail = pipeline.error()
+            if self.share is not None:
+                self.share.finished.wait(SHARE_SECONDS)
+                if self.share.state == SHARE_ENDED:
+                    self._share_ended(now)
+                    return
+                if self.cap and "not-negotiated" in detail:
+                    # This stream cannot take the limit. Try again at once
+                    # with no limit.
+                    self.cap = False
+                    self._stop()
+                    self._set(STARTING)
+                    return
             if not self.by_id and "target-object" in detail:
                 # An older GStreamer. Try again at once, with the id.
                 self.by_id = True
@@ -1306,6 +1411,9 @@ class Watcher:
         link with no picture is a still screen. A link that does not become
         active is a failure.
         """
+        if self.share is not None:
+            self._check_desktop(now)
+            return
         objects = self.dump()
         if objects is None:
             return
@@ -1336,6 +1444,40 @@ class Watcher:
                 self._fail(now, "link " + ": ".join(part for part in link
                                                     if part))
 
+    def _check_desktop(self, now):
+        """Looks at the share and at the size of its screen.
+
+        KWin sends a picture when the screen changes, so a still desktop
+        sends none. A capture with no picture is thus WAITING, not FAILED.
+        """
+        if self.share.state == SHARE_ENDED:
+            self._share_ended(now)
+            return
+        objects = self.dump()
+        found = screen_size(objects, self.node) if objects is not None else ""
+        stream = self.share.stream
+        self.source = found or ("%dx%d" % (stream.width, stream.height)
+                                if stream is not None else "")
+        if self.state == STARTING and now - self.started >= LINK_SECONDS:
+            self._set(WAITING)
+
+    def _share_ended(self, now):
+        """The portal closed the share, or the desktop ended."""
+        closed = self.share.closed
+        self._stop()
+        if closed and self.desktop() is not None:
+            # The person stopped the share.
+            self._refuse("stopped")
+        else:
+            self._set(NO_SCREEN)
+        self.retry_at = now + LOOK_SECONDS
+
+    def _refuse(self, detail):
+        """No new share until the desktop or this service starts again."""
+        self.refused = detail
+        self.refused_by = self.desktop()
+        self._set(REFUSED, detail)
+
     def _fail(self, now, detail):
         self._stop()
         self._set(FAILED, detail)
@@ -1346,6 +1488,12 @@ class Watcher:
         if self.pipeline is not None:
             self.pipeline.stop()
             self.pipeline = None
+        if self.share is not None:
+            # A new capture of the desktop needs a new reader of the portal,
+            # so the share ends with its capture.
+            self.share.stop()
+            self.share = None
+            self.node = None
         self.sent = None
         self.fps = 0.0
         self.load = 0.0

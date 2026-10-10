@@ -2975,6 +2975,69 @@ int main(void)
         t.answers++;
         panel_ui_update(&t);
         assert(label(game,panel_text(TXT_LED_GAME_WHAT))&&!label(game,"Mirror error: steam"));
+        // The mirror of the desktop. Its card has the button of the profile
+        // too, and the line of the mirror until the mirror runs: a person
+        // must allow the share of the screen on the PC. The line is on the
+        // card of the mode that the PC is in.
+        t.game_mode=false;t.led_look=true;t.led_brightness=128;
+        strcpy(t.led_effect[PANEL_LED_DESKTOP],"mirror");
+        strcpy(t.led_effect[PANEL_LED_GAME],"mirror");
+        strcpy(t.led_profile,"pop");
+        t.led_mirror=(panel_led_mirror_t){.state="asking"};
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(desktop,"Mirror")&&label(desktop,"Color Pop"));
+        assert(label(desktop,panel_text(TXT_MIRROR_ASKING)));
+        assert(!label(desktop,look_words_for(TXT_COLOUR_RED,50,false)));
+        assert(label(game,"Color Pop")&&label(game,panel_text(TXT_LED_GAME_WHAT)));
+        assert(!label(game,panel_text(TXT_MIRROR_ASKING)));
+        static const struct { const char *state; panel_text_id_t line; } desktop_lines[]={
+            {"refused",TXT_MIRROR_REFUSED},{"no-portal",TXT_MIRROR_NO_PORTAL},
+            {"starting",TXT_MIRROR_STARTING}};
+        for(unsigned i=0;i<sizeof desktop_lines/sizeof desktop_lines[0];i++){
+            strcpy(t.led_mirror.state,desktop_lines[i].state);
+            t.answers++;
+            panel_ui_update(&t);
+            assert(label(desktop,panel_text(desktop_lines[i].line)));
+        }
+        // A mirror that runs gives the line to the button of the brightness.
+        t.led_mirror=(panel_led_mirror_t){.state="running",.fps=15,.cpu=9,.source="2194x1234"};
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(desktop,look_words_for(TXT_COLOUR_RED,50,false)));
+        assert(!label(desktop,"Mirror runs: 15 fps, CPU 0.9 %, 2194x1234"));
+        // A profile chosen on the card of the desktop: that card says that
+        // it goes, and both buttons show it. One change goes.
+        before=led_changes;
+        click_in(desktop,"Color Pop");
+        assert(profile_box());
+        click_in(profile_box(),"Solid");
+        assert(label(desktop,panel_text(TXT_CHANGE_APPLYING))&&!label(game,panel_text(TXT_CHANGE_APPLYING)));
+        assert(label(desktop,"Solid")&&label(game,"Solid"));
+        led_wait(1600);
+        assert(led_changes==before+1&&strcmp(led_last_profile,"solid")==0);
+        // Its refusal goes to the same card.
+        t.led_replies++;t.led_code=403;
+        panel_ui_update(&t);
+        assert(label(desktop,panel_text(TXT_CHANGE_NO_RULE))&&!label(game,panel_text(TXT_CHANGE_NO_RULE)));
+        assert(label(desktop,"Color Pop")&&label(game,"Color Pop"));
+        lv_tick_inc(9000);
+        // In Game Mode the line goes to the card of Game Mode, and the card
+        // of the desktop has the button of the brightness.
+        t.game_mode=true;
+        t.led_mirror=(panel_led_mirror_t){.state="waiting"};
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,panel_text(TXT_MIRROR_WAITING))&&!label(desktop,panel_text(TXT_MIRROR_WAITING)));
+        assert(label(desktop,look_words_for(TXT_COLOUR_RED,50,false)));
+        // A different scene of the desktop has no button of the profile.
+        strcpy(t.led_effect[PANEL_LED_DESKTOP],"aurora");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(!label(desktop,"Color Pop")&&label(game,"Color Pop"));
+        strcpy(t.led_effect[PANEL_LED_GAME],"fire");t.led_profile[0]=0;t.led_look=false;
+        t.answers++;
+        panel_ui_update(&t);
         // A PC with no LED module: no effect, no arrow to press, and the
         // reason once.
         t.led_here=false;t.answers++;

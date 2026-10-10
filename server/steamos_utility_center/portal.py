@@ -25,9 +25,11 @@ found. A person runs it on the desktop:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import subprocess
 import sys
+import threading
 import time
 
 from . import screen
@@ -62,13 +64,14 @@ PERSIST_VERSION = 4
 ALLOWED = 0
 CANCELLED = 1
 
-# Why a request gave no picture.
+# Why a request gave no picture. Watcher reports REFUSED and FAILED as
+# they are, and each other one as screen.NO_PORTAL.
 NO_DBUS = "no-dbus"         # the copy of dbus_next is not there
 NO_BUS = "no-bus"           # no session bus
-NO_PORTAL = "no-portal"     # no portal, or a portal with no screen cast
+NO_PORTAL = screen.NO_PORTAL    # no portal, or a portal with no screen cast
 NO_MONITOR = "no-monitor"   # the portal cannot share a screen
-REFUSED = "refused"         # the person cancelled the dialog
-FAILED = "failed"
+REFUSED = screen.REFUSED    # the person cancelled the dialog
+FAILED = screen.FAILED
 
 # The time for a request with no dialog. A dialog waits for a person, and
 # the caller of open() says how long that can take.
@@ -199,7 +202,8 @@ class Stream:
 
 
 def _error(reply):
-    detail = reply.error_name or "error"
+    # The last part of the name: the status has one short line for it.
+    detail = (reply.error_name or "error").rsplit(".", 1)[-1]
     if reply.body and isinstance(reply.body[0], str):
         detail += ": " + reply.body[0]
     return PortalError(NO_PORTAL if reply.error_name in NOT_THERE else FAILED,
@@ -291,19 +295,23 @@ class ScreenCast:
         try:
             response, results = await asyncio.wait_for(answer, timeout)
         except asyncio.TimeoutError:
-            self._waiting.pop(path, None)
-            # Takes the dialog of this request off the screen.
-            try:
-                await self._call(REQUEST, "Close", "", [], path=path)
-            except PortalError:
-                pass
+            await self._forget(path)
             raise PortalError(FAILED, "no answer to %s in %d s"
                               % (member, timeout)) from None
+        except asyncio.CancelledError:
+            await self._forget(path)
+            raise
         if response == CANCELLED:
             raise PortalError(REFUSED, member)
         if response != ALLOWED:
             raise PortalError(FAILED, "%s answered %d" % (member, response))
         return results
+
+    async def _forget(self, path):
+        """Takes the dialog of a request with no answer off the screen."""
+        self._waiting.pop(path, None)
+        with contextlib.suppress(PortalError, OSError):
+            await self._call(REQUEST, "Close", "", [], path=path)
 
     async def open(self, token=None, version=PERSIST_VERSION,
                    cursors=CURSOR_HIDDEN, dialog_seconds=None):
@@ -339,6 +347,15 @@ class ScreenCast:
         size = props.get("size")
         width, height = size.value if size is not None else (0, 0)
         kept = results.get("restore_token")
+        return Stream(int(node), int(width), int(height), await self.remote(),
+                      kept.value if kept is not None else None)
+
+    async def remote(self):
+        """Returns a new file descriptor that reads the shared screen.
+
+        Each reader needs its own: two processes cannot share one
+        connection to PipeWire.
+        """
         reply = await self._call(SCREEN_CAST, "OpenPipeWireRemote", "oa{sv}",
                                  [self.session, {}])
         fds = list(reply.unix_fds or [])
@@ -350,8 +367,7 @@ class ScreenCast:
         fd = fds.pop(index)
         for extra in fds:
             os.close(extra)
-        return Stream(int(node), int(width), int(height), fd,
-                      kept.value if kept is not None else None)
+        return fd
 
     async def close(self):
         """Ends the share. The portal also ends it when the bus goes."""
@@ -362,6 +378,119 @@ class ScreenCast:
             await self._call(SESSION, "Close", "", [], path=session)
         except PortalError:
             pass
+
+
+class Share:
+    """The share of the desktop screen, held in a thread of its own.
+
+    The share ends with its connection to the bus, so the thread holds the
+    bus for as long as the share runs. Watcher reads state, stream and
+    error from its own thread. The first share shows a dialog, and a person
+    can take minutes to answer it. stop() takes that dialog off the screen.
+    """
+
+    def __init__(self, path=None, load=load_dbus, connect=None, start=True):
+        self.path = token_path() if path is None else path
+        self.load = load
+        self.connect = connect
+        self.state = screen.SHARE_ASKING
+        self.stream = None
+        self.error = None
+        # The portal closed the session: the person stopped the share, or
+        # the desktop ended.
+        self.closed = False
+        self.finished = threading.Event()
+        self._stopping = threading.Event()
+        self._loop = None
+        self._wake = None
+        self._thread = threading.Thread(target=self._run, name="screen share",
+                                        daemon=True)
+        if start:
+            self._thread.start()
+
+    def _run(self):
+        try:
+            asyncio.run(self._main())
+        except Exception as exc:    # a fault of the thread must reach Watcher
+            if self.error is None:
+                self.error = PortalError(FAILED, str(exc) or type(exc).__name__)
+        finally:
+            self.state = screen.SHARE_ENDED
+            self.finished.set()
+
+    async def _main(self):
+        self._loop = asyncio.get_running_loop()
+        self._wake = asyncio.Event()
+        if self._stopping.is_set():
+            return
+        dbus = self.load()
+        if dbus is None:
+            self.error = PortalError(NO_DBUS, "dbus_next is not there")
+            return
+        try:
+            bus = await (self.connect or _connect)(dbus)
+        except Exception as exc:    # dbus_next raises many kinds of errors
+            self.error = PortalError(NO_BUS, str(exc))
+            return
+        cast = ScreenCast(bus, dbus)
+        try:
+            opening = asyncio.ensure_future(self._open(cast))
+            stopping = asyncio.ensure_future(self._wake.wait())
+            await asyncio.wait((opening, stopping),
+                               return_when=asyncio.FIRST_COMPLETED)
+            if not opening.done():
+                opening.cancel()
+                with contextlib.suppress(asyncio.CancelledError, PortalError):
+                    await opening
+                return
+            stopping.cancel()
+            self.stream = opening.result()
+            self.state = screen.SHARE_READY
+            while not (self._wake.is_set() or cast.closed):
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._wake.wait(), 1.0)
+            self.closed = cast.closed
+        except PortalError as exc:
+            self.error = exc
+        finally:
+            await cast.close()
+            bus.disconnect()
+
+    async def _open(self, cast):
+        version, sources, cursors = await cast.facts()
+        if not sources & MONITOR:
+            raise PortalError(NO_MONITOR, "the portal cannot share a screen")
+        token = read_token(self.path)
+        stream = await cast.open(token, version, cursors)
+        if stream.token:
+            write_token(self.path, stream.token)
+        elif token:
+            # A token is good for one start only.
+            forget_token(self.path)
+        return stream
+
+    def stop(self, timeout=5.0):
+        """Ends the share, waits for the thread, and closes the fd."""
+        self._stopping.set()
+        loop, wake = self._loop, self._wake
+        if loop is not None and wake is not None:
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(wake.set)
+        if self._thread.is_alive():
+            self._thread.join(timeout)
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            with contextlib.suppress(OSError):
+                os.close(stream.fd)
+
+
+def desktop_runs(proc="/proc"):
+    """Returns the process id of KWin on Wayland, or None.
+
+    Watcher asks the portal only while that desktop runs. In Game Mode the
+    portal can be there with no screen to share.
+    """
+    return find_process(("kwin_wayland",), proc)
 
 
 # -- the probe ---------------------------------------------------------------
@@ -479,26 +608,62 @@ async def _share(cast, seconds, out, launch, proc, path, clock, cpu):
         out("The portal gave no restore token. Each start asks again.")
     out("Screen: node %d, %d x %d" % (stream.node, stream.width, stream.height))
     try:
-        return await _measure(stream, seconds, out, launch, proc, clock, cpu)
+        return await _measure(cast, stream, seconds, out, launch, proc, clock,
+                              cpu)
     finally:
         os.close(stream.fd)
 
 
-async def _measure(stream, seconds, out, launch, proc, clock, cpu):
-    loop = asyncio.get_running_loop()
+async def _measure(cast, stream, seconds, out, launch, proc, clock, cpu):
     compositor = find_process(COMPOSITORS, proc)
-    out("Measuring %d s with no capture, then %d s with it. Show something "
-        "that moves, for example a video." % (seconds, seconds))
+    out("Measuring %d s with no capture, %d s with it, and %d s with a limit "
+        "of %d pictures each second. Show something that moves, for example "
+        "a video." % (seconds, seconds, seconds, screen.RATE))
     before = cpu(compositor, proc) if compositor else None
     await asyncio.sleep(seconds)
-    idle = _load(compositor, before, seconds, cpu, proc)
-    pipeline = screen.Pipeline(screen.command(str(stream.node), fd=stream.fd),
-                               launch=launch, keep=(stream.fd,))
+    loads = [_load(compositor, before, seconds, cpu, proc)]
+    failed = False
+    for cap in (False, True):
+        try:
+            # Each reader needs its own connection to PipeWire.
+            fd = stream.fd if not cap else await cast.remote()
+        except PortalError as exc:
+            out("No second reader from the portal: %s" % exc.detail)
+            failed = True
+            break
+        try:
+            frames, took, load, busy, problem = await _capture(
+                stream.node, fd, cap, seconds, launch, proc, clock, cpu,
+                compositor)
+        finally:
+            if cap:
+                os.close(fd)
+        loads.append(busy)
+        out("Mirror pipeline%s: %.1f pictures each second, %s of one core"
+            % (" with the limit" if cap else "",
+               frames / took if took > 0 else 0.0, _per_cent(load)))
+        if problem or not frames:
+            out("gst-launch-1.0 stopped: %s" % (problem or "no picture"))
+            failed = True
+    if compositor is None:
+        out("Compositor: not found")
+    else:
+        out("Compositor: %s of one core with no capture, %s with it, %s with "
+            "the limit" % tuple(_per_cent(value) for value in
+                                (loads + [None, None])[:3]))
+    return 1 if failed else 0
+
+
+async def _capture(node, fd, cap, seconds, launch, proc, clock, cpu,
+                   compositor):
+    """Reads the screen for `seconds`. Returns the counts and the loads."""
+    loop = asyncio.get_running_loop()
+    pipeline = screen.Pipeline(screen.command(str(node), fd=fd, cap=cap),
+                               launch=launch, keep=(fd,))
     try:
         pipeline.start()
     except (OSError, ValueError) as exc:
-        out("gst-launch-1.0 did not start: %s" % exc)
-        return 1
+        return 0, 0.0, None, None, str(exc)
     try:
         # The first pictures come after the start of the pipeline.
         await loop.run_in_executor(None, _count, pipeline, min(1.0, seconds),
@@ -514,17 +679,7 @@ async def _measure(stream, seconds, out, launch, proc, clock, cpu):
         problem = "" if pipeline.alive() else pipeline.error()
     finally:
         pipeline.stop()
-    out("Mirror pipeline: %.1f pictures each second, %s of one core"
-        % (frames / took if took > 0 else 0.0, _per_cent(load)))
-    if compositor is None:
-        out("Compositor: not found")
-    else:
-        out("Compositor: %s of one core with no capture, %s with it"
-            % (_per_cent(idle), _per_cent(busy)))
-    if problem:
-        out("gst-launch-1.0 stopped: %s" % problem)
-        return 1
-    return 0 if frames else 1
+    return frames, took, load, busy, problem
 
 
 def _per_cent(value):

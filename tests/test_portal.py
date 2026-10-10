@@ -297,11 +297,115 @@ class FactsTest(unittest.TestCase):
         with self.assertRaises(portal.PortalError) as caught:
             self.facts(FakePortal(missing=("version",)))
         self.assertEqual(caught.exception.state, portal.NO_PORTAL)
+        # The short name of the error, for the one line of the status.
+        self.assertEqual(caught.exception.detail,
+                         "UnknownProperty: no property version")
 
     def test_the_names_of_the_bits(self):
         self.assertEqual(portal.bits(portal.MONITOR | portal.VIRTUAL,
                                      portal.SOURCE_NAMES), "monitor, virtual")
         self.assertEqual(portal.bits(0, portal.CURSOR_NAMES), "none")
+
+
+@unittest.skipIf(DBUS is None, "the carried dbus_next is not there")
+class ShareThreadTest(unittest.TestCase):
+    """Share holds the bus in a thread, and Watcher reads it from another."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.home)
+        self.path = portal.token_path(self.home)
+
+    def share(self, fake=None, load=None, connect=None):
+        self.fake = fake or FakePortal()
+        self.bus = FakeBus(self.fake)
+
+        async def connected(_dbus):
+            return self.bus
+
+        share = portal.Share(path=self.path, load=load or (lambda: DBUS),
+                             connect=connect or connected)
+        self.addCleanup(share.stop)
+        return share
+
+    def until(self, share, state):
+        for _wait in range(200):
+            if share.state == state:
+                return
+            time.sleep(0.01)
+        self.fail("no %s, but %s (%s)" % (state, share.state, share.error))
+
+    def test_a_share_gives_the_screen_and_keeps_the_token(self):
+        share = self.share()
+        self.until(share, screen.SHARE_READY)
+        self.assertEqual(share.stream.node, 42)
+        self.assertEqual(portal.read_token(self.path), "new-token")
+        fd = share.stream.fd
+        share.stop()
+        self.assertEqual(share.state, screen.SHARE_ENDED)
+        self.assertIn((portal.SESSION, SESSION), self.fake.closed)
+        self.assertTrue(self.bus.disconnected)
+        with self.assertRaises(OSError):
+            os.fstat(fd)
+
+    def test_a_kept_token_that_gives_no_new_one_goes(self):
+        portal.write_token(self.path, "old-token")
+        share = self.share(FakePortal(token=None))
+        self.until(share, screen.SHARE_READY)
+        self.assertIsNone(portal.read_token(self.path))
+
+    def test_a_refused_dialog_ends_the_share(self):
+        share = self.share(FakePortal(answers={"Start": 1}))
+        self.until(share, screen.SHARE_ENDED)
+        self.assertEqual(share.error.state, portal.REFUSED)
+        self.assertIsNone(share.stream)
+
+    def test_a_stop_takes_the_dialog_off_the_screen(self):
+        share = self.share(FakePortal(answers={"Start": None}))
+        for _wait in range(200):
+            if "Start" in self.fake.options:
+                break
+            time.sleep(0.01)
+        self.assertEqual(share.state, screen.SHARE_ASKING)
+        share.stop()
+        self.assertEqual(share.state, screen.SHARE_ENDED)
+        request = portal.request_path(
+            FakeBus.unique_name, self.fake.options["Start"]["handle_token"])
+        self.assertIn((portal.REQUEST, request), self.fake.closed)
+        self.assertIsNone(share.stream)
+
+    def test_a_session_that_the_portal_closes_ends_the_share(self):
+        share = self.share()
+        self.until(share, screen.SHARE_READY)
+        share._loop.call_soon_threadsafe(self.bus.emit, SESSION, portal.SESSION,
+                                         "Closed", "a{sv}", [{}])
+        self.assertTrue(share.finished.wait(5))
+        self.assertTrue(share.closed)
+        self.assertEqual(share.state, screen.SHARE_ENDED)
+
+    def test_a_portal_with_no_screens(self):
+        share = self.share(FakePortal(sources=portal.WINDOW))
+        self.until(share, screen.SHARE_ENDED)
+        self.assertEqual(share.error.state, portal.NO_MONITOR)
+
+    def test_no_dbus_next_and_no_bus(self):
+        share = self.share(load=lambda: None)
+        self.until(share, screen.SHARE_ENDED)
+        self.assertEqual(share.error.state, portal.NO_DBUS)
+
+        async def broken(_dbus):
+            raise OSError("no socket")
+
+        share = self.share(connect=broken)
+        self.until(share, screen.SHARE_ENDED)
+        self.assertEqual(share.error.state, portal.NO_BUS)
+
+    def test_the_compositor_of_the_desktop(self):
+        os.makedirs(os.path.join(self.home, "77"))
+        with open(os.path.join(self.home, "77", "comm"), "w") as handle:
+            handle.write("kwin_wayland\n")
+        self.assertEqual(portal.desktop_runs(self.home), 77)
+        self.assertIsNone(portal.desktop_runs(os.path.join(self.home, "x")))
 
 
 class TokenTest(unittest.TestCase):
@@ -453,6 +557,12 @@ class ProbeTest(unittest.TestCase):
         self.assertIn("It is kept for the next start", text)
         self.assertIn("Compositor: not found", text)
         self.assertRegex(text, r"Mirror pipeline: [1-9][0-9.]* pictures")
+        # A second reader, with its own fd, asks for the limit of the rate.
+        self.assertRegex(text, r"Mirror pipeline with the limit: [1-9]")
+        self.assertEqual(len(self.argv), 2)
+        self.assertNotEqual(self.argv[0][3], self.argv[1][3])
+        self.assertNotIn("video/x-raw,max-framerate=15/1", self.argv[0])
+        self.assertIn("video/x-raw,max-framerate=15/1", self.argv[1])
         self.assertEqual(portal.read_token(self.path), "new-token")
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
         self.assertNotIn("new-token", text)

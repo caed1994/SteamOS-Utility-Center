@@ -289,8 +289,9 @@ int main(int argc,char **argv)
      * its own, "led-none" a PC with no LED module, "led-applying" a tap that
      * waits to go, "led-refused" a change the PC refused for want of the
      * sudo rule, "led-mirror" the mirror in Game Mode with the line of its
-     * status and the button of its profile, and "led-profiles" the menu of
-     * that button. */
+     * status and the button of its profile, "led-profiles" the menu of
+     * that button, and "led-mirror-desktop" the mirror of the desktop that
+     * waits for the share of the screen. */
     if(argc>2&&strncmp(argv[2],"led",3)==0){
         bool fire=strcmp(argv[2],"led-look-fire")==0;
         bool coloured=strcmp(argv[2],"led-colour")==0||strcmp(argv[2],"led-old")==0
@@ -308,6 +309,12 @@ int main(int argc,char **argv)
             snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"mirror");
             s.led_mirror=(panel_led_mirror_t){.state="running",.fps=15,.cpu=12,.source="2560x1440"};
             snprintf(s.led_profile,sizeof s.led_profile,"pop");
+        }
+        if(strcmp(argv[2],"led-mirror-desktop")==0){
+            snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"mirror");
+            s.led_mirror=(panel_led_mirror_t){.state="asking"};
+            snprintf(s.led_profile,sizeof s.led_profile,"pop");
+            s.game_mode=false;
         }
         panel_ui_update(&s);
         lv_obj_t *band=band_in(lv_screen_active());

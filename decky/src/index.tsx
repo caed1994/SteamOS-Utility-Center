@@ -575,7 +575,7 @@ function Content() {
             onPick={(value) => pick("strip", "RAINBOW_SHOWS", value)}
           />
         </PanelSectionRow>
-        {rainbow === "mirror" && (
+        {(rainbow === "mirror" || scene === "mirror") && (
         <PanelSectionRow>
           <Choice
             label="Mirror profile"

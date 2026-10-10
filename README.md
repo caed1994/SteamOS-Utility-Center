@@ -175,8 +175,8 @@ right, in `LOAD_CPU_COLOR` and `LOAD_GPU_COLOR`. `LOAD_SWAP` exchanges the two
 sides. The GPU half needs an amdgpu card.
 `steamos-utility-center --load` gives the counters of your machine.
 
-**Mirror.** The bar takes the colours of the screen in Game Mode. Each LED
-shows the mean colour of one of 17 zones across the screen. The black bars of a
+**Mirror.** The bar takes the colours of the screen, in Game Mode and on the
+desktop. Each LED shows the mean colour of one of 17 zones across the screen. The black bars of a
 film are not in the zones.
 
 A user service, `steamos-utility-center-mirror`, reads the screen with
@@ -205,20 +205,25 @@ pixels. A screen gives light by the sRGB curve, and an LED gives light in
 proportion to its value. With the values, the middle tones were too bright,
 and the colours went pale.
 
-The mirror of the desktop is a later step. On a Wayland desktop, KWin gives
-its picture only through the screen cast portal, and a person must allow the
-share one time. A probe tries this now. Run it in a terminal on the desktop,
-as your normal user:
+The desktop has a mirror too: the scene `mirror` (`DESKTOP_SCENE=mirror`, or
+**Mirror** on the panel). On a Wayland desktop, KWin gives its picture only
+through the screen cast portal. So the first time, KDE shows a dialog: select
+the screen and allow the share. The portal keeps the approval, and the next
+start comes with no dialog. A share that you stop in KDE, or a dialog that you
+cancel, keeps the mirror off until the next desktop session. The button
+**Ask again for the screen** on the Status page asks at once.
+
+The probe tries the share and measures it. Run it in a terminal on the
+desktop, as your normal user:
 
 ```
 steamos-utility-center --screen-probe
 ```
 
 It asks the portal for the screen, so a dialog of KDE can come. It then reads
-the screen for 10 s and says how many pictures came and what the capture
-costs. Show something that moves while it measures, for example a video. Run
-it a second time to see if the portal keeps the approval: then no dialog
-comes.
+the screen for 10 s with no limit and 10 s with a limit of 15 pictures each
+second. It says how many pictures came and what the capture costs KWin. Show
+something that moves while it measures, for example a video.
 
 ### Desktop Mode
 

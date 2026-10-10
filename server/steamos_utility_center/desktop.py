@@ -43,23 +43,25 @@ SCENE_BREATH = "breath"
 SCENE_PATROL = "patrol"
 SCENE_RAINBOW = "rainbow"
 
-# And this project's own five effects.
+# And this project's own six effects.
 #
 # In Game Mode they share the rainbow slot, because the menu entries are in
 # Steam's client and a new effect must replace one. The desktop does not use
-# that menu, so each of the four is a scene of its own here.
+# that menu, so each of the six is a scene of its own here.
 SCENE_FIRE = "fire"
 SCENE_AURORA = "aurora"
 SCENE_OOZE = "ooze"
 SCENE_TEMPERATURE = "temperature"
 SCENE_LOAD = "load"
+# The desktop gives its picture through the screen cast portal. See portal.
+SCENE_MIRROR = "mirror"
 
 # The effect that each scene draws with. The renderer takes a snapshot, so this
 # table is the full translation. A scene that is not in this table is not a
 # scene, and that is what the validator reports.
 #
-# The last six scenes share an effect, because they share the slot that the
-# renderer replaces. SCENE_SHOWS below separates those five. It goes to the
+# The last seven scenes share an effect, because they share the slot that the
+# renderer replaces. SCENE_SHOWS below separates them. It goes to the
 # renderer with the snapshot.
 SCENE_EFFECTS = {
     SCENE_OFF: shim.EFFECT_OFF,
@@ -72,9 +74,10 @@ SCENE_EFFECTS = {
     SCENE_OOZE: shim.EFFECT_RAINBOW,
     SCENE_TEMPERATURE: shim.EFFECT_RAINBOW,
     SCENE_LOAD: shim.EFFECT_RAINBOW,
+    SCENE_MIRROR: shim.EFFECT_RAINBOW,
 }
 
-# What each of those six puts in the slot. A scene that names one says so
+# What each of those seven puts in the slot. A scene that names one says so
 # directly, and that is the difference from Game Mode. In Game Mode, a setting
 # elsewhere decides the content of the slot. Here it is the selected scene.
 SCENE_SHOWS = {
@@ -84,6 +87,7 @@ SCENE_SHOWS = {
     SCENE_OOZE: render.SHOWS_OOZE,
     SCENE_TEMPERATURE: render.SHOWS_TEMPERATURE,
     SCENE_LOAD: render.SHOWS_LOAD,
+    SCENE_MIRROR: render.SHOWS_MIRROR,
 }
 
 SCENES = (SCENE_STEAM,) + tuple(SCENE_EFFECTS)

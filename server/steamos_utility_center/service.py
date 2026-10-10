@@ -109,8 +109,8 @@ def anything_shows(config, shows):
     gauge selected on the desktop alone had no counters to read, and
     render._substitute gave the slot back to the rainbow it replaced.
 
-    Only the two effects that read hardware need the question. Fire and the
-    aurora are arithmetic.
+    Only the effects that read hardware or the screen need the question.
+    Fire and the aurora are arithmetic.
     """
     return (config["RAINBOW_SHOWS"] == shows
             or desktop.scene_shows(config["DESKTOP_SCENE"]) == shows)
@@ -173,11 +173,11 @@ def build_overheat_watch(config):
 def build_mirror(config):
     """Returns the end of the pipe from the screen, or None.
 
-    Only the rainbow slot of Game Mode shows the mirror. The desktop has no
-    stream of gamescope to read. The user service of the mirror waits for
-    this pipe. See screen.
+    The rainbow slot of Game Mode and the scene of the desktop can each show
+    the mirror. The user service of the mirror waits for this pipe, and it
+    finds the screen of each mode. See screen.
     """
-    if config["RAINBOW_SHOWS"] != render.SHOWS_MIRROR:
+    if not anything_shows(config, render.SHOWS_MIRROR):
         return None
     mirror = screen.Mirror(profile=config["MIRROR_PROFILE"])
     try:
@@ -1601,13 +1601,22 @@ def run_mirror():
     """The user service of the mirror. See screen.Watcher.
 
     The LED service opens the pipe while the bar shows the mirror, and that
-    is the one signal to start. The settings file gives only the profile,
-    and Watcher reads it again after each change.
+    is the one signal to start. The settings file gives the profile, and
+    whether the scene of the desktop is the mirror. Only that scene asks
+    the portal for the desktop screen. Watcher reads both again after each
+    change of the file.
     """
+    from . import portal
     _interrupt_on_sigterm()
-    watcher = screen.Watcher(profile=screen.ProfileFile(
-        config_module.DEFAULT_CONFIG_PATH,
-        lambda path: config_module.load(path)["MIRROR_PROFILE"]))
+    path = config_module.DEFAULT_CONFIG_PATH
+    scene = screen.ProfileFile(
+        path, lambda path: config_module.load(path)["DESKTOP_SCENE"],
+        choices=desktop.SCENES, default=desktop.SCENE_STEAM)
+    watcher = screen.Watcher(
+        profile=screen.ProfileFile(
+            path, lambda path: config_module.load(path)["MIRROR_PROFILE"]),
+        share=portal.Share, desktop=portal.desktop_runs,
+        wanted=lambda: scene() == desktop.SCENE_MIRROR)
     LOG.info("mirror: the status is in %s", watcher.status)
     try:
         watcher.run()
