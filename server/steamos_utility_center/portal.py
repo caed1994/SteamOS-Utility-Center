@@ -609,49 +609,76 @@ async def _share(cast, seconds, out, launch, proc, path, clock, cpu):
     out("Screen: node %d, %d x %d" % (stream.node, stream.width, stream.height))
     try:
         return await _measure(cast, stream, seconds, out, launch, proc, clock,
-                              cpu)
+                              cpu, path, version, cursors)
     finally:
         os.close(stream.fd)
 
 
-async def _measure(cast, stream, seconds, out, launch, proc, clock, cpu):
+async def _measure(cast, stream, seconds, out, launch, proc, clock, cpu, path,
+                   version, cursors):
+    """Measures the compositor with no capture, and then three captures.
+
+    The first capture reads as Watcher does. The second one is a second
+    reader of the same share, and the third one is a new share with the
+    limit of the rate. Each one changes one thing, so a capture with no
+    picture names its cause.
+    """
     compositor = find_process(COMPOSITORS, proc)
-    out("Measuring %d s with no capture, %d s with it, and %d s with a limit "
-        "of %d pictures each second. Show something that moves, for example "
-        "a video." % (seconds, seconds, seconds, screen.RATE))
+    out("Measuring %d s for each step: no capture, a capture, a second "
+        "reader, and a new share with a limit of %d pictures each second. "
+        "Show something that moves, for example a video."
+        % (seconds, screen.RATE))
     before = cpu(compositor, proc) if compositor else None
     await asyncio.sleep(seconds)
-    loads = [_load(compositor, before, seconds, cpu, proc)]
-    failed = False
-    for cap in (False, True):
-        try:
-            # Each reader needs its own connection to PipeWire.
-            fd = stream.fd if not cap else await cast.remote()
-        except PortalError as exc:
-            out("No second reader from the portal: %s" % exc.detail)
-            failed = True
-            break
-        try:
-            frames, took, load, busy, problem = await _capture(
-                stream.node, fd, cap, seconds, launch, proc, clock, cpu,
-                compositor)
-        finally:
-            if cap:
-                os.close(fd)
-        loads.append(busy)
-        out("Mirror pipeline%s: %.1f pictures each second, %s of one core"
-            % (" with the limit" if cap else "",
-               frames / took if took > 0 else 0.0, _per_cent(load)))
-        if problem or not frames:
-            out("gst-launch-1.0 stopped: %s" % (problem or "no picture"))
-            failed = True
     if compositor is None:
         out("Compositor: not found")
     else:
-        out("Compositor: %s of one core with no capture, %s with it, %s with "
-            "the limit" % tuple(_per_cent(value) for value in
-                                (loads + [None, None])[:3]))
-    return 1 if failed else 0
+        out("Compositor with no capture: %s of one core"
+            % _per_cent(_load(compositor, before, seconds, cpu, proc)))
+    tools = (seconds, launch, proc, clock, cpu, compositor, out)
+    good = await _step("A capture", stream.node, stream.fd, False, *tools)
+    try:
+        # Each reader needs its own connection to PipeWire.
+        fd = await cast.remote()
+    except PortalError as exc:
+        out("A second reader: no fd from the portal: %s" % exc.detail)
+        good = False
+    else:
+        try:
+            good &= await _step("A second reader", stream.node, fd, False,
+                                *tools)
+        finally:
+            os.close(fd)
+    await cast.close()
+    try:
+        again = await cast.open(read_token(path), version, cursors,
+                                DIALOG_SECONDS)
+    except PortalError as exc:
+        out("A new share: the portal gave no screen: %s" % exc.detail)
+        return 1
+    if again.token:
+        write_token(path, again.token)
+    try:
+        good &= await _step("A new share with the limit", again.node,
+                            again.fd, True, *tools)
+    finally:
+        os.close(again.fd)
+    return 0 if good else 1
+
+
+async def _step(name, node, fd, cap, seconds, launch, proc, clock, cpu,
+                compositor, out):
+    """Reads the screen for `seconds`, and says what came. True for pictures."""
+    frames, took, load, busy, alive, problem = await _capture(
+        node, fd, cap, seconds, launch, proc, clock, cpu, compositor)
+    out("%s: %.1f pictures each second, pipeline %s of one core, compositor "
+        "%s of one core" % (name, frames / took if took > 0 else 0.0,
+                            _per_cent(load), _per_cent(busy)))
+    if not alive:
+        out("  gst-launch-1.0 stopped: %s" % (problem or "no reason given"))
+    elif not frames:
+        out("  gst-launch-1.0 runs, but no picture came in %d s" % seconds)
+    return alive and frames > 0
 
 
 async def _capture(node, fd, cap, seconds, launch, proc, clock, cpu,
@@ -663,7 +690,7 @@ async def _capture(node, fd, cap, seconds, launch, proc, clock, cpu,
     try:
         pipeline.start()
     except (OSError, ValueError) as exc:
-        return 0, 0.0, None, None, str(exc)
+        return 0, 0.0, None, None, False, str(exc)
     try:
         # The first pictures come after the start of the pipeline.
         await loop.run_in_executor(None, _count, pipeline, min(1.0, seconds),
@@ -676,10 +703,11 @@ async def _capture(node, fd, cap, seconds, launch, proc, clock, cpu,
         took = clock() - started
         busy = _load(compositor, before, took, cpu, proc)
         load = _load(pipeline.pid, own, took, cpu, proc)
-        problem = "" if pipeline.alive() else pipeline.error()
+        alive = pipeline.alive() and not pipeline.ended
+        problem = "" if alive else pipeline.error()
     finally:
         pipeline.stop()
-    return frames, took, load, busy, problem
+    return frames, took, load, busy, alive, problem
 
 
 def _per_cent(value):

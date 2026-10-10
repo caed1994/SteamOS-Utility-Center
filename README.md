@@ -220,9 +220,10 @@ desktop, as your normal user:
 steamos-utility-center --screen-probe
 ```
 
-It asks the portal for the screen, so a dialog of KDE can come. It then reads
-the screen for 10 s with no limit and 10 s with a limit of 15 pictures each
-second. It says how many pictures came and what the capture costs KWin. Show
+It asks the portal for the screen, so a dialog of KDE can come. It then
+measures 10 s for each step: no capture, a capture, a second reader of the
+same share, and a new share with a limit of 15 pictures each second. For each
+step it says how many pictures came and what the capture costs KWin. Show
 something that moves while it measures, for example a video.
 
 ### Desktop Mode

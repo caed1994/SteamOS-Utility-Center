@@ -55,7 +55,10 @@ class FakePortal:
         self.fd = fd
         self.missing = missing
         self.options = {}
+        # Each request in its order, as (member, options).
+        self.asked = []
         self.closed = []
+        self.remotes = 0
 
     def answer(self, bus, message):
         """Returns the reply, and makes a later signal where one is due."""
@@ -78,6 +81,7 @@ class FakePortal:
             return Message.new_method_return(message)
         member = message.member
         if member == "OpenPipeWireRemote":
+            self.remotes += 1
             if not self.fd:
                 return Message.new_method_return(message, "h", [0])
             read, write = os.pipe()
@@ -87,6 +91,7 @@ class FakePortal:
         options = message.body[-1]
         self.options[member] = {key: value.value
                                 for key, value in options.items()}
+        self.asked.append((member, self.options[member]))
         path = portal.request_path(bus.unique_name,
                                    options["handle_token"].value)
         results = {}
@@ -499,15 +504,22 @@ class ServiceTest(unittest.TestCase):
 
 
 # A child that takes the place of gst-launch-1.0: it checks that it got the
-# fd of the portal, and then writes pictures.
+# fd of the portal. Then it writes pictures, writes nothing, or stops with
+# an error.
 CHILD = textwrap.dedent("""
     import os, sys, time
     os.fstat(int(sys.argv[1]))
+    if sys.argv[2] == "error":
+        sys.stderr.write("ERROR: from element /GstPipeline:pipeline0/"
+                         "GstPipeWireSrc:pipewiresrc0: stream error\\n")
+        sys.exit(1)
     frame = bytes(%d)
     while True:
-        os.write(1, frame)
+        if sys.argv[2] == "frames":
+            os.write(1, frame)
         time.sleep(0.02)
 """ % screen.FRAME)
+LIMIT = "video/x-raw,max-framerate=15/1"
 
 
 @unittest.skipIf(DBUS is None, "the carried dbus_next is not there")
@@ -520,11 +532,14 @@ class ProbeTest(unittest.TestCase):
         self.path = portal.token_path(self.home)
         self.said = []
         self.argv = []
+        # What the child does for the argument list of a step.
+        self.behave = lambda argv: "frames"
 
     def launch(self, argv, **options):
         self.argv.append(argv)
         fd = argv[3].split("=")[1]
-        return subprocess.Popen([sys.executable, "-c", CHILD, fd], **options)
+        return subprocess.Popen([sys.executable, "-c", CHILD, fd,
+                                 self.behave(argv)], **options)
 
     def probe(self, fake=None, dbus=DBUS, connect=None):
         self.fake = fake or FakePortal()
@@ -556,13 +571,10 @@ class ProbeTest(unittest.TestCase):
         self.assertIn("Screen: node 42, 1920 x 1080", text)
         self.assertIn("It is kept for the next start", text)
         self.assertIn("Compositor: not found", text)
-        self.assertRegex(text, r"Mirror pipeline: [1-9][0-9.]* pictures")
-        # A second reader, with its own fd, asks for the limit of the rate.
-        self.assertRegex(text, r"Mirror pipeline with the limit: [1-9]")
-        self.assertEqual(len(self.argv), 2)
-        self.assertNotEqual(self.argv[0][3], self.argv[1][3])
-        self.assertNotIn("video/x-raw,max-framerate=15/1", self.argv[0])
-        self.assertIn("video/x-raw,max-framerate=15/1", self.argv[1])
+        for step in ("A capture", "A second reader",
+                     "A new share with the limit"):
+            self.assertRegex(text, step + r": [1-9][0-9.]* pictures each")
+        self.assertNotIn("no picture came", text)
         self.assertEqual(portal.read_token(self.path), "new-token")
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
         self.assertNotIn("new-token", text)
@@ -571,12 +583,48 @@ class ProbeTest(unittest.TestCase):
         self.assertIn((portal.SESSION, SESSION), self.fake.closed)
         self.assertTrue(self.bus.disconnected)
 
+    def test_each_step_changes_one_thing(self):
+        """A capture as Watcher reads, a second reader of the same share,
+        and a new share with the limit of the rate."""
+        self.assertEqual(self.probe(), 0)
+        first, second, third = self.argv
+        self.assertNotIn(LIMIT, first)
+        self.assertNotIn(LIMIT, second)
+        self.assertIn(LIMIT, third)
+        # Each reader has its own fd from the portal.
+        self.assertNotEqual(first[3], second[3])
+        self.assertEqual(self.fake.remotes, 3)
+        sessions = [member for member, _options in self.fake.asked
+                    if member == "CreateSession"]
+        self.assertEqual(len(sessions), 2)
+        self.assertEqual(self.fake.closed.count((portal.SESSION, SESSION)), 2)
+
+    def test_a_step_with_no_picture_says_that_gst_runs(self):
+        self.behave = lambda argv: "nothing" if LIMIT in argv else "frames"
+        self.assertEqual(self.probe(), 1)
+        text = self.text()
+        self.assertIn("A new share with the limit: 0.0 pictures", text)
+        self.assertIn("gst-launch-1.0 runs, but no picture came in 0 s", text)
+        self.assertNotIn("stopped", text)
+        self.assertRegex(text, r"A second reader: [1-9]")
+
+    def test_a_step_whose_gst_stops_says_why(self):
+        self.behave = lambda argv: ("error" if argv[3] != self.argv[0][3]
+                                    and LIMIT not in argv else "frames")
+        self.assertEqual(self.probe(), 1)
+        text = self.text()
+        self.assertIn("gst-launch-1.0 stopped: pipewiresrc: stream error", text)
+        self.assertRegex(text, r"A new share with the limit: [1-9]")
+
     def test_a_second_start_gives_the_kept_token(self):
         portal.write_token(self.path, "old-token")
         self.assertEqual(self.probe(), 0)
         self.assertIn("A kept approval: yes", self.text())
-        self.assertEqual(self.fake.options["SelectSources"]["restore_token"],
-                         "old-token")
+        tokens = [options.get("restore_token")
+                  for member, options in self.fake.asked
+                  if member == "SelectSources"]
+        # The new share of the third step gives the token of the first.
+        self.assertEqual(tokens, ["old-token", "new-token"])
         self.assertNotIn("old-token", self.text())
 
     def test_a_refusal(self):

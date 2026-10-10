@@ -506,17 +506,6 @@ elif mode == "videorate":
     while True:
         os.write(1, frame)
         time.sleep(0.02)
-elif mode == "limit":
-    # A stream that cannot take the limit of the rate.
-    if "video/x-raw,max-framerate=15/1" in sys.argv[2:]:
-        sys.stderr.write("ERROR: from element /GstPipeline:pipeline0/"
-                         "GstPipeWireSrc:pipewiresrc0: Internal data stream "
-                         "error.\nstreaming stopped, reason not-negotiated "
-                         "(-4)\n")
-        sys.exit(1)
-    while True:
-        os.write(1, frame)
-        time.sleep(0.02)
 elif mode == "old":
     sys.stderr.write('WARNING: erroneous pipeline: no property '
                      '"target-object" in element "pipewiresrc0"\n')
@@ -961,7 +950,8 @@ class DesktopWatcherTest(WatcherCase):
         argv = self.argvs[0]
         self.assertEqual(argv[2:5], ["pipewiresrc", "fd=%d" % self.stream.fd,
                                      "path=77"])
-        self.assertIn("video/x-raw,max-framerate=15/1", argv)
+        # No limit of the rate: KWin sent no picture with it on one PC.
+        self.assertNotIn("video/x-raw,max-framerate=15/1", argv)
         self.clock.now += screen.CHECK_SECONDS
         self.watcher.step()
         self.watcher._report(self.clock.now + screen.STATUS_SECONDS)
@@ -1042,21 +1032,6 @@ class DesktopWatcherTest(WatcherCase):
         self.clock.now += screen.RETRY_MOST - 1
         self.watcher.step()
         self.assertEqual(len(self.shares), 1)
-
-    def test_a_stream_that_cannot_take_the_limit_runs_with_none(self):
-        self.mode = "limit"
-        share = self.asking()
-        share.give(self.stream)
-        for _turn in range(80):
-            self.watcher.step()
-            if len(self.shares) > 1:
-                self.shares[-1].give(self.stream)
-            if self.watcher.state == screen.RUNNING:
-                break
-        self.assertEqual(self.watcher.state, screen.RUNNING)
-        self.assertIn("video/x-raw,max-framerate=15/1", self.argvs[0])
-        self.assertNotIn("video/x-raw,max-framerate=15/1", self.argvs[-1])
-        self.assertEqual(share.stopped, 1)
 
     def test_a_dialog_waits_through_a_start_of_the_led_service(self):
         share = self.asking()

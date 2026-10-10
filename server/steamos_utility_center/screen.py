@@ -616,8 +616,8 @@ def command(target, by_id=False, rate=True, fd=None, cap=False):
     pipeline with fd also names the node by its id.
 
     With cap, the pipeline asks the stream for RATE pictures each second at
-    the most. KWin can then copy fewer pictures for it. A stream with no
-    such limit takes the request (measured with the test stream).
+    the most. Only the probe uses it (portal.probe): on one PC, a capture of
+    KWin with it gave no picture and no error.
 
     videorate drops the pictures that come too soon. Its output must have a
     fixed rate: the stream of gamescope has the rate 0/1 and no duration on
@@ -1093,7 +1093,6 @@ class Watcher:
         self.refused = None
         self.refused_by = None
         self.asked_at = 0.0
-        self.cap = True
         self.status = status_path() if status is None else status
         self.dump = dump
         self.launch = launch
@@ -1315,7 +1314,7 @@ class Watcher:
         stream = share.stream
         self.node = stream.node
         return self._launch(now, command(str(stream.node), rate=self.rate,
-                                         fd=stream.fd, cap=self.cap),
+                                         fd=stream.fd),
                             keep=(stream.fd,))
 
     def _launch(self, now, argv, keep=()):
@@ -1363,13 +1362,6 @@ class Watcher:
                 self.share.finished.wait(SHARE_SECONDS)
                 if self.share.state == SHARE_ENDED:
                     self._share_ended(now)
-                    return
-                if self.cap and "not-negotiated" in detail:
-                    # This stream cannot take the limit. Try again at once
-                    # with no limit.
-                    self.cap = False
-                    self._stop()
-                    self._set(STARTING)
                     return
             if not self.by_id and "target-object" in detail:
                 # An older GStreamer. Try again at once, with the id.
