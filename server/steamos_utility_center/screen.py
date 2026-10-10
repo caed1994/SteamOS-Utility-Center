@@ -708,6 +708,12 @@ def _same(first, second):
     return first is not None and str(first) == str(second)
 
 
+def has_node(objects, node):
+    """Returns whether the node with the id `node` is there."""
+    return any(one.get("type") == "PipeWire:Interface:Node"
+               and _same(one.get("id"), node) for one in objects)
+
+
 def _links(objects, node):
     """Gives (link info, process id, name) for each reader of `node`.
 
@@ -1096,6 +1102,8 @@ class Watcher:
         self.wanted = wanted
         self.share = None
         self.node = None
+        # The compositor of the desktop that the share shows.
+        self.shared_by = None
         # A refusal of the share holds for the desktop of the compositor
         # refused_by. It is None with no refusal, "" for the dialog, and
         # "stopped" for a share that the person stopped.
@@ -1309,6 +1317,7 @@ class Watcher:
                 self.retry_at = now + CHECK_SECONDS
                 return LOOK_SECONDS
             share = self.share = self.start_share()
+            self.shared_by = running
             self.asked_at = now
         if share.state == SHARE_ASKING:
             self._set(ASKING)
@@ -1375,11 +1384,8 @@ class Watcher:
             for line in pipeline.said():
                 LOG.warning("mirror: %s said: %s", GST_LAUNCH, line)
             detail = pipeline.error()
-            if self.share is not None:
-                self.share.finished.wait(SHARE_SECONDS)
-                if self.share.state == SHARE_ENDED:
-                    self._share_ended(now)
-                    return
+            if self.share is not None and self._share_gone(now):
+                return
             if not self.by_id and "target-object" in detail:
                 # An older GStreamer. Try again at once, with the id.
                 self.by_id = True
@@ -1459,15 +1465,25 @@ class Watcher:
                                                     if part))
 
     def _check_desktop(self, now):
-        """Looks at the share and at the size of its screen.
+        """Looks at the share, at its desktop and at the size of its screen.
 
         KWin sends a picture when the screen changes, so a still desktop
         sends none. A capture with no picture is thus WAITING, not FAILED.
+        A reader of a stream that is gone can also wait with no picture and
+        no error: WirePlumber 0.5 gives no error to a reader that must not
+        move to a different node. So the capture stops when its desktop
+        ends or its node goes. Otherwise Watcher sends the last colours of
+        the desktop again in Game Mode, with no end.
         """
         if self.share.state == SHARE_ENDED:
             self._share_ended(now)
             return
         objects = self.dump()
+        if (self.desktop() != self.shared_by
+                or objects is not None and not has_node(objects, self.node)):
+            if not self._share_gone(now):
+                self._fail(now, "the stream of the desktop ended")
+            return
         found = screen_size(objects, self.node) if objects is not None else ""
         stream = self.share.stream
         self.source = found or ("%dx%d" % (stream.width, stream.height)
@@ -1493,6 +1509,25 @@ class Watcher:
             self.slow = False
         self._stop()
         self._set(STARTING)
+
+    def _share_gone(self, now):
+        """Ends the capture when its share or its desktop ended.
+
+        Returns True when it did. The portal can close the share a moment
+        after the end of the stream, and only that end says whether the
+        person stopped the share.
+        """
+        self.share.finished.wait(SHARE_SECONDS)
+        if self.share.state == SHARE_ENDED:
+            self._share_ended(now)
+            return True
+        if self.desktop() != self.shared_by:
+            # A change to Game Mode, so look for gamescope soon.
+            self._stop()
+            self._set(NO_SCREEN)
+            self.retry_at = now + LOOK_SECONDS
+            return True
+        return False
 
     def _share_ended(self, now):
         """The portal closed the share, or the desktop ended."""
@@ -1527,6 +1562,7 @@ class Watcher:
             self.share.stop()
             self.share = None
             self.node = None
+            self.shared_by = None
         self.sent = None
         self.fps = 0.0
         self.load = 0.0

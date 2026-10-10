@@ -554,6 +554,12 @@ def objects(readers=(), size=None, own=None):
     return found
 
 
+def desktop_objects(node=77):
+    """What pw-dump says on the desktop: the node of the share of KWin."""
+    return [{"id": node, "type": "PipeWire:Interface:Node",
+             "info": {"props": {"media.class": "Video/Source"}}}]
+
+
 class WatcherCase(PipeCase):
 
     def setUp(self):
@@ -979,7 +985,7 @@ class DesktopWatcherTest(WatcherCase):
 
     def setUp(self):
         super().setUp()
-        self.dumped = []
+        self.dumped = desktop_objects()
         self.compositor = 4242
         self.scene = True
         self.shares = []
@@ -1001,6 +1007,12 @@ class DesktopWatcherTest(WatcherCase):
         self.watcher.step()
         self.assertEqual(self.watcher.state, screen.ASKING)
         return self.shares[-1]
+
+    def running(self):
+        share = self.asking()
+        share.give(self.stream)
+        self.until(screen.RUNNING)
+        return share
 
     def test_the_scene_asks_the_portal_and_reads_its_screen(self):
         share = self.asking()
@@ -1135,6 +1147,58 @@ class DesktopWatcherTest(WatcherCase):
         self.watcher.step()
         self.assertEqual(share.stopped, 1)
         self.assertIsNone(self.watcher.share)
+
+    def test_a_change_to_game_mode_ends_the_capture_of_the_desktop(self):
+        """The reader of a stream that went can wait with no picture and no
+        error. The bar must not keep the last colours of the desktop."""
+        for dumped in ([], None):
+            with self.subTest(dumped=dumped):
+                share = self.running()
+                # KWin ends, and pw-dump has no node of it or no answer.
+                self.compositor = None
+                self.dumped = dumped
+                with unittest.mock.patch.object(screen, "SHARE_SECONDS", 0.0):
+                    self.clock.now += screen.CHECK_SECONDS
+                    self.watcher.step()
+                self.assertEqual(self.watcher.state, screen.NO_SCREEN)
+                self.assertIsNone(self.watcher.pipeline)
+                self.assertEqual(share.stopped, 1)
+                # gamescope starts.
+                self.dumped = objects()
+                self.clock.now += screen.LOOK_SECONDS
+                self.until(screen.RUNNING)
+                self.assertIn("target-object=gamescope", self.argvs[-1])
+                self.assertEqual(self.watcher.retry, screen.RETRY_SECONDS)
+                # The desktop again, for the next turn.
+                self.watcher._stop()
+                self.compositor = 4242
+                self.dumped = desktop_objects()
+
+    def test_a_stream_of_the_desktop_that_goes_ends_its_capture(self):
+        share = self.running()
+        # KWin runs, but its stream is gone.
+        self.dumped = []
+        with unittest.mock.patch.object(screen, "SHARE_SECONDS", 0.0):
+            self.clock.now += screen.CHECK_SECONDS
+            self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.FAILED)
+        self.assertEqual(self.watcher.detail, "the stream of the desktop ended")
+        self.assertEqual(share.stopped, 1)
+        # The next try asks for a new share.
+        self.dumped = desktop_objects()
+        self.clock.now += screen.RETRY_SECONDS
+        self.watcher.step()
+        self.assertEqual(len(self.shares), 2)
+
+    def test_a_capture_that_ends_with_its_desktop_is_no_failure(self):
+        """WirePlumber 0.4 gives the reader an error at the end of KWin."""
+        self.running()
+        self.compositor = None
+        self.watcher.pipeline.process.kill()
+        self.watcher.pipeline.process.wait()
+        with unittest.mock.patch.object(screen, "SHARE_SECONDS", 0.0):
+            self.until(screen.NO_SCREEN)
+        self.assertEqual(self.watcher.retry, screen.RETRY_SECONDS)
 
     def test_a_dialog_of_a_desktop_that_ended_goes(self):
         share = self.asking()
