@@ -641,12 +641,7 @@ static bool led_due;
 static void led_change(const panel_led_change_t *change)
 {
     xSemaphoreTake(lock,portMAX_DELAY);
-    for (int mode=0; mode<PANEL_LED_MODES; mode++)
-        if (change->effect[mode][0])
-            snprintf(led_wanted.effect[mode],sizeof(led_wanted.effect[mode]),"%s",change->effect[mode]);
-    if (change->colour[0])
-        snprintf(led_wanted.colour,sizeof(led_wanted.colour),"%s",change->colour);
-    if (change->brightness>=0) led_wanted.brightness=change->brightness;
+    panel_led_merge(&led_wanted,change);
     led_due=true;
     xSemaphoreGive(lock);
 }
@@ -1821,10 +1816,11 @@ static void network_task(void *arg)
         xSemaphoreGive(lock);
         if (led_now) {
             int code=led_online && connected() ? led_request(&led_next) : 0;
-            ESP_LOGI("panel_led","desktop=%s game=%s colour=%s brightness=%d: %d",
+            ESP_LOGI("panel_led","desktop=%s game=%s colour=%s brightness=%d profile=%s: %d",
                      led_next.effect[PANEL_LED_DESKTOP][0]?led_next.effect[PANEL_LED_DESKTOP]:"-",
                      led_next.effect[PANEL_LED_GAME][0]?led_next.effect[PANEL_LED_GAME]:"-",
-                     led_next.colour[0]?led_next.colour:"-",led_next.brightness,code);
+                     led_next.colour[0]?led_next.colour:"-",led_next.brightness,
+                     led_next.profile[0]?led_next.profile:"-",code);
             xSemaphoreTake(lock,portMAX_DELAY);
             state.led_code=code;
             state.led_replies++;

@@ -531,6 +531,31 @@ class HarnessTest(unittest.TestCase):
         self.assertEqual(self.ask("bodyp 160 - disco", "bodyp 160 mirror disco"),
                          ["(empty) 0"] * 2)
 
+    def test_a_tap_of_the_profile_alone_reaches_the_body(self):
+        """main.c merges each tap into the change that waits. The profile
+        was left out there, so a profile alone sent nothing, and the page
+        said that the PC did not take it."""
+        self.assertEqual(
+            self.ask("merge 160 - - - -1 - - - - -1 solid")[0],
+            '{"mirror_profile":"solid"} 26')
+
+    def test_two_taps_before_a_request_give_one_change_with_both(self):
+        answers = self.ask("merge 160 - mirror - -1 - - - - -1 pop",
+                           "merge 160 - - - -1 cinematic - - - -1 solid",
+                           "merge 160 - - - -1 solid breath - #ff0000 200 -")
+        self.assertEqual([json.loads(answer.rsplit(" ", 1)[0])
+                          for answer in answers],
+                         [{"game": "mirror", "mirror_profile": "pop"},
+                          {"mirror_profile": "solid"},
+                          {"desktop": "breath", "desktop_color": "#ff0000",
+                           "desktop_brightness": 200,
+                           "mirror_profile": "solid"}])
+
+    def test_main_merges_with_panel_led(self):
+        main = code("main.c")
+        self.assertIn("panel_led_merge(&led_wanted,change);", main)
+        self.assertNotIn("led_wanted.colour", main)
+
     def test_the_profile_is_read_with_the_name_of_panel_led_h(self):
         self.assertIn("pc_text(state.led_profile,sizeof state.led_profile,led,"
                       "PANEL_LED_PROFILE_KEY);", code("main.c"))

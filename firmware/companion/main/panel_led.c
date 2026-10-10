@@ -243,6 +243,17 @@ static bool add(char *out, size_t room, size_t *at, const char *format, ...)
     return true;
 }
 
+void panel_led_merge(panel_led_change_t *into, const panel_led_change_t *change)
+{
+    if (!into || !change) return;
+    for (int mode = 0; mode < PANEL_LED_MODES; mode++)
+        if (change->effect[mode][0])
+            snprintf(into->effect[mode], sizeof into->effect[mode], "%s", change->effect[mode]);
+    if (change->colour[0]) snprintf(into->colour, sizeof into->colour, "%s", change->colour);
+    if (change->brightness >= 0) into->brightness = change->brightness;
+    if (change->profile[0]) snprintf(into->profile, sizeof into->profile, "%s", change->profile);
+}
+
 size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
 {
     if (!out || room == 0) return 0;

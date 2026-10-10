@@ -102,6 +102,11 @@ bool panel_led_rgb(const char *colour, uint32_t *rgb);
  * a brightness. Each per cent comes back to itself through the two. */
 int panel_led_percent(int brightness);
 int panel_led_brightness(int percent);
+/* Puts each part of "change" that has a value into "into": the effect of
+ * each mode, the colour, the brightness and the profile. A part that
+ * "change" leaves out keeps what "into" has, so two taps before one
+ * request give one change with both. */
+void panel_led_merge(panel_led_change_t *into, const panel_led_change_t *change);
 /* The body of a change for the companion service: a JSON object with the
  * key of each mode that has one, the colour, the brightness and the
  * profile, as {"desktop":"breath","desktop_color":"#ff0000"}. What keeps

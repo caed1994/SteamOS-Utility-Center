@@ -35,6 +35,11 @@
 //   bodyp <room> <game> <profile>
 //                              prints the body of a change of the effect of
 //                              Game Mode and of the profile, as body does
+//   merge <room> <desktop> <game> <colour> <brightness> <profile>
+//         <desktop> <game> <colour> <brightness> <profile>
+//                              merges the two changes, the first and then the
+//                              second, into an empty one, and prints its
+//                              body as body does; "-" is no value
 //   mirror <room> <language> <fps> <cpu> <state> <source> <detail>
 //                              prints the line of the mirror in a room of
 //                              that size, in English for 0 and German for
@@ -44,6 +49,16 @@
 #include <string.h>
 
 #include "panel_led.h"
+
+static void fill(panel_led_change_t *change, const char *desktop, const char *game,
+                 const char *colour, int brightness, const char *profile)
+{
+    *change = (panel_led_change_t){.brightness = brightness};
+    snprintf(change->effect[PANEL_LED_DESKTOP], PANEL_LED_KEY, "%.15s", strcmp(desktop, "-") ? desktop : "");
+    snprintf(change->effect[PANEL_LED_GAME], PANEL_LED_KEY, "%.15s", strcmp(game, "-") ? game : "");
+    snprintf(change->colour, PANEL_LED_COLOUR, "%.7s", strcmp(colour, "-") ? colour : "");
+    snprintf(change->profile, PANEL_LED_KEY, "%.15s", strcmp(profile, "-") ? profile : "");
+}
 
 int main(void)
 {
@@ -106,6 +121,22 @@ int main(void)
         } else if (sscanf(line, "profile %d", &index) == 1) {
             const char *found = panel_led_profile(index);
             printf("%s\n", found ? found : "(none)");
+        } else if (strncmp(line, "merge ", 6) == 0) {
+            char d[2][16], g[2][16], c[2][8], p[2][16];
+            int b[2];
+            if (sscanf(line, "merge %d %15s %15s %7s %d %15s %15s %15s %7s %d %15s", &room, d[0], g[0],
+                       c[0], &b[0], p[0], d[1], g[1], c[1], &b[1], p[1]) != 11) {
+                printf("?\n");
+                continue;
+            }
+            panel_led_change_t into = {.brightness = -1}, one;
+            for (int i = 0; i < 2; i++) {
+                fill(&one, d[i], g[i], c[i], b[i], p[i]);
+                panel_led_merge(&into, &one);
+            }
+            if (room < 0 || room > (int)sizeof body) room = (int)sizeof body;
+            size_t length = panel_led_body(body, (size_t)room, &into);
+            printf("%s %zu\n", length ? body : "(empty)", length);
         } else if (sscanf(line, "bodyp %d %63s %63s", &room, other, key) == 3) {
             panel_led_change_t change = {.brightness = -1};
             snprintf(change.effect[PANEL_LED_GAME], PANEL_LED_KEY, "%.15s", strcmp(other, "-") ? other : "");
