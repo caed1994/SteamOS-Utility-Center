@@ -573,7 +573,8 @@ class WatcherCase(PipeCase):
 
     def launch(self, argv, **options):
         self.argvs.append(argv)
-        return subprocess.Popen([sys.executable, "-c", FAKE, self.mode]
+        mode = self.mode(argv) if callable(self.mode) else self.mode
+        return subprocess.Popen([sys.executable, "-c", FAKE, mode]
                                 + argv, **options)
 
     def written(self):
@@ -756,6 +757,7 @@ class WatcherTest(WatcherCase):
         self.assertGreater(self.watcher.sent_at, sent)
 
     def test_a_failure_names_the_reason_and_waits_longer_each_time(self):
+        self.watcher.slow = False
         self.mirror.colours()
         self.mode = "error"
         with self.assertLogs(screen.LOG, "WARNING") as logged:
@@ -807,6 +809,7 @@ class WatcherTest(WatcherCase):
                 self.watcher.close()
                 self.watcher.state = None
                 self.watcher.retry_at = 0.0
+                self.watcher.slow = False
                 self.mirror.colours()
                 self.mode = "silent"
                 self.dumped = objects()
@@ -853,6 +856,7 @@ class WatcherTest(WatcherCase):
     def test_a_videorate_that_stops_gives_way_to_watcher(self):
         """GStreamer 1.24 and 1.26 stop on the stream of gamescope when
         videorate has max-rate. This is the line that the panel showed."""
+        self.watcher.slow = False
         self.mirror.colours()
         self.mode = "videorate"
         with self.assertLogs(screen.LOG, "WARNING") as logged:
@@ -883,6 +887,64 @@ class WatcherTest(WatcherCase):
         self.assertTrue(os.path.exists(self.status))
         self.watcher.close()
         self.assertFalse(os.path.exists(self.status))
+
+
+class SlowReaderTest(WatcherCase):
+    """The slow reader, and the way back to a reader of each picture."""
+
+    SLOW = "min-buffers=%d" % screen.SLOW_BUFFERS
+
+    def test_the_capture_reads_slowly(self):
+        self.mirror.colours()
+        self.until(screen.RUNNING)
+        self.assertIn(self.SLOW, self.argvs[0])
+        self.assertTrue(self.watcher.slow)
+
+    def test_one_capture_that_stops_keeps_the_slow_reader(self):
+        """As at a change of the mode: the stream goes before a picture."""
+        modes = ["error"]
+        self.mode = lambda argv: modes.pop(0) if modes else "frames"
+        self.mirror.colours()
+        self.until(screen.RUNNING)
+        self.assertEqual(len(self.argvs), 2)
+        self.assertIn(self.SLOW, self.argvs[1])
+        self.assertTrue(self.watcher.slow)
+        self.assertEqual(self.watcher.slow_failures, 0)
+
+    def test_a_slow_reader_that_stops_twice_gives_way(self):
+        self.mode = lambda argv: "error" if self.SLOW in argv else "frames"
+        self.mirror.colours()
+        with self.assertLogs(screen.LOG, "WARNING") as logged:
+            self.until(screen.RUNNING)
+        self.assertEqual([self.SLOW in argv for argv in self.argvs],
+                         [True, True, False])
+        self.assertFalse(self.watcher.slow)
+        self.assertIn("videorate", self.argvs[-1])
+        self.assertTrue(any("slow reader gives no picture" in line
+                            for line in logged.output))
+
+    def test_a_slow_reader_with_no_link_gives_way_too(self):
+        self.mode = "silent"
+        self.mirror.colours()
+        for _turn in range(12):
+            self.clock.now += screen.LINK_SECONDS
+            self.watcher.step()
+            if not self.watcher.slow:
+                break
+        self.assertFalse(self.watcher.slow)
+        self.assertEqual(sum(self.SLOW in argv for argv in self.argvs),
+                         screen.SLOW_TRIES)
+        # A link that is active is a still screen, and the slow reader stays.
+        self.watcher.slow = True
+        self.watcher.slow_failures = 0
+        self.watcher.close()
+        self.mirror.colours()
+        self.until(screen.STARTING)
+        self.dumped = objects(own=(self.watcher.pipeline.pid, "active", None))
+        self.clock.now += screen.LINK_SECONDS
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.WAITING)
+        self.assertTrue(self.watcher.slow)
 
 
 class FakeShare:
@@ -950,8 +1012,7 @@ class DesktopWatcherTest(WatcherCase):
         argv = self.argvs[0]
         self.assertEqual(argv[2:5], ["pipewiresrc", "fd=%d" % self.stream.fd,
                                      "path=77"])
-        # No limit of the rate: KWin sent no picture with it on one PC.
-        self.assertNotIn("video/x-raw,max-framerate=15/1", argv)
+        self.assertIn("min-buffers=%d" % screen.SLOW_BUFFERS, argv)
         self.clock.now += screen.CHECK_SECONDS
         self.watcher.step()
         self.watcher._report(self.clock.now + screen.STATUS_SECONDS)
@@ -978,7 +1039,9 @@ class DesktopWatcherTest(WatcherCase):
         self.until(screen.RUNNING)
         self.assertEqual(self.shares, [])
         self.assertIn("target-object=gamescope", self.argvs[0])
-        self.assertNotIn("video/x-raw,max-framerate=15/1", self.argvs[0])
+        # No fd of a portal before the node.
+        self.assertEqual(self.argvs[0][2:4],
+                         ["pipewiresrc", "target-object=gamescope"])
 
     def test_a_refused_dialog_holds_until_a_new_desktop(self):
         share = self.asking()
@@ -1033,6 +1096,24 @@ class DesktopWatcherTest(WatcherCase):
         self.watcher.step()
         self.assertEqual(len(self.shares), 1)
 
+    def test_a_slow_reader_with_no_picture_gives_way(self):
+        """KWin sends a picture when a reader comes. A slow reader with no
+        picture is thus a reader that does not work here."""
+        slow = "min-buffers=%d" % screen.SLOW_BUFFERS
+        self.mode = lambda argv: "silent" if slow in argv else "frames"
+        self.asking()
+        for _turn in range(40):
+            if self.shares[-1].state == screen.SHARE_ASKING:
+                self.shares[-1].give(self.stream)
+            self.clock.now += screen.LINK_SECONDS / 2
+            self.watcher.step()
+            if self.watcher.state == screen.RUNNING:
+                break
+        self.assertEqual(self.watcher.state, screen.RUNNING)
+        self.assertFalse(self.watcher.slow)
+        self.assertEqual([slow in argv for argv in self.argvs],
+                         [True, True, False])
+
     def test_a_dialog_waits_through_a_start_of_the_led_service(self):
         share = self.asking()
         # The LED service starts again: its pipe goes and comes back.
@@ -1067,11 +1148,29 @@ class DesktopWatcherTest(WatcherCase):
 class CommandTest(unittest.TestCase):
 
     def test_the_pipeline_uses_the_elements_that_are_checked(self):
-        argv = screen.command("gamescope")
-        names = [argv[2]] + [argv[index + 1] for index, word in enumerate(argv)
-                             if word == "!"]
-        used = {name for name in names if not name.startswith("video/")}
+        used = set()
+        for slow in (False, True):
+            argv = screen.command("gamescope", slow=slow)
+            names = [argv[2]] + [argv[index + 1]
+                                 for index, word in enumerate(argv)
+                                 if word == "!"]
+            used |= {name for name in names if not name.startswith("video/")}
         self.assertEqual(used, set(screen.ELEMENTS))
+
+    def test_the_slow_reader_holds_two_buffers(self):
+        """And takes one picture each 1/RATE s, with no videorate and no
+        queue that drops pictures: a dropped picture frees its buffer."""
+        argv = screen.command("gamescope", slow=True)
+        at = argv.index("pipewiresrc")
+        self.assertEqual(argv[at + 1:at + 6],
+                         ["target-object=gamescope",
+                          "client-name=" + screen.CLIENT, "do-timestamp=true",
+                          "min-buffers=2", "max-buffers=2"])
+        self.assertEqual(argv[argv.index("identity") + 1],
+                         "sleep-time=%d" % (1000000 // screen.RATE))
+        self.assertNotIn("videorate", argv)
+        self.assertNotIn("leaky=downstream", argv)
+        self.assertEqual(argv[-3:], ["fdsink", "fd=1", "sync=false"])
 
     def test_it_scales_in_two_steps_to_the_picture_size(self):
         argv = screen.command("gamescope")

@@ -560,7 +560,7 @@ GST_INSPECT = "gst-inspect-1.0"
 PW_DUMP = "pw-dump"
 # The elements of the pipeline. pipewiresrc is in a package of its own on
 # many systems, and the others are in the base plugins.
-ELEMENTS = ("pipewiresrc", "videorate", "queue", "videoscale",
+ELEMENTS = ("pipewiresrc", "identity", "videorate", "queue", "videoscale",
             "videoconvert", "fdsink")
 # The stream of the screen in Game Mode, and the name of the reader.
 SCREEN_NODE = "gamescope"
@@ -584,6 +584,10 @@ ASK_SECONDS = 0.5
 # How long Watcher waits for the end of a share after the end of its capture.
 # KWin can end the stream a moment before the portal closes the session.
 SHARE_SECONDS = 1.0
+# The buffers of the slow reader, and how many of its captures in a row can
+# give no picture before Watcher reads as before. See command.
+SLOW_BUFFERS = 2
+SLOW_TRIES = 2
 # How long a capture waits for a new reader of the pipe. The LED service
 # starts again at each change of its settings, and its pipe goes and comes
 # back. A new capture is a new reader of the stream of gamescope, so the
@@ -607,7 +611,7 @@ PROFILE_SECONDS = 2.0
 TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
 
 
-def command(target, by_id=False, rate=True, fd=None, cap=False):
+def command(target, by_id=False, rate=True, fd=None, slow=False):
     """Returns the argument list of the pipeline.
 
     GStreamer before 1.22 has no target-object. A pipeline for that version
@@ -615,9 +619,11 @@ def command(target, by_id=False, rate=True, fd=None, cap=False):
     of its node and a file descriptor that reads only that node, so a
     pipeline with fd also names the node by its id.
 
-    With cap, the pipeline asks the stream for RATE pictures each second at
-    the most. Only the probe uses it (portal.probe): on one PC, a capture of
-    KWin with it gave no picture and no error.
+    The slow reader holds the pictures that it reads. pipewiresrc has
+    SLOW_BUFFERS buffers, and identity takes one picture each 1/RATE s. In
+    the time between, the stream has no free buffer, so it copies no
+    picture for this reader. In the container this halved the cost of the
+    test stream. The slow reader has no videorate.
 
     videorate drops the pictures that come too soon. Its output must have a
     fixed rate: the stream of gamescope has the rate 0/1 and no duration on
@@ -628,14 +634,17 @@ def command(target, by_id=False, rate=True, fd=None, cap=False):
     source = ["pipewiresrc"] + (["fd=%d" % fd] if fd is not None else [])
     source += [("path=%s" if by_id or fd is not None else "target-object=%s")
                % target, "client-name=" + CLIENT, "do-timestamp=true"]
-    if cap:
-        source += ["!", "video/x-raw,max-framerate=%d/1" % RATE]
-    if rate:
-        source += ["!", "videorate", "drop-only=true",
-                   "!", "video/x-raw,framerate=%d/1" % RATE]
+    if slow:
+        source += ["min-buffers=%d" % SLOW_BUFFERS,
+                   "max-buffers=%d" % SLOW_BUFFERS,
+                   "!", "identity", "sleep-time=%d" % (1000000 // RATE)]
+    else:
+        if rate:
+            source += ["!", "videorate", "drop-only=true",
+                       "!", "video/x-raw,framerate=%d/1" % RATE]
+        source += ["!", "queue", "leaky=downstream", "max-size-buffers=1"]
     return ([GST_LAUNCH, "-q"] + source
-            + ["!", "queue", "leaky=downstream", "max-size-buffers=1",
-               "!", "videoscale", "method=nearest-neighbour",
+            + ["!", "videoscale", "method=nearest-neighbour",
                "!", "video/x-raw,width=%d,height=%d"
                % (COARSE * WIDTH, COARSE * HEIGHT),
                "!", "videoscale", "method=bilinear2",
@@ -1108,6 +1117,9 @@ class Watcher:
         self.picture = Picture()
         self.by_id = False
         self.rate = True
+        self.slow = True
+        self.slow_failures = 0
+        self.pictured = False
         self.pending = None
         self.used_at = -math.inf
         self.lost_at = -math.inf
@@ -1269,7 +1281,8 @@ class Watcher:
             self.retry_at = now + CHECK_SECONDS
             return LOOK_SECONDS
         return self._launch(now, command(node if self.by_id else SCREEN_NODE,
-                                         self.by_id, self.rate))
+                                         self.by_id, self.rate,
+                                         slow=self.slow))
 
     def _begin_desktop(self, now):
         """Starts a share of the desktop screen, and then its capture."""
@@ -1314,7 +1327,7 @@ class Watcher:
         stream = share.stream
         self.node = stream.node
         return self._launch(now, command(str(stream.node), rate=self.rate,
-                                         fd=stream.fd),
+                                         fd=stream.fd, slow=self.slow),
                             keep=(stream.fd,))
 
     def _launch(self, now, argv, keep=()):
@@ -1325,6 +1338,7 @@ class Watcher:
             self._fail(now, str(exc))
             return LOOK_SECONDS
         self.pipeline = pipeline
+        self.pictured = False
         self.picture = Picture()
         self.pending = None
         self.used_at = -math.inf
@@ -1350,6 +1364,9 @@ class Watcher:
         now = self.clock()
         if picture is not None:
             self.pending = picture
+            if self.slow and not self.pictured:
+                self.slow_failures = 0
+            self.pictured = True
         if self.pending is not None and now >= due:
             self._use(now)
         elif self.sent is not None and now - self.sent_at >= REPEAT_SECONDS:
@@ -1368,6 +1385,9 @@ class Watcher:
                 self.by_id = True
                 self._stop()
                 self._set(STARTING)
+                return
+            if self.slow and not self.pictured:
+                self._slow_failed(detail or "it stopped")
                 return
             if self.rate and detail.startswith("videorate"):
                 # This videorate cannot drop the pictures. Try again at
@@ -1430,7 +1450,9 @@ class Watcher:
         if link is not None and link[0] == "active":
             self._set(WAITING)
         elif now - self.started >= LINK_SECONDS:
-            if link is None:
+            if self.slow:
+                self._slow_failed("no active link to gamescope")
+            elif link is None:
                 self._fail(now, "no link to gamescope")
             else:
                 self._fail(now, "link " + ": ".join(part for part in link
@@ -1451,7 +1473,26 @@ class Watcher:
         self.source = found or ("%dx%d" % (stream.width, stream.height)
                                 if stream is not None else "")
         if self.state == STARTING and now - self.started >= LINK_SECONDS:
-            self._set(WAITING)
+            if self.slow:
+                self._slow_failed("no picture from the desktop")
+            else:
+                self._set(WAITING)
+
+    def _slow_failed(self, detail):
+        """A capture of the slow reader that gave no picture.
+
+        A capture can end for a different reason, as at a change of the
+        mode. So Watcher reads as before only after SLOW_TRIES of them in a
+        row, until it starts again.
+        """
+        self.slow_failures += 1
+        LOG.info("mirror: the slow reader gave no picture (%s)", detail)
+        if self.slow_failures >= SLOW_TRIES:
+            LOG.warning("mirror: the slow reader gives no picture here, so "
+                        "the capture reads each picture")
+            self.slow = False
+        self._stop()
+        self._set(STARTING)
 
     def _share_ended(self, now):
         """The portal closed the share, or the desktop ended."""

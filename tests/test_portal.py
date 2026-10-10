@@ -519,7 +519,7 @@ CHILD = textwrap.dedent("""
             os.write(1, frame)
         time.sleep(0.02)
 """ % screen.FRAME)
-LIMIT = "video/x-raw,max-framerate=15/1"
+SLOW = "min-buffers=%d" % screen.SLOW_BUFFERS
 
 
 @unittest.skipIf(DBUS is None, "the carried dbus_next is not there")
@@ -571,8 +571,7 @@ class ProbeTest(unittest.TestCase):
         self.assertIn("Screen: node 42, 1920 x 1080", text)
         self.assertIn("It is kept for the next start", text)
         self.assertIn("Compositor: not found", text)
-        for step in ("A capture", "A second reader",
-                     "A new share with the limit"):
+        for step in ("A capture as before", "The slow reader"):
             self.assertRegex(text, step + r": [1-9][0-9.]* pictures each")
         self.assertNotIn("no picture came", text)
         self.assertEqual(portal.read_token(self.path), "new-token")
@@ -583,38 +582,34 @@ class ProbeTest(unittest.TestCase):
         self.assertIn((portal.SESSION, SESSION), self.fake.closed)
         self.assertTrue(self.bus.disconnected)
 
-    def test_each_step_changes_one_thing(self):
-        """A capture as Watcher reads, a second reader of the same share,
-        and a new share with the limit of the rate."""
+    def test_a_capture_as_before_and_then_the_slow_reader(self):
         self.assertEqual(self.probe(), 0)
-        first, second, third = self.argv
-        self.assertNotIn(LIMIT, first)
-        self.assertNotIn(LIMIT, second)
-        self.assertIn(LIMIT, third)
-        # Each reader has its own fd from the portal.
-        self.assertNotEqual(first[3], second[3])
-        self.assertEqual(self.fake.remotes, 3)
+        before, slow = self.argv
+        self.assertNotIn(SLOW, before)
+        self.assertIn("videorate", before)
+        self.assertIn(SLOW, slow)
+        # Each reader has its own fd from the portal, of the same share.
+        self.assertNotEqual(before[3], slow[3])
+        self.assertEqual(self.fake.remotes, 2)
         sessions = [member for member, _options in self.fake.asked
                     if member == "CreateSession"]
-        self.assertEqual(len(sessions), 2)
-        self.assertEqual(self.fake.closed.count((portal.SESSION, SESSION)), 2)
+        self.assertEqual(len(sessions), 1)
 
     def test_a_step_with_no_picture_says_that_gst_runs(self):
-        self.behave = lambda argv: "nothing" if LIMIT in argv else "frames"
+        self.behave = lambda argv: "nothing" if SLOW in argv else "frames"
         self.assertEqual(self.probe(), 1)
         text = self.text()
-        self.assertIn("A new share with the limit: 0.0 pictures", text)
+        self.assertIn("The slow reader: 0.0 pictures", text)
         self.assertIn("gst-launch-1.0 runs, but no picture came in 0 s", text)
         self.assertNotIn("stopped", text)
-        self.assertRegex(text, r"A second reader: [1-9]")
+        self.assertRegex(text, r"A capture as before: [1-9]")
 
     def test_a_step_whose_gst_stops_says_why(self):
-        self.behave = lambda argv: ("error" if argv[3] != self.argv[0][3]
-                                    and LIMIT not in argv else "frames")
+        self.behave = lambda argv: "error" if SLOW in argv else "frames"
         self.assertEqual(self.probe(), 1)
         text = self.text()
         self.assertIn("gst-launch-1.0 stopped: pipewiresrc: stream error", text)
-        self.assertRegex(text, r"A new share with the limit: [1-9]")
+        self.assertRegex(text, r"A capture as before: [1-9]")
 
     def test_a_second_start_gives_the_kept_token(self):
         portal.write_token(self.path, "old-token")
@@ -623,8 +618,7 @@ class ProbeTest(unittest.TestCase):
         tokens = [options.get("restore_token")
                   for member, options in self.fake.asked
                   if member == "SelectSources"]
-        # The new share of the third step gives the token of the first.
-        self.assertEqual(tokens, ["old-token", "new-token"])
+        self.assertEqual(tokens, ["old-token"])
         self.assertNotIn("old-token", self.text())
 
     def test_a_refusal(self):

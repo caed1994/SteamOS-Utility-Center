@@ -221,10 +221,15 @@ steamos-utility-center --screen-probe
 ```
 
 It asks the portal for the screen, so a dialog of KDE can come. It then
-measures 10 s for each step: no capture, a capture, a second reader of the
-same share, and a new share with a limit of 15 pictures each second. For each
-step it says how many pictures came and what the capture costs KWin. Show
-something that moves while it measures, for example a video.
+measures 10 s for each step: no capture, a capture that reads each picture,
+and the slow reader that the mirror uses. For each step it says how many
+pictures came and what the capture costs KWin. Show something that moves
+while it measures, for example a video.
+
+The slow reader has two buffers and takes one picture each 1/15 s. Between
+two pictures the screen finds no free buffer, so it copies no picture for
+the mirror. With a test stream like that of gamescope, this halved the work
+of the stream. For KWin, the probe measures it.
 
 ### Desktop Mode
 

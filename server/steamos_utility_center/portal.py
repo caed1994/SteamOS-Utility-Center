@@ -609,25 +609,22 @@ async def _share(cast, seconds, out, launch, proc, path, clock, cpu):
     out("Screen: node %d, %d x %d" % (stream.node, stream.width, stream.height))
     try:
         return await _measure(cast, stream, seconds, out, launch, proc, clock,
-                              cpu, path, version, cursors)
+                              cpu)
     finally:
         os.close(stream.fd)
 
 
-async def _measure(cast, stream, seconds, out, launch, proc, clock, cpu, path,
-                   version, cursors):
-    """Measures the compositor with no capture, and then three captures.
+async def _measure(cast, stream, seconds, out, launch, proc, clock, cpu):
+    """Measures the compositor with no capture, and then two captures.
 
-    The first capture reads as Watcher does. The second one is a second
-    reader of the same share, and the third one is a new share with the
-    limit of the rate. Each one changes one thing, so a capture with no
-    picture names its cause.
+    The first capture reads each picture, as Watcher did before. The second
+    one is the slow reader that Watcher uses now (screen.command). It needs
+    a reader of its own, so it reads through a second fd.
     """
     compositor = find_process(COMPOSITORS, proc)
-    out("Measuring %d s for each step: no capture, a capture, a second "
-        "reader, and a new share with a limit of %d pictures each second. "
-        "Show something that moves, for example a video."
-        % (seconds, screen.RATE))
+    out("Measuring %d s for each step: no capture, a capture as before, and "
+        "the slow reader. Show something that moves, for example a video."
+        % seconds)
     before = cpu(compositor, proc) if compositor else None
     await asyncio.sleep(seconds)
     if compositor is None:
@@ -636,41 +633,26 @@ async def _measure(cast, stream, seconds, out, launch, proc, clock, cpu, path,
         out("Compositor with no capture: %s of one core"
             % _per_cent(_load(compositor, before, seconds, cpu, proc)))
     tools = (seconds, launch, proc, clock, cpu, compositor, out)
-    good = await _step("A capture", stream.node, stream.fd, False, *tools)
+    good = await _step("A capture as before", stream.node, stream.fd, False,
+                       *tools)
     try:
         # Each reader needs its own connection to PipeWire.
         fd = await cast.remote()
     except PortalError as exc:
-        out("A second reader: no fd from the portal: %s" % exc.detail)
-        good = False
-    else:
-        try:
-            good &= await _step("A second reader", stream.node, fd, False,
-                                *tools)
-        finally:
-            os.close(fd)
-    await cast.close()
-    try:
-        again = await cast.open(read_token(path), version, cursors,
-                                DIALOG_SECONDS)
-    except PortalError as exc:
-        out("A new share: the portal gave no screen: %s" % exc.detail)
+        out("The slow reader: no fd from the portal: %s" % exc.detail)
         return 1
-    if again.token:
-        write_token(path, again.token)
     try:
-        good &= await _step("A new share with the limit", again.node,
-                            again.fd, True, *tools)
+        good &= await _step("The slow reader", stream.node, fd, True, *tools)
     finally:
-        os.close(again.fd)
+        os.close(fd)
     return 0 if good else 1
 
 
-async def _step(name, node, fd, cap, seconds, launch, proc, clock, cpu,
+async def _step(name, node, fd, slow, seconds, launch, proc, clock, cpu,
                 compositor, out):
     """Reads the screen for `seconds`, and says what came. True for pictures."""
     frames, took, load, busy, alive, problem = await _capture(
-        node, fd, cap, seconds, launch, proc, clock, cpu, compositor)
+        node, fd, slow, seconds, launch, proc, clock, cpu, compositor)
     out("%s: %.1f pictures each second, pipeline %s of one core, compositor "
         "%s of one core" % (name, frames / took if took > 0 else 0.0,
                             _per_cent(load), _per_cent(busy)))
@@ -681,11 +663,11 @@ async def _step(name, node, fd, cap, seconds, launch, proc, clock, cpu,
     return alive and frames > 0
 
 
-async def _capture(node, fd, cap, seconds, launch, proc, clock, cpu,
+async def _capture(node, fd, slow, seconds, launch, proc, clock, cpu,
                    compositor):
     """Reads the screen for `seconds`. Returns the counts and the loads."""
     loop = asyncio.get_running_loop()
-    pipeline = screen.Pipeline(screen.command(str(node), fd=fd, cap=cap),
+    pipeline = screen.Pipeline(screen.command(str(node), fd=fd, slow=slow),
                                launch=launch, keep=(fd,))
     try:
         pipeline.start()
