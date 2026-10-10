@@ -593,11 +593,13 @@ PROFILE_SECONDS = 2.0
 TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
 
 
-def command(target, by_id=False, rate=True):
+def command(target, by_id=False, rate=True, fd=None):
     """Returns the argument list of the pipeline.
 
     GStreamer before 1.22 has no target-object. A pipeline for that version
-    names the node by its id with path=.
+    names the node by its id with path=. The screen cast portal gives the id
+    of its node and a file descriptor that reads only that node, so a
+    pipeline with fd also names the node by its id.
 
     videorate drops the pictures that come too soon. Its output must have a
     fixed rate: the stream of gamescope has the rate 0/1 and no duration on
@@ -605,8 +607,9 @@ def command(target, by_id=False, rate=True):
     program with a failed assertion. With rate=False, the pipeline has no
     videorate, and Watcher drops the pictures itself.
     """
-    source = ["pipewiresrc", ("path=%s" if by_id else "target-object=%s")
-              % target, "client-name=" + CLIENT, "do-timestamp=true"]
+    source = ["pipewiresrc"] + (["fd=%d" % fd] if fd is not None else [])
+    source += [("path=%s" if by_id or fd is not None else "target-object=%s")
+               % target, "client-name=" + CLIENT, "do-timestamp=true"]
     if rate:
         source += ["!", "videorate", "drop-only=true",
                    "!", "video/x-raw,framerate=%d/1" % RATE]
@@ -846,9 +849,11 @@ def describe(lines):
 class Pipeline:
     """The gst-launch-1.0 child, and the pictures that it gives."""
 
-    def __init__(self, argv, launch=subprocess.Popen):
+    def __init__(self, argv, launch=subprocess.Popen, keep=()):
         self.argv = argv
         self.launch = launch
+        # The file descriptors that the child gets, as the fd of the portal.
+        self.keep = tuple(keep)
         self.process = None
         self.ended = False
         self._buffer = bytearray()
@@ -860,10 +865,11 @@ class Pipeline:
         return None if self.process is None else self.process.pid
 
     def start(self):
+        extra = {"pass_fds": self.keep} if self.keep else {}
         self.process = self.launch(
             self.argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, start_new_session=True,
-            env=dict(os.environ, LC_ALL="C"))
+            env=dict(os.environ, LC_ALL="C"), **extra)
         for stream in (self.process.stdout, self.process.stderr):
             os.set_blocking(stream.fileno(), False)
 

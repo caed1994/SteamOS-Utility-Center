@@ -205,6 +205,21 @@ pixels. A screen gives light by the sRGB curve, and an LED gives light in
 proportion to its value. With the values, the middle tones were too bright,
 and the colours went pale.
 
+The mirror of the desktop is a later step. On a Wayland desktop, KWin gives
+its picture only through the screen cast portal, and a person must allow the
+share one time. A probe tries this now. Run it in a terminal on the desktop,
+as your normal user:
+
+```
+steamos-utility-center --screen-probe
+```
+
+It asks the portal for the screen, so a dialog of KDE can come. It then reads
+the screen for 10 s and says how many pictures came and what the capture
+costs. Show something that moves while it measures, for example a video. Run
+it a second time to see if the portal keeps the approval: then no dialog
+comes.
+
 ### Desktop Mode
 
 Steam sets the LEDs in Game Mode only. The panel's **Desktop mode** page gives

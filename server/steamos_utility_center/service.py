@@ -1888,6 +1888,12 @@ def build_parser():
                        help="read the screen for the mirror effect of the "
                             "LED bar (the user service runs this as your "
                             "normal user, not with sudo)")
+    modes.add_argument("--screen-probe", action="store_true",
+                       dest="screen_probe",
+                       help="ask the screen cast portal for the screen of "
+                            "the desktop, measure a capture, and say what "
+                            "was found (run it on the desktop as your normal "
+                            "user, not with sudo)")
     modes.add_argument("--watch-phone", action="store_true",
                        dest="watch_phone",
                        help="flash on your phone's notifications, which KDE "
@@ -1969,6 +1975,11 @@ def main(argv=None):
     if args.mirror:
         configure_logging("info")
         return run_mirror()
+
+    if args.screen_probe:
+        configure_logging("warning")
+        from . import portal
+        return portal.probe()
 
     overrides = {
         "DEVICE": args.device,
