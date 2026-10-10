@@ -288,8 +288,9 @@ int main(int argc,char **argv)
      * the brightness, "led-look-fire" that layer for a scene with colours of
      * its own, "led-none" a PC with no LED module, "led-applying" a tap that
      * waits to go, "led-refused" a change the PC refused for want of the
-     * sudo rule, and "led-mirror" the mirror in Game Mode with the line of
-     * its status. */
+     * sudo rule, "led-mirror" the mirror in Game Mode with the line of its
+     * status and the button of its profile, and "led-profiles" the menu of
+     * that button. */
     if(argc>2&&strncmp(argv[2],"led",3)==0){
         bool fire=strcmp(argv[2],"led-look-fire")==0;
         bool coloured=strcmp(argv[2],"led-colour")==0||strcmp(argv[2],"led-old")==0
@@ -302,9 +303,11 @@ int main(int argc,char **argv)
         snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"%s",
                  coloured?"breath":fire?"fire":"aurora");
         snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"fire");
-        if(strcmp(argv[2],"led-mirror")==0){
+        bool profiles=strcmp(argv[2],"led-profiles")==0;
+        if(profiles||strcmp(argv[2],"led-mirror")==0){
             snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"mirror");
             s.led_mirror=(panel_led_mirror_t){.state="running",.fps=15,.cpu=12,.source="2560x1440"};
+            snprintf(s.led_profile,sizeof s.led_profile,"pop");
         }
         panel_ui_update(&s);
         lv_obj_t *band=band_in(lv_screen_active());
@@ -317,6 +320,10 @@ int main(int argc,char **argv)
             if(fire)snprintf(said,sizeof said,"%s %d %%",panel_text(TXT_LED_BRIGHTNESS),50);
             else snprintf(said,sizeof said,"%s • %d %%",panel_text(TXT_COLOUR_ORANGE),50);
             lv_obj_t *words=find_label(lv_screen_active(),said);
+            if(words)lv_obj_send_event(lv_obj_get_parent(words),LV_EVENT_CLICKED,NULL);
+        }
+        if(profiles){
+            lv_obj_t *words=find_label(lv_screen_active(),panel_text(TXT_PROFILE_POP));
             if(words)lv_obj_send_event(lv_obj_get_parent(words),LV_EVENT_CLICKED,NULL);
         }
         bool applying=strcmp(argv[2],"led-applying")==0,refused=strcmp(argv[2],"led-refused")==0;

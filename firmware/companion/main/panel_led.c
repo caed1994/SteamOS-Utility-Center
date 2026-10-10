@@ -78,14 +78,15 @@ static const struct {
     {"#ffffff", TXT_COLOUR_WHITE},
 };
 
-/* screen.PROFILES, in its order. */
+/* screen.PROFILES, in its order, with what each does. */
 static const struct {
     const char *key;
     panel_text_id_t name;
+    panel_text_id_t what;
 } profiles[PANEL_LED_PROFILES] = {
-    {"cinematic", TXT_PROFILE_CINEMATIC},
-    {"pop", TXT_PROFILE_POP},
-    {"solid", TXT_PROFILE_SOLID},
+    {"cinematic", TXT_PROFILE_CINEMATIC, TXT_PROFILE_CINEMATIC_WHAT},
+    {"pop", TXT_PROFILE_POP, TXT_PROFILE_POP_WHAT},
+    {"solid", TXT_PROFILE_SOLID, TXT_PROFILE_SOLID_WHAT},
 };
 
 static const effect_t *effects(panel_led_mode_t mode, int *count)
@@ -195,6 +196,11 @@ int panel_led_profile_find(const char *key)
 panel_text_id_t panel_led_profile_name(int index)
 {
     return index >= 0 && index < PANEL_LED_PROFILES ? profiles[index].name : TXT_LED_UNKNOWN;
+}
+
+panel_text_id_t panel_led_profile_what(int index)
+{
+    return index >= 0 && index < PANEL_LED_PROFILES ? profiles[index].what : TXT_LED_UNKNOWN;
 }
 
 bool panel_led_rgb(const char *colour, uint32_t *rgb)

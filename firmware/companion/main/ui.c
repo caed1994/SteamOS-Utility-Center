@@ -201,6 +201,8 @@ static void arrange_forget(void);
 static lv_obj_t *look_layer;
 /* The menu that chooses the sensor of a tile, and which tile it is for. */
 static lv_obj_t *sensor_layer;
+/* The menu that chooses the profile of the mirror. See profile_open. */
+static lv_obj_t *profile_layer;
 static bool sensor_gpu;
 /* The key of each row of the open menu, kept when it opens: a new state
  * while it is open can bring the list in another order. */
@@ -797,13 +799,14 @@ static void pads_forget(void);
 static void pc_forget(void);
 static void self_forget(void);
 static void look_close(void);
+static void profile_close(void);
 static void alarm_clock_close(void);
 bool panel_ui_home(void)
 {
     if(!band||setup_screen||update_layer)return false;
     /* No answer to the question, which is what Cancel sends: nothing. */
     if(overlay){lv_obj_delete(overlay);overlay=NULL;}
-    sensor_close();look_close();alarm_clock_close();settings_forget();pads_forget();pc_forget();
+    sensor_close();look_close();profile_close();alarm_clock_close();settings_forget();pads_forget();pc_forget();
     /* Only when it is open: self_drop starts the counts of the frames and
      * of the touches again, and a press of the key is no visit of that
      * page. */
@@ -1484,8 +1487,8 @@ static void sensor_row(lv_obj_t *box,int row,int y,const char *name,int celsius,
  * screen, as a question is. */
 static void sensor_menu(bool gpu)
 {
-    if(sensor_layer||look_layer||alarm_clock_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen||update_layer
-       ||setup_screen)return;
+    if(sensor_layer||look_layer||profile_layer||alarm_clock_layer||overlay||settings_screen||pads_screen||pc_screen
+       ||self_screen||update_layer||setup_screen)return;
     const panel_state_t *s=&last_state;
     int count=!last_state_valid?0:gpu?s->gpu_sensor_count:s->cpu_sensor_count;
     if(count<0)count=0;
@@ -1770,7 +1773,7 @@ static lv_obj_t *self_card(lv_obj_t *column,panel_text_id_t title,const int *row
 void panel_ui_self_open(void)
 {
     if(self_screen||pc_screen||pads_screen||settings_screen||setup_screen||sensor_layer||look_layer
-       ||alarm_clock_layer)return;
+       ||profile_layer||alarm_clock_layer)return;
     self_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
     slide_ready(self_screen);
     button(self_screen,panel_text(TXT_BACK),12,8,112,44,self_close,0);
@@ -1885,6 +1888,7 @@ const char *panel_ui_where(void)
     if(setup_screen)return "the setup";
     if(overlay)return "a question";
     if(sensor_layer)return "a choice of sensor";
+    if(profile_layer)return "the profile of the mirror";
     if(look_layer)return "the colour of the LED bar";
     if(alarm_clock_layer)return "the alarm clock";
     if(arrange_screen)return "the order of the pages";
@@ -1967,11 +1971,15 @@ static int8_t look_lit[PANEL_LED_COLOURS];
 static bool look_with_colours;
 /* The button of the profile of the mirror, with its words. It stands
  * beside the name of the effect on the card of Game Mode, for the mirror
- * alone, and the name then makes room for it. A tap shows the next
- * profile, and the profile goes to the PC as a colour does. */
+ * alone, and the name then makes room for it. A tap opens the menu of the
+ * profiles, and the profile goes to the PC as a colour does. */
 static lv_obj_t *profile_button,*profile_words;
 static led_pick_t profile_pick={.wanted=-1};
 static bool profile_beside;
+/* The name on each row of the menu, and what the row shows: -1 for
+ * nothing yet, 0 dark, 1 lit. */
+static lv_obj_t *profile_names[PANEL_LED_PROFILES];
+static int8_t profile_lit[PANEL_LED_PROFILES];
 #define PROFILE_X 224
 #define PROFILE_WIDE 140
 #define PROFILE_NAME_WIDE 120
@@ -2138,18 +2146,73 @@ static void led_step(lv_event_t *e)
     led_later();
     led_show(&last_state);
 }
-/* The next profile of the mirror, round the end of the list. */
+static void profile_close(void)
+{
+    if(!profile_layer)return;
+    lv_obj_delete(profile_layer);profile_layer=NULL;
+    for(int i=0;i<PANEL_LED_PROFILES;i++)profile_names[i]=NULL;
+}
+static void profile_outside(lv_event_t *e){(void)e;profile_close();}
+/* The mark and the accent on the row of the profile at "index": the
+ * choice, or the profile of the PC. */
+static void profile_mark(int index)
+{
+    for(int i=0;profile_layer&&i<PANEL_LED_PROFILES;i++){
+        int8_t lit=i==index;
+        if(lit==profile_lit[i])continue;
+        profile_lit[i]=lit;
+        char said[48];
+        snprintf(said,sizeof said,"%s%s",lit?LV_SYMBOL_OK "  ":"",panel_text(panel_led_profile_name(i)));
+        set_text(profile_names[i],said);
+        set_text_colour(profile_names[i],lit?ACCENT_TEXT:TEXT);
+    }
+}
+/* A tap on a row chooses and closes the menu, and the choice goes after
+ * LED_WAIT_MS with whatever else the page chose. The profile of the PC,
+ * with no other on its way to it, is no change. Each status that shows a
+ * PC that cannot take a profile closes the menu, so the menu that takes a
+ * tap belongs to a PC that can. */
+static void profile_chosen(lv_event_t *e)
+{
+    int row=(int)(intptr_t)lv_event_get_user_data(e);
+    feedback();
+    profile_close();
+    if(!profile_pick.sent&&row==panel_led_profile_find(last_state.led_profile))profile_pick.wanted=-1;
+    else{profile_pick.wanted=row;profile_pick.sent=false;led_later();}
+    led_cards[PANEL_LED_GAME].refused=false;
+    led_show(&last_state);
+}
+/* The profiles from the top, each with what it does, and a mark on the
+ * one that the button shows. A tap beside the rows closes the menu, as on
+ * the menu of a sensor. */
+static void profile_open(void)
+{
+    if(profile_layer||sensor_layer||look_layer||alarm_clock_layer||overlay||settings_screen||pads_screen||pc_screen
+       ||self_screen||update_layer||setup_screen)return;
+    int high=SENSOR_TITLE_ROOM+PANEL_LED_PROFILES*SENSOR_ROW_STEP+SENSOR_BOX_END;
+    profile_layer=panel(lv_screen_active(),0,0,480,480,BG,false);
+    lv_obj_set_style_bg_opa(profile_layer,LV_OPA_90,0);
+    lv_obj_add_event_cb(profile_layer,profile_outside,LV_EVENT_CLICKED,NULL);
+    lv_obj_t *box=panel(profile_layer,20,(480-high)/2,440,high,CARD,true);
+    lv_obj_remove_flag(box,LV_OBJ_FLAG_CLICKABLE);
+    text_at(box,panel_text(TXT_PROFILE_TITLE),20,18,400,&panel_font_20,TEXT);
+    for(int i=0;i<PANEL_LED_PROFILES;i++){
+        lv_obj_t *b=button(box,"",20,SENSOR_TITLE_ROOM+i*SENSOR_ROW_STEP,400,44,profile_chosen,i);
+        profile_names[i]=text_at(b,"",14,12,150,&panel_font_16,TEXT);
+        lv_obj_set_height(profile_names[i],lv_font_get_line_height(&panel_font_16));
+        lv_obj_t *what=text_at(b,panel_text(panel_led_profile_what(i)),164,14,222,&panel_font_14,MUTED);
+        lv_obj_set_height(what,lv_font_get_line_height(&panel_font_14));
+        lv_obj_set_style_text_align(what,LV_TEXT_ALIGN_RIGHT,0);
+        profile_lit[i]=-1;
+    }
+    profile_mark(profile_pick.wanted>=0?profile_pick.wanted:panel_led_profile_find(last_state.led_profile));
+}
+/* The button shows only for a PC that can take a profile. */
 static void profile_clicked(lv_event_t *e)
 {
     (void)e;
-    if(!last_state_valid||!last_state.online||!last_state.led_here)return;
     feedback();
-    int from=profile_pick.wanted>=0?profile_pick.wanted:panel_led_profile_find(last_state.led_profile);
-    profile_pick.wanted=(from+1)%PANEL_LED_PROFILES;
-    profile_pick.sent=false;
-    led_cards[PANEL_LED_GAME].refused=false;
-    led_later();
-    led_show(&last_state);
+    profile_open();
 }
 static void profile_show(const panel_state_t *s,bool show)
 {
@@ -2159,10 +2222,13 @@ static void profile_show(const panel_state_t *s,bool show)
         if(show)lv_obj_remove_flag(profile_button,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(profile_button,LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_width(led_cards[PANEL_LED_GAME].name,show?PROFILE_NAME_WIDE:270);
     }
-    if(!show)return;
+    /* A PC that goes, or an effect that is no mirror: the menu has nothing
+     * left to set. */
+    if(!show){profile_close();return;}
     /* A profile of a later service has no name here, and shows as it is. */
     int index=profile_pick.wanted>=0?profile_pick.wanted:panel_led_profile_find(s->led_profile);
     set_text(profile_words,index>=0?panel_text(panel_led_profile_name(index)):s->led_profile);
+    profile_mark(index);
 }
 /* The effect that the card of the desktop shows: the choice, or the PC's. */
 static int look_scene(const panel_state_t *s)
@@ -2276,8 +2342,8 @@ static void look_slid(lv_event_t *e)
  * beside the box, closes it. */
 static void look_open(void)
 {
-    if(look_layer||sensor_layer||alarm_clock_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen
-       ||update_layer||setup_screen)return;
+    if(look_layer||sensor_layer||profile_layer||alarm_clock_layer||overlay||settings_screen||pads_screen||pc_screen
+       ||self_screen||update_layer||setup_screen)return;
     int index=look_scene(&last_state);
     look_with_colours=panel_led_coloured(PANEL_LED_DESKTOP,index);
     int colours=look_with_colours?LOOK_COLOURS_ROOM:0;
@@ -2782,7 +2848,7 @@ static lv_obj_t *alarm_clock_roller(lv_obj_t *box,int x,int count,int selected)
 static void alarm_clock_open(lv_event_t *e)
 {
     (void)e;
-    if(alarm_clock_layer||alarm_clock_ring_layer||alarm_layer||look_layer||sensor_layer||overlay
+    if(alarm_clock_layer||alarm_clock_ring_layer||alarm_layer||look_layer||sensor_layer||profile_layer||overlay
        ||settings_screen||pads_screen||pc_screen||self_screen||update_layer||setup_screen)return;
     feedback();
     alarm_clock_draft=alarm_clock.set;
@@ -2887,6 +2953,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_clean(s);overlay=NULL;setup_screen=NULL;setup_text=NULL;sensor_layer=NULL;pair_screen=NULL;
     look_layer=NULL;look_slider=NULL;look_value=NULL;
     for(int i=0;i<PANEL_LED_COLOURS;i++)look_swatches[i]=NULL;
+    profile_layer=NULL;
+    for(int i=0;i<PANEL_LED_PROFILES;i++)profile_names[i]=NULL;
     /* The settings page is a child of this screen too, so the clean
      * above took it. Kept, its pointer is the reason that
      * panel_ui_settings_open returns at once and the page never opens
@@ -3444,7 +3512,7 @@ void panel_ui_update(const panel_state_t *s)
     memcpy(&last_state,s,sizeof(*s));last_state_valid=true;
     set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
     if(s->setup){
-        settings_forget();pads_forget();pc_forget();sensor_close();look_close();self_forget();
+        settings_forget();pads_forget();pc_forget();sensor_close();look_close();profile_close();self_forget();
         if(!setup_screen){
             if(overlay){lv_obj_delete(overlay);overlay=NULL;}
             setup_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
@@ -3455,7 +3523,7 @@ void panel_ui_update(const panel_state_t *s)
         lv_label_set_text_fmt(setup_text,panel_text(TXT_SETUP_STEPS),s->setup_ssid,s->setup_password);return;
     }
     if(s->pairing!=PANEL_PAIRING_NONE){
-        settings_forget();pads_forget();pc_forget();sensor_close();look_close();self_forget();
+        settings_forget();pads_forget();pc_forget();sensor_close();look_close();profile_close();self_forget();
         pair_show(s);return;
     }
     if(pair_screen){lv_obj_delete(pair_screen);pair_screen=NULL;}

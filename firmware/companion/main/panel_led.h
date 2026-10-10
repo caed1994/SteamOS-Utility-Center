@@ -95,6 +95,8 @@ const char *panel_led_profile(int index);
 int panel_led_profile_find(const char *key);
 /* The name of the profile at "index" on the screen. */
 panel_text_id_t panel_led_profile_name(int index);
+/* What the profile at "index" does, in a few words for its menu. */
+panel_text_id_t panel_led_profile_what(int index);
 /* A colour "#rrggbb" as the number 0xRRGGBB. false, and nothing in "rgb",
  * for a text that is no such colour. */
 bool panel_led_rgb(const char *colour, uint32_t *rgb);

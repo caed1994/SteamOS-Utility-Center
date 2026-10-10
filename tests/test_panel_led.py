@@ -494,7 +494,7 @@ class HarnessTest(unittest.TestCase):
         found = re.search(r"\} profiles\[PANEL_LED_PROFILES\] = \{(.*?)\};",
                           code("panel_led.c"), re.S)
         self.assertIsNotNone(found)
-        self.assertEqual(tuple(re.findall(r'\{"([a-z]+)", TXT_\w+\}',
+        self.assertEqual(tuple(re.findall(r'\{"([a-z]+)", TXT_\w+, TXT_\w+\}',
                                           found.group(1))), screen.PROFILES)
         self.assertEqual(number("PANEL_LED_PROFILES", code("panel_led.h")),
                          len(screen.PROFILES))
@@ -510,6 +510,18 @@ class HarnessTest(unittest.TestCase):
                 self.ask(*["profilename %d %d" % (index, language)
                            for index in range(len(screen.PROFILES))]),
                 [screen.PROFILE_NAMES[name] for name in screen.PROFILES])
+
+    def test_each_profile_says_what_it_does_in_each_language(self):
+        count = len(screen.PROFILES)
+        said = [self.ask(*["profilewhat %d %d" % (index, language)
+                           for index in range(count)])
+                for language in (0, 1)]
+        for words in said:
+            self.assertEqual(len(set(words)), count, words)
+            self.assertNotIn("--", words)
+        self.assertNotEqual(said[0], said[1])
+        self.assertEqual(self.ask("profilewhat 3 0", "profilewhat -1 1"),
+                         ["--", "--"])
 
     def test_each_profile_the_panel_builds_is_taken(self):
         for game in ("-", "mirror"):

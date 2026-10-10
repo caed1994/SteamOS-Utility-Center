@@ -197,6 +197,11 @@ int main(void)
     lv_obj_update_layout(band);
     lv_obj_scroll_to_view(lv_obj_get_child(band,5),LV_ANIM_OFF);
     screen("the LED bar with the mirror");
+    /* The menu of the profiles, from that button. */
+    lv_obj_send_event(lv_obj_get_parent(find_label(lv_screen_active(),"Color Pop")),LV_EVENT_CLICKED,NULL);
+    assert(find_label(lv_screen_active(),panel_text(TXT_PROFILE_TITLE)));
+    screen("the profiles of the mirror");
+    panel_ui_home();
     snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"fire");
     s.answers++;
     panel_ui_update(&s);

@@ -32,6 +32,8 @@
 //   profilename <index> <language>
 //                              prints the name of the profile, in English
 //                              for 0 and German for 1
+//   profilewhat <index> <language>
+//                              prints what the profile does, as profilename
 //   bodyp <room> <game> <profile>
 //                              prints the body of a change of the effect of
 //                              Game Mode and of the profile, as body does
@@ -118,6 +120,9 @@ int main(void)
         } else if (sscanf(line, "profilename %d %d", &index, &level) == 2) {
             panel_text_set(level ? PANEL_GERMAN : PANEL_ENGLISH);
             printf("%s\n", panel_text(panel_led_profile_name(index)));
+        } else if (sscanf(line, "profilewhat %d %d", &index, &level) == 2) {
+            panel_text_set(level ? PANEL_GERMAN : PANEL_ENGLISH);
+            printf("%s\n", panel_text(panel_led_profile_what(index)));
         } else if (sscanf(line, "profile %d", &index) == 1) {
             const char *found = panel_led_profile(index);
             printf("%s\n", found ? found : "(none)");

@@ -69,6 +69,12 @@ static void click_in(lv_obj_t *root,const char *text)
     lv_obj_send_event(b,LV_EVENT_CLICKED,NULL);
 }
 static void click(const char *text){click_in(lv_screen_active(),text);}
+// The box of the menu of the profiles of the mirror, or NULL with no menu.
+static lv_obj_t *profile_box(void)
+{
+    lv_obj_t *title=label(lv_screen_active(),panel_text(TXT_PROFILE_TITLE));
+    return title?lv_obj_get_parent(title):NULL;
+}
 // Where the one sign in "holder" starts that stands from "start" on and
 // ends before "words": the sign of a third of the card of the sensors.
 static int32_t sign_before(lv_obj_t *holder,int32_t start,int32_t words)
@@ -2890,14 +2896,27 @@ int main(void)
         assert(label(game,"Mirror")&&label(game,"Mirror runs: 15 fps, CPU 1.2 %, 1280x800"));
         // With no profile from the PC, no button of the profile.
         assert(!label(game,"Color Pop"));
-        // The profile: a button beside the name of the mirror. A tap shows
-        // the next profile, and it goes to the PC as an effect does.
+        // The profile: a button beside the name of the mirror. A tap opens
+        // the menu of the profiles, each with what it does and a mark on
+        // the profile of the PC.
         strcpy(t.led_profile,"pop");
         t.answers++;
         panel_ui_update(&t);
-        assert(label(game,"Mirror")&&label(game,"Color Pop"));
+        assert(label(game,"Mirror")&&label(game,"Color Pop")&&!profile_box());
         before=led_changes;
         click_in(game,"Color Pop");
+        lv_obj_t *box=profile_box();
+        assert(box&&strcmp(panel_ui_where(),"the profile of the mirror")==0);
+        assert(label(box,"Cinematic")&&label(box,LV_SYMBOL_OK "  Color Pop")&&label(box,"Solid"));
+        for(int i=0;i<PANEL_LED_PROFILES;i++)assert(label(box,panel_text(panel_led_profile_what(i))));
+        // A second tap on the button opens no second menu.
+        uint32_t layers=lv_obj_get_child_count(lv_screen_active());
+        click_in(game,"Color Pop");
+        assert(lv_obj_get_child_count(lv_screen_active())==layers);
+        // A row chooses and closes the menu, and the choice goes to the PC
+        // as an effect does.
+        click_in(box,"Solid");
+        assert(!profile_box()&&strcmp(panel_ui_where(),"the profile of the mirror")!=0);
         assert(label(game,"Solid")&&label(game,panel_text(TXT_CHANGE_APPLYING)));
         led_wait(1600);
         assert(led_changes==before+1&&strcmp(led_last_profile,"solid")==0&&!led_last[PANEL_LED_GAME][0]);
@@ -2905,27 +2924,41 @@ int main(void)
         t.answers++;
         panel_ui_update(&t);
         assert(label(game,"Solid")&&!label(game,panel_text(TXT_CHANGE_APPLYING)));
-        // Round the end of the list, and back to the profile of the PC: no
-        // change.
+        // The profile of the PC is no change, and neither is a tap beside
+        // the rows, which closes the menu.
         click_in(game,"Solid");
-        assert(label(game,"Cinematic"));
-        click_in(game,"Cinematic");
-        click_in(game,"Color Pop");
+        click_in(profile_box(),LV_SYMBOL_OK "  Solid");
+        assert(!profile_box()&&!label(game,panel_text(TXT_CHANGE_APPLYING)));
+        click_in(game,"Solid");
+        lv_obj_send_event(lv_obj_get_parent(profile_box()),LV_EVENT_CLICKED,NULL);
+        assert(!profile_box());
         led_wait(1600);
         assert(led_changes==before+1&&label(game,"Solid"));
-        // A refusal takes the profile back, and says why.
+        // A profile that the PC takes from somewhere else moves the mark of
+        // the open menu.
         click_in(game,"Solid");
+        strcpy(t.led_profile,"cinematic");
+        t.answers++;
+        panel_ui_update(&t);
+        box=profile_box();
+        assert(box&&label(box,LV_SYMBOL_OK "  Cinematic")&&label(box,"Solid")&&!label(box,LV_SYMBOL_OK "  Solid"));
+        // A refusal takes the profile back, and says why.
+        click_in(box,"Color Pop");
         led_wait(1600);
+        assert(led_changes==before+2&&strcmp(led_last_profile,"pop")==0);
         t.led_replies++;t.led_code=403;
         panel_ui_update(&t);
-        assert(label(game,"Solid")&&label(game,panel_text(TXT_CHANGE_NO_RULE)));
+        assert(label(game,"Cinematic")&&label(game,panel_text(TXT_CHANGE_NO_RULE)));
         lv_tick_inc(9000);
         t.answers++;
         panel_ui_update(&t);
-        // A service with no profiles: no button.
+        // A service with no profiles: no button, and the open menu closes.
+        click_in(game,"Cinematic");
+        assert(profile_box());
         t.led_profile[0]=0;
         t.answers++;
         panel_ui_update(&t);
+        assert(!profile_box());
         assert(label(game,"Mirror")&&!label(game,"Solid")&&!label(game,"Cinematic"));
         strcpy(t.led_mirror.state,"busy");strcpy(t.led_mirror.detail,"steam");
         t.answers++;
