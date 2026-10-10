@@ -4732,6 +4732,80 @@ class GpuFirstLookTest(unittest.TestCase):
         self.assertIsNone(self.panel._gpu_first)
 
 
+@unittest.skipUnless(_has_display(), "no tkinter or no display")
+class MirrorLookAgainTest(unittest.TestCase):
+    """The status of the mirror is read again a moment after a change.
+
+    A change starts the LED service again, and that service makes the pipe
+    of the mirror. The page read the status at once, and only then. The
+    capture service had not found the new pipe yet, so the card said "The LED
+    service has no pipe" until somebody pressed Rebuild and reinstall.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.panel_module = _panel_module()
+
+    def setUp(self):
+        self.was_look = self.panel_module.MIRROR_LOOK
+        self.addCleanup(setattr, self.panel_module, "MIRROR_LOOK",
+                        self.was_look)
+        self.panel_module.MIRROR_LOOK = 50
+        self.root = tk.Tk()
+        self.addCleanup(self._destroy)
+        self.panel = self.panel_module.Panel(self.root)
+        self.root.update()
+        self.read = []
+        self.panel.refresh_status = lambda: self.read.append(True)
+
+    def _destroy(self):
+        if getattr(self, "root", None) is not None:
+            self.root.destroy()
+            self.root = None
+
+    def _wait(self, ms):
+        self.root.after(ms, self.root.quit)
+        self.root.mainloop()
+
+    def test_with_the_mirror_it_reads_now_and_again_later(self):
+        self.panel.config["RAINBOW_SHOWS"] = "mirror"
+        self.panel._after_change()
+        self.assertEqual(len(self.read), 1)
+        self.assertIsNotNone(self.panel._mirror_look)
+        self._wait(self.panel_module.MIRROR_LOOK + 150)
+        self.assertEqual(len(self.read), 2)
+        self.assertIsNone(self.panel._mirror_look)
+
+    def test_with_a_different_effect_it_reads_one_time(self):
+        self.panel.config["RAINBOW_SHOWS"] = "fire"
+        self.panel._after_change()
+        self._wait(self.panel_module.MIRROR_LOOK + 150)
+        self.assertEqual(len(self.read), 1)
+
+    def test_a_change_of_the_settings_ends_there(self):
+        """The helper and the restart of the watchers, then the two reads."""
+        def start(command, done=None):
+            if done is not None:
+                done(0)
+            return True
+        self.panel.runner.start = start
+        self.panel.vars["RAINBOW_SHOWS"][0].set(
+            self.panel._label_for("RAINBOW_SHOWS", "mirror"))
+        self.panel.vars["LED_COUNT"][0].set(42)
+        self.root.update()
+        self.panel.apply_settings()
+        self.assertIsNotNone(self.panel._mirror_look,
+                             "nothing reads the mirror again")
+
+    def test_the_look_is_cancelled_with_the_window(self):
+        self.panel.config["RAINBOW_SHOWS"] = "mirror"
+        self.panel._after_change()
+        self.panel._stop_timers()
+        self.assertIsNone(self.panel._mirror_look)
+        self._wait(self.panel_module.MIRROR_LOOK + 150)
+        self.assertEqual(len(self.read), 1)
+
+
 class NetworkCardTest(unittest.TestCase):
     """The Nanoleaf devices on the network, drawn in a real window.
 

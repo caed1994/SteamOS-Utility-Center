@@ -692,6 +692,12 @@ SIDEBAR_TEXT_X = 56
 # long enough for the window to draw itself first.
 CEC_FIRST_LOOK = 200
 
+# The time after a change of the settings, before the panel reads the status
+# of the mirror again. The change starts the LED service again, which makes
+# the pipe of the mirror. The capture service looks for that pipe each
+# screen.LOOK_SECONDS. A read at once still finds no pipe.
+MIRROR_LOOK = 4000
+
 # The text at the foot of the window after a command fails. One fixed sentence
 # and not the last line of the command: the bar shares its width with two
 # indicators and the version, and it cut a real error at the end, which is
@@ -3704,12 +3710,25 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
             # Without this call, a changed flash setting waits for the end of
             # the next game, and the switch for the phone flashes has no result.
             self.runner.start(ledpanel.restart_watchers_command(),
-                              lambda _code: self.refresh_status())
+                              lambda _code: self._after_change())
 
         self._run_privileged(
             ledpanel.apply_config_command(SOURCE_DIR, staged_path),
             ledpanel.apply_config_command(SOURCE_DIR, staged_path, ask=True),
             finished)
+
+    def _after_change(self):
+        """Reads the status after a change, and the mirror again later."""
+        self.refresh_status()
+        if self.config.get("RAINBOW_SHOWS") != render.SHOWS_MIRROR:
+            return
+        if getattr(self, "_mirror_look", None) is not None:
+            self.root.after_cancel(self._mirror_look)
+        self._mirror_look = self.root.after(MIRROR_LOOK, self._look_again)
+
+    def _look_again(self):
+        self._mirror_look = None
+        self.refresh_status()
 
     def _show_values(self, values):
         """Put these settings into the controls. Keys we do not show are
@@ -3940,11 +3959,12 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
             return                              # a child of ours, not the window
         for job in (self._preview_job, self._refit_job, self._catching_up,
                     getattr(self, "_cec_first", None),
-                    getattr(self, "_gpu_first", None)):
+                    getattr(self, "_gpu_first", None),
+                    getattr(self, "_mirror_look", None)):
             if job is not None:
                 self.root.after_cancel(job)
         self._preview_job = self._refit_job = self._catching_up = None
-        self._cec_first = self._gpu_first = None
+        self._cec_first = self._gpu_first = self._mirror_look = None
 
     def _preview_chosen(self):
         """Restart the clock, so a shape is seen from its beginning."""

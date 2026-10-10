@@ -462,10 +462,10 @@ SCREEN_NODE = "gamescope"
 CLIENT = "steamos-utility-center-mirror"
 
 # How often Watcher looks at the pipe while nothing reads it, and while the
-# pipe is not there. With no pipe, the LED service offers no mirror. That is
-# the usual case, so Watcher looks less often.
+# pipe is not there. The LED service makes the pipe at its start, after each
+# change of its settings. A person who chooses the mirror then sees the new
+# status after this time. A look costs one open() that fails.
 LOOK_SECONDS = 2.0
-OFF_SECONDS = 10.0
 # How often it asks PipeWire about other readers while it reads the screen.
 CHECK_SECONDS = 5.0
 # The wait after a failure: the first value, then two times the last value,
@@ -947,7 +947,7 @@ class Watcher:
         """Does one turn of the work. Returns the time to wait after it."""
         now = self.clock()
         if self.out is None and not self._connect():
-            wait = OFF_SECONDS if self.state == OFF else LOOK_SECONDS
+            wait = LOOK_SECONDS
         elif self._reader_gone():
             self._stop()
             self._disconnect()

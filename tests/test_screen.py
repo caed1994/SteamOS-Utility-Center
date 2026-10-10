@@ -453,9 +453,19 @@ class WatcherTest(WatcherCase):
 
     def test_with_no_pipe_the_mirror_is_off(self):
         os.unlink(self.fifo)
-        self.assertEqual(self.watcher.step(), screen.OFF_SECONDS)
+        self.assertEqual(self.watcher.step(), screen.LOOK_SECONDS)
         self.assertEqual(self.watcher.state, screen.OFF)
         self.assertEqual(self.written(), {"state": "off", "at": 1000.0})
+
+    def test_a_pipe_that_comes_later_is_found_at_the_next_look(self):
+        """The LED service makes the pipe when it starts again after a
+        change, and a person looks at the status at that time."""
+        os.unlink(self.fifo)
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.OFF)
+        self.mirror.create()
+        self.watcher.step()
+        self.assertEqual(self.watcher.state, screen.IDLE)
 
     def test_with_no_reader_it_waits_and_starts_nothing(self):
         self.assertEqual(self.watcher.step(), screen.LOOK_SECONDS)
