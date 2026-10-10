@@ -570,6 +570,11 @@ RETRY_SECONDS = 5.0
 RETRY_MOST = 60.0
 # How long a new capture can take to connect to the stream of gamescope.
 LINK_SECONDS = 10.0
+# How long a capture waits for a new reader of the pipe. The LED service
+# starts again at each change of its settings, and its pipe goes and comes
+# back. A new capture is a new reader of the stream of gamescope, so the
+# capture goes on through that gap.
+KEEP_SECONDS = 10.0
 # gamescope sends a picture only when the game or Steam changes the screen.
 # It sends none at the start of a capture either. A still screen thus gives
 # no picture, and that is not a failure. The bar keeps a picture for HOLD
@@ -1056,6 +1061,7 @@ class Watcher:
         self.rate = True
         self.pending = None
         self.used_at = -math.inf
+        self.lost_at = -math.inf
         self.tools = False
         self.retry_at = 0.0
         self.retry = RETRY_SECONDS
@@ -1086,13 +1092,25 @@ class Watcher:
     def step(self):
         """Does one turn of the work. Returns the time to wait after it."""
         now = self.clock()
-        if self.out is None and not self._connect():
-            wait = LOOK_SECONDS
-        elif self._reader_gone():
-            self._stop()
+        if self.out is not None and self._reader_gone():
+            # The bar shows a different effect, or the LED service starts
+            # again. A capture waits KEEP_SECONDS for a new reader.
             self._disconnect()
-            self._set(IDLE)
-            wait = 0.0
+            self.lost_at = now
+            if self.pipeline is None:
+                self._set(IDLE)
+        keeping = self.pipeline is not None
+        if self.out is None and not self._connect(quiet=keeping):
+            if not keeping:
+                wait = LOOK_SECONDS
+            elif now - self.lost_at > KEEP_SECONDS:
+                self._stop()
+                self._connect()
+                wait = LOOK_SECONDS
+            else:
+                # The pictures go nowhere until the new pipe is there.
+                self._watch()
+                wait = 0.0
         elif self.pipeline is None:
             wait = self._begin(now)
         else:
@@ -1112,10 +1130,13 @@ class Watcher:
 
     # -- the pipe ----------------------------------------------------------
 
-    def _connect(self):
+    def _connect(self, quiet=False):
+        """Opens the pipe. `quiet` keeps the state of a capture that runs."""
         try:
             fd = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK)
         except OSError as exc:
+            if quiet:
+                return False
             if exc.errno == errno.ENOENT:
                 self._set(OFF)
             elif exc.errno == errno.ENXIO:
@@ -1142,6 +1163,11 @@ class Watcher:
                    for _fd, events in poller.poll(0))
 
     def _send(self, message, now):
+        if self.out is None:
+            # No reader yet. The first look after the new pipe sends it.
+            self.sent = message
+            self.sent_at = -math.inf
+            return
         try:
             os.write(self.out, message)
         except BlockingIOError:

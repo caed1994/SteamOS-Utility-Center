@@ -702,14 +702,46 @@ class WatcherTest(WatcherCase):
         self.assertIsNotNone(child.poll())
 
     def test_it_stops_when_the_bar_shows_something_else(self):
+        """After KEEP_SECONDS: the LED service closes the pipe, and the same
+        pipe stays with no reader."""
         self.mirror.colours()
         self.until(screen.RUNNING)
         child = self.watcher.pipeline.process
         self.mirror.close()
         self.watcher.step()
+        self.assertIs(self.watcher.pipeline.process, child)
+        self.clock.now += screen.KEEP_SECONDS + 0.5
+        self.watcher.step()
         self.assertEqual(self.watcher.state, screen.IDLE)
         self.assertIsNone(self.watcher.pipeline)
-        self.assertIsNotNone(child.poll())
+        self.assertIsNotNone(child.wait(5))
+
+    def test_a_restart_of_the_led_service_keeps_the_capture(self):
+        """A change of the settings starts the LED service again, and its
+        pipe goes and comes back. gamescope must see no new reader."""
+        self.mirror.colours()
+        self.until(screen.RUNNING)
+        child = self.watcher.pipeline.process
+        self.mirror.close()
+        os.unlink(self.fifo)
+        for _turn in range(3):
+            self.watcher.step()
+        self.assertIs(self.watcher.pipeline.process, child)
+        self.assertIsNone(child.poll())
+        self.assertEqual(self.watcher.state, screen.RUNNING)
+        self.clock.now += 2.0
+        mirror = screen.Mirror(self.fifo, clock=self.clock)
+        mirror.create()
+        self.addCleanup(mirror.close)
+        colours = None
+        for _turn in range(40):
+            colours = mirror.colours()
+            if colours:
+                break
+            self.watcher.step()
+        self.assertTrue(colours, "the new pipe got no colours")
+        self.assertIs(self.watcher.pipeline.process, child)
+        self.assertEqual(len(self.argvs), 1)
 
     def test_a_still_screen_keeps_the_bar(self):
         """gamescope sends nothing while the screen does not change."""
