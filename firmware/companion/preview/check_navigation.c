@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "lvgl.h"
+#include "src/misc/lv_area_private.h"
 #include "ui.h"
 #include "panel_taps.h"
 static unsigned actions, settings, sounds;
@@ -269,6 +270,199 @@ static void tables_differ(void)
     // quarter of the table is far above that and far below all of it.
     assert(same<TXT_COUNT/4);
 }
+// The pages over the band, with the slides on as main.c has them. Each
+// slides in from the right and out to the right. For the rest of the
+// screen it opens and closes at once: the panel says where it is before
+// the slide is over, and a page on its way out takes no press.
+static lv_obj_t *top(void){return lv_obj_get_child(lv_screen_active(),-1);}
+// Where a page stands: the place the slide set, before any layout runs.
+static int32_t x_of(lv_obj_t *page){return lv_obj_get_style_x(page,LV_PART_MAIN);}
+static void steps(int ms){for(int i=0;i<ms;i+=10){lv_tick_inc(10);lv_anim_refr_now();}}
+static void press_in(lv_obj_t *root,const char *text)
+{
+    lv_obj_t *l=label(root,text);assert(l);
+    lv_obj_t *b=lv_obj_get_parent(l);assert(lv_obj_check_type(b,&lv_button_class));
+    assert(lv_obj_has_flag(b,LV_OBJ_FLAG_CLICKABLE));
+    lv_obj_send_event(b,LV_EVENT_CLICKED,NULL);
+}
+// Each frame of a slide, drawn as the panel draws it: the band only beside
+// the page and never under it, and at the end the screen that a draw of
+// all of it shows. A frame that draws the band under the page draws that
+// place twice, and on the panel such a frame comes late.
+static uint32_t frame[480*480];
+static lv_area_t page_area;
+static unsigned band_draws,band_under;
+static void flush(lv_display_t *d,const lv_area_t *a,uint8_t *p){(void)a;(void)p;lv_display_flush_ready(d);}
+static void band_drawn(lv_event_t *e)
+{
+    lv_layer_t *layer=lv_event_get_layer(e);
+    lv_area_t both;
+    band_draws++;
+    if(lv_area_intersect(&both,&layer->_clip_area,&page_area))band_under++;
+}
+// Frames 10 ms apart until the page stands still or is gone.
+static void frames(lv_obj_t *page)
+{
+    lv_display_t *d=lv_display_get_default();
+    band_draws=band_under=0;
+    bool moving=true;
+    for(int i=0;i<100&&moving;i++){
+        lv_tick_inc(10);
+        lv_anim_refr_now();
+        moving=lv_obj_is_valid(page);
+        if(moving)lv_obj_get_coords(page,&page_area);
+        else page_area=(lv_area_t){0,0,-1,-1};
+        lv_refr_now(d);
+        moving=moving&&lv_anim_get(page,NULL);
+    }
+    assert(!moving);
+    static uint32_t shown[480*480];
+    memcpy(shown,frame,sizeof frame);
+    lv_obj_invalidate(lv_screen_active());
+    lv_refr_now(d);
+    assert(memcmp(shown,frame,sizeof frame)==0);
+}
+static void drawn_slides(void)
+{
+    lv_display_t *d=lv_display_get_default();
+    lv_display_set_color_format(d,LV_COLOR_FORMAT_XRGB8888);
+    lv_display_set_buffers(d,frame,NULL,sizeof frame,LV_DISPLAY_RENDER_MODE_DIRECT);
+    lv_display_set_flush_cb(d,flush);
+    lv_obj_t *band=find_band(lv_screen_active());assert(band);
+    lv_obj_add_event_cb(band,band_drawn,LV_EVENT_DRAW_MAIN_BEGIN,NULL);
+    lv_obj_invalidate(lv_screen_active());
+    lv_refr_now(d);
+    static void (*const opens[])(void)={panel_ui_settings_open,panel_ui_pads_open,
+                                        panel_ui_pc_open,panel_ui_self_open};
+    for(int i=0;i<4;i++){
+        opens[i]();
+        lv_obj_t *page=top();
+        frames(page);
+        assert(band_under==0);
+        assert(panel_ui_home());
+        frames(page);
+        assert(band_under==0&&band_draws>0);
+    }
+    lv_obj_remove_event_cb(band,band_drawn);
+}
+// A new theme, accent or language builds the screen again, and the
+// settings stand where they stood: no page slides out, and none slides in.
+static bool sliding(void)
+{
+    for(uint32_t i=0;i<lv_obj_get_child_count(lv_screen_active());i++)
+        if(lv_anim_get(lv_obj_get_child(lv_screen_active(),i),NULL))return true;
+    return false;
+}
+static void in_place(uint32_t base)
+{
+    assert(at("the settings")&&x_of(top())==0&&!sliding());
+    assert(lv_obj_get_child_count(lv_screen_active())==base+1);
+}
+static void rebuilt_in_place(void)
+{
+    panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+    panel_ui_create(action,setting,sound,&english);
+    uint32_t base=lv_obj_get_child_count(lv_screen_active());
+    panel_ui_settings_open();settle();
+    press_in(top(),panel_text(TXT_THEME_LIGHT));
+    in_place(base);
+    // An accent: a round button of the card with nothing in it, which is
+    // one that is not chosen.
+    lv_obj_t *card=lv_obj_get_parent(lv_obj_get_parent(label(top(),panel_text(TXT_THEME_DARK))));
+    lv_obj_t *swatch=NULL;
+    for(uint32_t i=0;i<lv_obj_get_child_count(card)&&!swatch;i++){
+        lv_obj_t *o=lv_obj_get_child(card,i);
+        if(lv_obj_check_type(o,&lv_button_class)&&lv_obj_get_child_count(o)==0)swatch=o;
+    }
+    assert(swatch);
+    lv_obj_send_event(swatch,LV_EVENT_CLICKED,NULL);
+    in_place(base);
+    press_in(top(),panel_language_name(PANEL_GERMAN));
+    in_place(base);
+    // A clean screen in English for what comes after.
+    panel_ui_create(action,setting,sound,&english);
+}
+static void slides(void)
+{
+    panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+    panel_ui_create(action,setting,sound,&english);
+    panel_ui_slides(true);
+    uint32_t base=lv_obj_get_child_count(lv_screen_active());
+    static void (*const opens[])(void)={panel_ui_settings_open,panel_ui_pads_open,
+                                        panel_ui_pc_open,panel_ui_self_open};
+    static const char *const names[]={"the settings","the controllers","the PC","the panel"};
+    for(int i=0;i<4;i++){
+        opens[i]();
+        lv_obj_t *page=top();
+        assert(at(names[i]));
+        assert(x_of(page)==480);
+        steps(100);
+        assert(x_of(page)>0&&x_of(page)<480);
+        settle();
+        assert(x_of(page)==0);
+        // Its own back button: forgotten at once, and on the screen for
+        // the slide, taking no press.
+        lv_obj_t *back=lv_obj_get_parent(label(page,panel_text(TXT_BACK)));
+        press_in(page,panel_text(TXT_BACK));
+        assert(!at(names[i]));
+        assert(lv_obj_get_child_count(lv_screen_active())==base+1);
+        assert(!lv_obj_has_flag(back,LV_OBJ_FLAG_CLICKABLE));
+        steps(100);
+        assert(x_of(page)>0&&x_of(page)<480);
+        settle();
+        assert(lv_obj_get_child_count(lv_screen_active())==base);
+    }
+    // The order of the pages over the settings: it slides out, and the
+    // settings stay where they are.
+    panel_ui_settings_open();settle();
+    lv_obj_t *settings_page=top();
+    panel_ui_arrange_open();
+    lv_obj_t *order=top();
+    assert(order!=settings_page&&at("the order of the pages"));
+    settle();
+    press_in(order,panel_text(TXT_BACK));
+    settle();
+    assert(at("the settings")&&top()==settings_page&&x_of(settings_page)==0);
+    // The home key closes both at once, and both slide out.
+    panel_ui_arrange_open();settle();
+    assert(panel_ui_home());
+    assert(lv_obj_get_child_count(lv_screen_active())==base+2);
+    settle();
+    assert(lv_obj_get_child_count(lv_screen_active())==base);
+    // Open again while the last one slides out: two on the screen for the
+    // slide, and the new one at its place after it.
+    panel_ui_settings_open();settle();
+    lv_obj_t *old=top();
+    assert(panel_ui_home());
+    steps(50);
+    panel_ui_settings_open();
+    lv_obj_t *fresh=top();
+    assert(fresh!=old&&at("the settings"));
+    settle();
+    assert(lv_obj_get_child_count(lv_screen_active())==base+1&&top()==fresh&&x_of(fresh)==0);
+    // Closed on its way in: it turns round where it is.
+    assert(panel_ui_home());settle();
+    panel_ui_pads_open();
+    lv_obj_t *turning=top();
+    steps(50);
+    int32_t where=x_of(turning);
+    assert(where>0&&where<480);
+    assert(panel_ui_home());
+    steps(20);
+    assert(x_of(turning)>=where);
+    settle();
+    assert(lv_obj_get_child_count(lv_screen_active())==base);
+    // A new screen in the middle of a slide, as a new language makes: the
+    // clean takes the page and its slide together.
+    panel_ui_pc_open();
+    steps(50);
+    panel_ui_create(action,setting,sound,&english);
+    settle();
+    assert(!at("the PC"));
+    drawn_slides();
+    rebuilt_in_place();
+    panel_ui_slides(false);
+}
 int main(void)
 {
     lv_init();lv_display_create(480,480);
@@ -286,8 +480,9 @@ int main(void)
     open_settings();
     assert(label(lv_screen_active(),panel_text(TXT_SETTINGS_TITLE)));
     home_key();
+    slides();
     puts("OK: Offline navigation in each language, the language button, local "
          "callbacks, values retained, PC actions isolated, setup confirmation, "
-         "the theme buttons, the home key.");
+         "the theme buttons, the home key, the pages that slide in and out.");
     return 0;
 }

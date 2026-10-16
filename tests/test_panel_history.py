@@ -3,10 +3,9 @@
 
 """The history of the temperatures and the power, built and driven here.
 
-Asked for: curves of the last 15 to 30 minutes of the temperature of the
+Asked for: curves of the last 30 minutes of the temperature of the
 processor and of the card, and of the power of the card. The panel keeps
-an hour, one point every five seconds, and the page shows 15, 30 or 60
-minutes of it.
+30 minutes, one point every five seconds, and the page shows all of them.
 
 firmware/companion/main/panel_history.c is that history without a screen.
 The harness in tests/c/panel-history-harness.c drives it with a clock of
@@ -92,13 +91,14 @@ class HistoryTest(unittest.TestCase):
                  for one in points.split()], int(readings))
 
     def test_the_numbers_are_the_ones_asked_for(self):
-        """Five seconds, an hour kept, and 180 points drawn: 15 minutes
-        one to one."""
+        """Five seconds, 30 minutes kept and shown, and 180 points drawn:
+        two to one."""
         self.assertEqual(constant("PANEL_HISTORY_STEP_MS"), STEP)
+        self.assertEqual(constant("PANEL_HISTORY_MINUTES"), 30)
         self.assertEqual(constant("PANEL_HISTORY_POINTS") * STEP,
-                         60 * 60 * 1000)
-        self.assertEqual(constant("PANEL_HISTORY_DRAWN") * STEP,
-                         15 * 60 * 1000)
+                         30 * 60 * 1000)
+        self.assertEqual(constant("PANEL_HISTORY_DRAWN") * 2,
+                         constant("PANEL_HISTORY_POINTS"))
 
     def test_each_step_is_the_newest_answer_in_it(self):
         commands = ["tick 0", "offer 50 60 200", "offer 51 61 210",
@@ -150,38 +150,39 @@ class HistoryTest(unittest.TestCase):
                     "tick %d" % ((start + STEP) % 2 ** 32), "state"]
         self.assertEqual(self.run_history(commands)[-2:], ["1", "1 1"])
 
-    def test_a_jump_past_the_hour_starts_again(self):
+    def test_a_jump_past_the_whole_history_starts_again(self):
+        """31 minutes, and the panel keeps 30."""
         commands, now = self.steady([(50, 60, 200)] * 10)
-        commands += ["tick %d" % (now + 2 * 60 * 60 * 1000), "state"]
+        commands += ["tick %d" % (now + 31 * 60 * 1000), "state"]
         self.assertEqual(self.run_history(commands)[-1], "0 11")
 
-    def test_an_hour_is_kept_and_no_more(self):
-        readings = [(n % 100, 60, 200) for n in range(800)]
+    def test_30_minutes_are_kept_and_no_more(self):
+        readings = [(n % 100, 60, 200) for n in range(400)]
         commands, _ = self.steady(readings)
         self.assertEqual(self.run_history(commands + ["state"])[-1],
-                         "720 800")
-        points, count = self.read(commands, CPU, 60, 720)
-        self.assertEqual(count, 720)
-        self.assertEqual(points, [n % 100 for n in range(80, 800)])
+                         "360 400")
+        points, count = self.read(commands, CPU, 30, 360)
+        self.assertEqual(count, 360)
+        self.assertEqual(points, [n % 100 for n in range(40, 400)])
 
-    def test_the_longer_windows_are_the_mean(self):
-        """30 minutes are 360 points in 180, two to one; an hour four to
-        one. The mean rounds half up."""
-        readings = [(40 + (n % 2), 60, 100 + n % 4) for n in range(720)]
+    def test_a_drawn_point_is_the_mean_of_two(self):
+        """30 minutes are 360 points in 180, two to one. The mean rounds
+        half up."""
+        readings = [(40 + (n % 2), 60, 100 + n % 4) for n in range(360)]
         commands, _ = self.steady(readings)
         points, count = self.read(commands, CPU, 30, 180)
         self.assertEqual(count, 360)
         self.assertEqual(set(points), {41})
-        points, _ = self.read(commands, WATTS, 60, 180)
-        self.assertEqual(set(points), {102})
-        points, _ = self.read(commands, CPU, 15, 180)
+        points, _ = self.read(commands, WATTS, 30, 180)
+        self.assertEqual(points, [101, 103] * 90)
+        points, _ = self.read(commands, CPU, 30, 360)
         self.assertEqual(points[-2:], [40, 41])
 
     def test_a_part_with_some_readings_is_their_mean(self):
-        """A gap in a part of a long window does not pull it to nought."""
+        """A gap in a part does not pull it to nought."""
         commands = ["tick 0", "offer 60 60 200", "tick 5000", "tick 10000",
                     "tick 15000", "offer 64 60 200", "tick 20000"]
-        points, count = self.read(commands, CPU, 60, 180)
+        points, count = self.read(commands, CPU, 30, 90)
         self.assertEqual(points[-1], 62)
         self.assertEqual(count, 2)
 
@@ -197,7 +198,7 @@ class HistoryTest(unittest.TestCase):
         self.assertEqual(self.run_history(commands + ["range 0 15"])[-1],
                          "30 70")
         # The two hot points are the newest, and 30 is still in the window.
-        self.assertEqual(self.run_history(commands + ["range 2 60"])[-1],
+        self.assertEqual(self.run_history(commands + ["range 2 30"])[-1],
                          "10 300")
         self.assertEqual(self.run_history(["range 0 15"])[-1], "none")
 
@@ -216,7 +217,7 @@ class SourceTest(unittest.TestCase):
         text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
         return re.sub(r"//[^\n]*", " ", text)
 
-    def test_the_hour_lives_in_psram(self):
+    def test_the_history_lives_in_psram(self):
         """Internal memory is for the network and the drawing."""
         self.assertRegex(self.code("main.c"),
                          r"heap_caps_calloc\(1,sizeof\(panel_history_t\),"

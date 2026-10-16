@@ -49,8 +49,10 @@ from . import lact
 from . import modules
 from . import mounts
 from . import nanoleaf
+from . import pairing
 from . import pegboard
 from . import power
+from . import screen
 from . import shim
 from . import syssettings
 
@@ -262,9 +264,14 @@ def strip_read(home=None):
 
 def strip_offers():
     """The menus of the strip, so a front end does not carry its own copy."""
+    mirror_profiles = [{"value": name, "label": screen.PROFILE_NAMES[name]}
+                       for name in config_module.MIRROR_PROFILES]
     return {"MAPPING": list(config_module.MAPPINGS),
             "NOTIFY_STYLE": list(config_module.NOTIFY_STYLES),
             "RAINBOW_SHOWS": list(config_module.RAINBOW_CHOICES),
+            # With the names, which are in screen alone.
+            "MIRROR_PROFILE": mirror_profiles,
+            "DESKTOP_MIRROR_PROFILE": mirror_profiles,
             "DESKTOP_SCENE": list(config_module.DESKTOP_SCENES)}
 
 
@@ -770,6 +777,12 @@ def _gpu_boost(on):
             # write down the boost itself as the state to come back to.
             if not boosting(fan):
                 _remember_fan(fan, home)
+                # LACT holds zero RPM off for a static speed, and after the
+                # boost it puts back only what its config says. So the
+                # setting goes into the config first.
+                held = lact.zero_rpm(config, found.get("stats"))
+                if held is not None:
+                    config = lact.with_firmware(config, {"zero_rpm": held})
             config = lact.with_fan(config, enabled=True,
                                    mode=lact.FAN_STATIC,
                                    static_speed=BOOST_SPEED)
@@ -781,6 +794,27 @@ def _gpu_boost(on):
             _forget_fan(home)
         return ("the fan is at full speed" if on
                 else "the card has its fan back")
+    return action
+
+
+def _gpu_zero_rpm(on):
+    """Builds the action behind the button of zero RPM on the panel.
+
+    It writes the setting into the config of LACT, which puts it on the
+    card, and again after a static speed. It confirms the change itself, as
+    the boost does: a fan that stops on a cool card hangs nothing.
+    """
+    def action(may_prompt=False, run=None, home=None):
+        found = lact.state()
+        if not found or not found.get("gpu"):
+            raise CtlError("no graphics card that LACT reports")
+        config = found.get("config") or {}
+        if lact.zero_rpm(config, found.get("stats")) is None:
+            raise CtlError("the card has no zero RPM")
+        lact.set_gpu_config(found["gpu"],
+                            lact.with_firmware(config, {"zero_rpm": on}))
+        lact.confirm(keep=True)
+        return "zero RPM is on" if on else "zero RPM is off"
     return action
 
 
@@ -799,6 +833,8 @@ def gpu_revert(may_prompt=False, run=None, home=None):
 ACTION = {
     "gpu-boost-on": _gpu_boost(True),
     "gpu-boost-off": _gpu_boost(False),
+    "gpu-zero-rpm-on": _gpu_zero_rpm(True),
+    "gpu-zero-rpm-off": _gpu_zero_rpm(False),
     "gpu-keep": gpu_keep,
     "gpu-revert": gpu_revert,
     "cec-wake": _cec_action("wake"),
@@ -1093,6 +1129,11 @@ def _parser():
     where.add_parser("areas", help="the areas and the actions of this build")
 
     said = where.add_parser(
+        "pair", help="the panel that asks to pair, and the answer to it")
+    said.add_argument("answer", nargs="?", choices=("accept", "refuse"))
+    said.add_argument("id", nargs="?", help="the id of the request")
+
+    said = where.add_parser(
         "permit", help="write the sudoers rule. The installer runs this.")
     said.add_argument("user", help="the desktop user the rule is for")
     return parser
@@ -1115,7 +1156,25 @@ def run_command(argv=None):
         return action(parsed.name, may_prompt=parsed.may_prompt)
     if parsed.command == "permit":
         return permit(parsed.user)
+    if parsed.command == "pair":
+        return pair(parsed.answer, parsed.id)
     return {"areas": list(AREAS), "actions": list(ACTIONS)}
+
+
+def pair(answer=None, request_id=None, folder=None):
+    """The panel that waits for a person, or the answer of the person.
+
+    With no answer it reports the request that waits, or null. An answer
+    needs the id of that request, so a request that came after the person
+    looked cannot take the answer of the one before it.
+    """
+    if answer is None:
+        return {"waiting": pairing.waiting(folder)}
+    found = pairing.waiting(folder)
+    if not found or found["id"] != request_id:
+        raise CtlError("no panel waits with that id")
+    pairing.answer(request_id, answer == "accept", folder=folder)
+    return {"answered": answer, "id": request_id}
 
 
 def main(argv=None):

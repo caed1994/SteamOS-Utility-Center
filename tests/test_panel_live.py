@@ -314,6 +314,43 @@ class LiveWindowTest(unittest.TestCase):
                              self._shown("TEMPERATURE_MIN"),
                              "the marks and the sensor are one decision too")
 
+    def test_the_profile_of_the_mirror_is_there_for_the_mirror_alone(self):
+        self.panel.notebook.select(self._page_named("Effects"))
+        self.root.update()
+        slot = self.panel.vars["RAINBOW_SHOWS"][0]
+        for label, wanted in (("Mirror the screen", True), ("Fire", False),
+                              ("Rainbow", False)):
+            slot.set(label)
+            self.root.update()
+            self.assertEqual(self._shown("MIRROR_PROFILE"), wanted, label)
+        self.assertEqual(self.panel._label_for("MIRROR_PROFILE", "pop"),
+                         "Color Pop")
+
+    def test_the_mirror_scene_of_the_desktop_has_a_profile_of_its_own(self):
+        self.panel.notebook.select(self._page_named("Strip"))
+        self.root.update()
+        self.panel.vars["RAINBOW_SHOWS"][0].set("Fire")
+        scene = self.panel.vars["DESKTOP_SCENE"][0]
+        for label, wanted in (("Mirror", True), ("Off", False)):
+            scene.set(label)
+            self.root.update()
+            self.assertEqual(self._shown("DESKTOP_MIRROR_PROFILE"), wanted,
+                             label)
+            # The profile of Game Mode goes with the rainbow slot alone.
+            self.assertFalse(self._shown("MIRROR_PROFILE"), label)
+        self.assertEqual(
+            self.panel._label_for("DESKTOP_MIRROR_PROFILE", "solid"), "Solid")
+
+    def test_the_status_page_names_the_profile_of_the_desktop(self):
+        self.panel.config = dict(self.panel.config, RAINBOW_SHOWS="fire",
+                                 DESKTOP_SCENE="mirror",
+                                 DESKTOP_MIRROR_PROFILE="solid")
+        here = self.panel._module_here
+        self.panel._module_here = lambda name: name == "led" or here(name)
+        part = [one for one in self.panel._read_parts()
+                if one.key == "mirror"][0]
+        self.assertIn("Profile on the desktop: Solid", part.detail)
+
     def test_a_desktop_scene_brings_the_same_rows_back(self):
         """Two places ask for these gauges, and either one puts them in play.
 
@@ -4732,6 +4769,87 @@ class GpuFirstLookTest(unittest.TestCase):
         self.assertIsNone(self.panel._gpu_first)
 
 
+@unittest.skipUnless(_has_display(), "no tkinter or no display")
+class MirrorLookAgainTest(unittest.TestCase):
+    """The status of the mirror is read again a moment after a change.
+
+    A change starts the LED service again, and that service makes the pipe
+    of the mirror. The page read the status at once, and only then. The
+    capture service had not found the new pipe yet, so the card said "The LED
+    service has no pipe" until somebody pressed Rebuild and reinstall.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.panel_module = _panel_module()
+
+    def setUp(self):
+        self.was_look = self.panel_module.MIRROR_LOOK
+        self.addCleanup(setattr, self.panel_module, "MIRROR_LOOK",
+                        self.was_look)
+        self.panel_module.MIRROR_LOOK = 50
+        self.root = tk.Tk()
+        self.addCleanup(self._destroy)
+        self.panel = self.panel_module.Panel(self.root)
+        self.root.update()
+        self.read = []
+        self.panel.refresh_status = lambda: self.read.append(True)
+
+    def _destroy(self):
+        if getattr(self, "root", None) is not None:
+            self.root.destroy()
+            self.root = None
+
+    def _wait(self, ms):
+        self.root.after(ms, self.root.quit)
+        self.root.mainloop()
+
+    def test_with_the_mirror_it_reads_now_and_again_later(self):
+        self.panel.config["RAINBOW_SHOWS"] = "mirror"
+        self.panel._after_change()
+        self.assertEqual(len(self.read), 1)
+        self.assertIsNotNone(self.panel._mirror_look)
+        self._wait(self.panel_module.MIRROR_LOOK + 150)
+        self.assertEqual(len(self.read), 2)
+        self.assertIsNone(self.panel._mirror_look)
+
+    def test_with_the_mirror_of_the_desktop_it_reads_again_too(self):
+        self.panel.config["RAINBOW_SHOWS"] = "fire"
+        self.panel.config["DESKTOP_SCENE"] = "mirror"
+        self.panel._after_change()
+        self._wait(self.panel_module.MIRROR_LOOK + 150)
+        self.assertEqual(len(self.read), 2)
+
+    def test_with_a_different_effect_it_reads_one_time(self):
+        self.panel.config["RAINBOW_SHOWS"] = "fire"
+        self.panel._after_change()
+        self._wait(self.panel_module.MIRROR_LOOK + 150)
+        self.assertEqual(len(self.read), 1)
+
+    def test_a_change_of_the_settings_ends_there(self):
+        """The helper and the restart of the watchers, then the two reads."""
+        def start(command, done=None):
+            if done is not None:
+                done(0)
+            return True
+        self.panel.runner.start = start
+        self.panel.vars["RAINBOW_SHOWS"][0].set(
+            self.panel._label_for("RAINBOW_SHOWS", "mirror"))
+        self.panel.vars["LED_COUNT"][0].set(42)
+        self.root.update()
+        self.panel.apply_settings()
+        self.assertIsNotNone(self.panel._mirror_look,
+                             "nothing reads the mirror again")
+
+    def test_the_look_is_cancelled_with_the_window(self):
+        self.panel.config["RAINBOW_SHOWS"] = "mirror"
+        self.panel._after_change()
+        self.panel._stop_timers()
+        self.assertIsNone(self.panel._mirror_look)
+        self._wait(self.panel_module.MIRROR_LOOK + 150)
+        self.assertEqual(len(self.read), 1)
+
+
 class NetworkCardTest(unittest.TestCase):
     """The Nanoleaf devices on the network, drawn in a real window.
 
@@ -5702,7 +5820,7 @@ class ModulePageTest(unittest.TestCase):
 
 
 class CompanionPageTest(unittest.TestCase):
-    """The Wall Panel page, in a real window.
+    """The Steam Companion page, in a real window.
 
     Nothing on this page writes a setting. It reports three things that live
     outside this window, and it has one button that writes to hardware. That
@@ -5747,7 +5865,100 @@ class CompanionPageTest(unittest.TestCase):
 
     def test_the_page_is_there_and_named(self):
         panel = self._panel()
-        self.assertEqual(str(panel.section_title.cget("text")), "Wall Panel")
+        self.assertEqual(str(panel.section_title.cget("text")), "Steam Companion")
+
+    def _request(self):
+        """A panel that asks to pair, in a runtime directory of its own."""
+        import shutil
+        import tempfile
+        import unittest.mock
+        from steamos_utility_center import pairing
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        patcher = unittest.mock.patch.dict(os.environ,
+                                           {"XDG_RUNTIME_DIR": folder})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        service = pairing.Pairing(folder=folder, name="deck")
+        _, said = service.ask({"name": "SteamOS-Panel-A1B2",
+                               "key": pairing.public_key(bytes(range(32)))
+                               .hex()}, "192.168.1.50")
+        return service, said["id"]
+
+    def test_a_panel_that_asks_to_pair_is_asked_about_one_time(self):
+        service, request_id = self._request()
+        shown = []
+        was = dialogs.CompanionPairDialog
+
+        def stand_in(parent, request, look):
+            shown.append(request["id"])
+            return type("Asked", (), {"answer": True, "gone": False})()
+
+        dialogs.CompanionPairDialog = stand_in
+        self.addCleanup(setattr, dialogs, "CompanionPairDialog", was)
+        # The window looks one time as it opens, and then on a timer.
+        panel = self._panel()
+        panel._watch_pairing()
+        self.assertEqual(shown, [request_id])
+        self.assertEqual(service.check(request_id)[1], {"state": "accepted"})
+
+    def test_a_request_that_expired_gets_no_answer(self):
+        service, request_id = self._request()
+        was = dialogs.CompanionPairDialog
+        dialogs.CompanionPairDialog = lambda parent, request, look: type(
+            "Asked", (), {"answer": False, "gone": True})()
+        self.addCleanup(setattr, dialogs, "CompanionPairDialog", was)
+        self._panel()
+        self.assertEqual(service.check(request_id)[1], {"state": "waiting"})
+
+    def _texts(self, widget):
+        found = []
+        for child in widget.winfo_children():
+            try:
+                found.append(str(child.cget("text")))
+            except tk.TclError:
+                pass
+            found += self._texts(child)
+        return found
+
+    def test_the_dialog_shows_the_code_and_takes_an_accept(self):
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        request = {"id": "0" * 16, "code": "482913", "name": "SteamOS-Panel",
+                   "address": "192.168.1.50", "until": 0.0}
+        seen = []
+
+        def press():
+            for window in root.winfo_children():
+                if isinstance(window, tk.Toplevel):
+                    seen.extend(self._texts(window))
+                    for button in self._buttons(window):
+                        if str(button.cget("text")) == "Accept":
+                            button.invoke()
+                            return
+
+        root.after(300, press)
+        dialog = dialogs.CompanionPairDialog(root, request, lambda: request)
+        self.assertTrue(dialog.answer)
+        self.assertFalse(dialog.gone)
+        self.assertIn("482 913", seen)
+
+    def _buttons(self, widget):
+        found = []
+        for child in widget.winfo_children():
+            if isinstance(child, ttk.Button):
+                found.append(child)
+            found += self._buttons(child)
+        return found
+
+    def test_the_dialog_closes_when_the_request_is_gone(self):
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        request = {"id": "0" * 16, "code": "482913", "name": "", "address": "",
+                   "until": 0.0}
+        dialog = dialogs.CompanionPairDialog(root, request, lambda: None)
+        self.assertTrue(dialog.gone)
+        self.assertFalse(dialog.answer)
 
     def test_with_no_image_the_button_runs_nothing(self):
         """The one that matters. A flash from an incomplete build leaves a

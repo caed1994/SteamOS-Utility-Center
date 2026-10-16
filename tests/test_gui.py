@@ -1423,7 +1423,7 @@ class PanelSettingsTest(unittest.TestCase):
         # page as well now, and both are settings of the machine.
         self.assertEqual([entry[1] for entry in sections],
                          ["LED Strip", "Nanoleaf", "CPU & GPU power",
-                          "HDMI CEC Mods", "Wall Panel", "System", "Status",
+                          "HDMI CEC Mods", "Steam Companion", "System", "Status",
                           "App Settings"])
         self.assertEqual(ast.literal_eval(assigned["ABOUT"])[0], "about")
         # Three fields and not four. Each entry carried a subtitle, and they
@@ -1451,6 +1451,29 @@ class PanelSettingsTest(unittest.TestCase):
             self.assertEqual(len(lines), 3, key)
             for line in lines:
                 self.assertTrue(line.strip(), key)
+
+    def test_each_section_has_a_symbol_of_its_own(self):
+        """A symbol with no branch in _draw_icon is drawn as the one of About.
+
+        That is the last branch, and it takes each name it does not know. So
+        a new name, or a name with a typing error, gives a second circle with
+        an i and no error.
+        """
+        drawn = set()
+        for node in ast.walk(self._panel()):
+            if (isinstance(node, ast.FunctionDef)
+                    and node.name == "_draw_icon"):
+                for test in ast.walk(node):
+                    if (isinstance(test, ast.Compare)
+                            and isinstance(test.left, ast.Name)
+                            and test.left.id == "name"):
+                        drawn.update(part.value for part in test.comparators
+                                     if isinstance(part, ast.Constant))
+        sections = ast.literal_eval(self._assignments()["SECTIONS"])
+        for key, _title, icon in sections:
+            self.assertIn(icon, drawn, key)
+        companion = [entry for entry in sections if entry[0] == "companion"]
+        self.assertEqual(companion, [("companion", "Steam Companion", "cube")])
 
     def test_no_tab_label_carries_a_menu_escape(self):
         # "&&" is how a *menu* label spells one ampersand. A notebook tab

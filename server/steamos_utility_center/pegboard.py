@@ -257,16 +257,22 @@ EFFECT_OF = {SHOWS_PATROL: shim.EFFECT_PATROL}
 # their own colours and COLOR does nothing for them.
 TAKES_COLOUR = frozenset({SHOWS_PATROL})
 
-# What the board can draw: every effect of the renderer except the load gauge,
-# and the wave.
+# What the board can draw: every effect of the renderer except the load gauge
+# and the mirror, and the wave.
 #
 # That gauge draws two bars of a fixed colour that grow and shrink with the
 # counters. On a strip behind a case it reads as a meter. On a board it reads
 # as two coloured stubs, and the numbers it shows are on the Status page in
-# words. The rest is derived from the renderer, so a new effect still arrives
-# by itself.
+# words.
+#
+# The mirror is not here either. The pictures of the screen go to the LED
+# service of the bar, and that service has the one pipe. See screen.
+#
+# The rest is derived from the renderer, so a new effect still arrives by
+# itself.
+_NOT_ON_THE_BOARD = (render.SHOWS_LOAD, render.SHOWS_MIRROR)
 EFFECTS = tuple(sorted(
-    {name for name in render.RAINBOW_CHOICES if name != render.SHOWS_LOAD}
+    {name for name in render.RAINBOW_CHOICES if name not in _NOT_ON_THE_BOARD}
     | {SHOWS_RAINBOW_WAVE, SHOWS_PATROL}))
 
 # A name for each, for a menu. It is here and not in the window, because the

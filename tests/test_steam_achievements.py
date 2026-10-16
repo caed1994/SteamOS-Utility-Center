@@ -166,19 +166,28 @@ class WhichFileTest(unittest.TestCase):
             self.assertEqual(steamapps.achievements(GAME, home), (50, 60))
 
 
-class RunningGameTest(unittest.TestCase):
+class _CountCase(unittest.TestCase):
     def setUp(self):
         steamapps._page_cache.clear()
+        runtime = tempfile.TemporaryDirectory()
+        self.addCleanup(runtime.cleanup)
+        # The runtime directory of the person that runs the tests is not
+        # read: a watcher there can hold counts of its own.
+        self.live = os.path.join(runtime.name, steamapps.LIVE_NAME)
 
+    def count(self, where, home):
+        return steamapps.now_playing_achievements(where, home, live=self.live)
+
+
+class RunningGameTest(_CountCase):
     def test_the_game_that_runs_is_the_one_counted(self):
         with tempfile.TemporaryDirectory() as where:
             with tempfile.TemporaryDirectory() as home:
                 fake_proc(where, [(900, "reaper", [
                     "reaper", "SteamLaunch", "AppId=%d" % GAME, "--", "x"])])
                 write(home, page())
-                self.assertEqual(
-                    steamapps.now_playing_achievements(where, home),
-                    {"achieved": 49, "total": 60})
+                self.assertEqual(self.count(where, home),
+                                 {"achieved": 49, "total": 60})
 
     def test_no_game_is_none_and_not_a_zero(self):
         """0 / 60 is a real answer about a game, and nothing running is
@@ -186,8 +195,99 @@ class RunningGameTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as where:
             with tempfile.TemporaryDirectory() as home:
                 fake_proc(where, [(1, "systemd", ["/sbin/init"])])
-                self.assertIsNone(
-                    steamapps.now_playing_achievements(where, home))
+                steamapps.publish_live(GAME, 50, 60, path=self.live)
+                self.assertIsNone(self.count(where, home))
+
+
+class LiveCountTest(_CountCase):
+    """The counts of the achievement watcher, which follow each unlock.
+
+    The page is written when Steam lays it out, which is at the start of
+    the game. An unlock in the game thus did not change the panel.
+    """
+
+    def running(self, where):
+        fake_proc(where, [(900, "reaper", [
+            "reaper", "SteamLaunch", "AppId=%d" % GAME, "--", "x"])])
+
+    def test_the_live_count_comes_before_the_page(self):
+        with tempfile.TemporaryDirectory() as where:
+            with tempfile.TemporaryDirectory() as home:
+                self.running(where)
+                write(home, page(49, 60))
+                steamapps.publish_live(GAME, 50, 60, path=self.live)
+                self.assertEqual(self.count(where, home),
+                                 {"achieved": 50, "total": 60})
+
+    def test_a_live_count_with_no_page_is_still_shown(self):
+        with tempfile.TemporaryDirectory() as where:
+            with tempfile.TemporaryDirectory() as home:
+                self.running(where)
+                steamapps.publish_live(GAME, 1, 60, path=self.live)
+                self.assertEqual(self.count(where, home),
+                                 {"achieved": 1, "total": 60})
+
+    def test_the_count_of_a_different_game_is_not_used(self):
+        with tempfile.TemporaryDirectory() as where:
+            with tempfile.TemporaryDirectory() as home:
+                self.running(where)
+                write(home, page(49, 60))
+                steamapps.publish_live(GAME + 1, 5, 10, path=self.live)
+                self.assertEqual(self.count(where, home),
+                                 {"achieved": 49, "total": 60})
+
+    def test_with_the_counts_removed_the_page_is_the_answer(self):
+        with tempfile.TemporaryDirectory() as where:
+            with tempfile.TemporaryDirectory() as home:
+                self.running(where)
+                write(home, page(49, 60))
+                steamapps.publish_live(GAME, 50, 60, path=self.live)
+                steamapps.clear_live(path=self.live)
+                self.assertFalse(os.path.exists(self.live))
+                self.assertEqual(self.count(where, home),
+                                 {"achieved": 49, "total": 60})
+                # A second removal finds no file, and that is not a fault.
+                steamapps.clear_live(path=self.live)
+
+    def test_a_file_that_is_not_counts_gives_the_page(self):
+        bad = [b"", b"{", b"[1, 2]", b"\xff\xfe",
+               b'{"appid": %d, "achieved": 61, "total": 60}' % GAME,
+               b'{"appid": %d, "achieved": -1, "total": 60}' % GAME,
+               b'{"appid": %d, "achieved": 1, "total": 0}' % GAME,
+               b'{"appid": %d, "achieved": true, "total": 60}' % GAME,
+               b'{"appid": %d, "achieved": 1.0, "total": 60}' % GAME,
+               b'{"appid": "%d", "achieved": 1, "total": 60}' % GAME,
+               b'{"appid": %d.0, "achieved": 1, "total": 60}' % GAME,
+               b'{"achieved": 1, "total": 60}',
+               b'{"appid": %d, "achieved": 1, "total": 60}' % GAME
+               + b" " * steamapps.LIVE_LIMIT]
+        with tempfile.TemporaryDirectory() as where:
+            with tempfile.TemporaryDirectory() as home:
+                self.running(where)
+                write(home, page(49, 60))
+                for raw in bad:
+                    with open(self.live, "wb") as handle:
+                        handle.write(raw)
+                    self.assertEqual(self.count(where, home),
+                                     {"achieved": 49, "total": 60}, raw[:60])
+
+    def test_the_file_is_in_the_runtime_directory_of_the_user(self):
+        """The watcher and the panel service are user services of one
+        user, and systemd gives both the same XDG_RUNTIME_DIR."""
+        with tempfile.TemporaryDirectory() as runtime:
+            original = os.environ.get("XDG_RUNTIME_DIR")
+            os.environ["XDG_RUNTIME_DIR"] = runtime
+            try:
+                self.assertEqual(steamapps.live_path(),
+                                 os.path.join(runtime, steamapps.LIVE_NAME))
+                steamapps.publish_live(GAME, 2, 3)
+                self.assertEqual(steamapps.live_achievements(GAME), (2, 3))
+                self.assertEqual(os.listdir(runtime), [steamapps.LIVE_NAME])
+            finally:
+                if original is None:
+                    del os.environ["XDG_RUNTIME_DIR"]
+                else:
+                    os.environ["XDG_RUNTIME_DIR"] = original
 
 
 if __name__ == "__main__":

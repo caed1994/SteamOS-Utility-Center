@@ -959,6 +959,13 @@ class AchievementWatcher:
             return []
         return fresh
 
+    def counts(self):
+        """(unlocked, total) at the last poll, or None before a first read."""
+        if not self.previous:
+            return None
+        return (sum(1 for value in self.previous.values() if value),
+                len(self.previous))
+
 
 # -- picking a route safely -------------------------------------------------
 #

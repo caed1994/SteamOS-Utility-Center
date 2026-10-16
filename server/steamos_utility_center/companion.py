@@ -53,8 +53,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import config as config_module
-from . import ctl, desktop, lact, modules, notify, pcinfo, power, steamapps
-from . import steamcontroller
+from . import ctl, desktop, lact, modules, notify, pairing, pcinfo, power
+from . import render, screen, steamapps, steamcontroller
 from . import temperature
 
 # The port, and the file that holds the shared secret.
@@ -72,6 +72,11 @@ TOKEN_MINIMUM = 32
 
 # A request body carries one short JSON object. Anything longer is not one.
 BODY_LIMIT = 256
+
+# The pairing of a new panel. These two paths need no signature, because a
+# new panel has no secret yet. See pairing.py.
+PAIR_PATH = "/v1/pair"
+PAIR_ID = re.compile(r"^%s/([0-9a-f]{16})$" % PAIR_PATH)
 
 # How the panel proves that it knows the secret without sending it.
 #
@@ -142,15 +147,19 @@ ACTIONS = {
     "game_mode": ("steamos-session-select", "gamescope"),
 }
 
-# Cooling Boost: the fan of the graphics card at full speed, the switch on the
-# page of the card. Two presses and not one, for the reason that desktop_mode
-# and game_mode give above: where to go, and not "the other one".
+# The fan of the graphics card, the column on the page of the card: Cooling
+# Boost, which holds the fan at full speed, and zero RPM, which lets it stop
+# on a cool card. Two presses for each and not one, for the reason that
+# desktop_mode and game_mode give above: where to go, and not "the other
+# one".
 #
 # Each one is a call of ctl and not a command: the call that the plugin in
 # Game Mode makes. It speaks to the LACT daemon over its socket as this user,
 # and the socket is open to the group of the desktop user. See lact.py.
 BOOST_PRESSES = {"gpu_boost_on": "gpu-boost-on",
-                 "gpu_boost_off": "gpu-boost-off"}
+                 "gpu_boost_off": "gpu-boost-off",
+                 "gpu_zero_rpm_on": "gpu-zero-rpm-on",
+                 "gpu_zero_rpm_off": "gpu-zero-rpm-off"}
 
 # How old the answer about the boost in the status can be, and how long one
 # question to LACT can take. The panel waits four seconds for the whole
@@ -178,6 +187,12 @@ CPU_PATH = "/v1/cpu"
 CPU_WORD = 23
 LED_CHOICES = {"desktop": ("DESKTOP_SCENE", config_module.DESKTOP_SCENES),
                "game": ("RAINBOW_SHOWS", config_module.RAINBOW_CHOICES)}
+# The profile of the mirror in each mode. It is not in LED_CHOICES, because
+# the panel has one card for each key of that table.
+LED_MIRROR = {"mirror_profile": ("MIRROR_PROFILE",
+                                 config_module.MIRROR_PROFILES),
+              "desktop_mirror_profile": ("DESKTOP_MIRROR_PROFILE",
+                                         config_module.MIRROR_PROFILES)}
 # The colour and the brightness of the scenes on the desktop. The same key is
 # in the status and in a change, and the value is the setting of the LED
 # service that the key names. desktop.SCENES_WITH_COLOUR and
@@ -266,6 +281,12 @@ SANE_WATTS = 2000
 SCLK_LABEL = "sclk"
 HERTZ_PER_MHZ = 1000000
 SANE_MHZ = 10000
+
+# The levels of that clock, a file of the PCI device: one level on each
+# line, as "1: 2450Mhz *", with a star at the level in use. The highest
+# level is the top of the bar of the clock on the panel.
+SCLK_LEVELS = "pp_dpm_sclk"
+SCLK_LEVEL = re.compile(r"^\s*\d+:\s*(\d+)\s*mhz", re.IGNORECASE | re.MULTILINE)
 
 # What the panel keeps of each list: PANEL_PADS, PANEL_SENSORS and
 # PANEL_DRIVES in its ui.h. The answer stops there. An Intel processor
@@ -722,13 +743,14 @@ def _sane(value, limit):
 def card_state(place):
     """How busy the card is, its memory and its clock, or None for each.
 
-    The load and the memory are files of the PCI device of the card. The
-    clock is a file of its hwmon chip, which is the place that telemetry
-    found, as the power is. amdgpu writes all four. A card of another
-    driver writes none of them, and the panel then shows a dash.
+    The load, the memory and the levels of the clock are files of the PCI
+    device of the card. The clock is a file of its hwmon chip, which is the
+    place that telemetry found, as the power is. amdgpu writes all five. A
+    card of another driver writes none of them, and the panel then shows a
+    dash.
     """
     out = {"gpu_load": None, "vram_used": None, "vram_total": None,
-           "gpu_mhz": None}
+           "gpu_mhz": None, "gpu_mhz_max": None}
     if not place:
         return out
     device = os.path.join(place, "device")
@@ -742,6 +764,10 @@ def card_state(place):
             == SCLK_LABEL:
         out["gpu_mhz"] = _sane(_read_number(
             os.path.join(place, "freq1_input"), HERTZ_PER_MHZ), SANE_MHZ)
+    levels = [int(level) for level in SCLK_LEVEL.findall(
+        _read_text(os.path.join(device, SCLK_LEVELS)) or "")]
+    if levels:
+        out["gpu_mhz_max"] = _sane(max(levels), SANE_MHZ)
     return out
 
 
@@ -1056,6 +1082,8 @@ def status(address=None, token=None, offer=None):
         # Whether Cooling Boost has the fan of the card, or None for no
         # switch. See BoostState.
         "boost": _boost.read(),
+        # Whether zero RPM is on, or None for a card without it.
+        "zero_rpm": _boost.zero_rpm(),
         # The energy profile of the CPU for its page, or None where this
         # machine has no power module. See cpu.
         "cpu": cpu(),
@@ -1096,33 +1124,46 @@ def press(name):
 
 
 class BoostState:
-    """Whether Cooling Boost has the fan of the card: True, False or None.
+    """Whether Cooling Boost has the fan of the card, and whether zero RPM is
+    on: True, False or None for each.
 
     None where this machine has no LACT, no card in it, or no answer in
-    BOOST_WAIT. The panel shows no switch for None.
+    BOOST_WAIT. The panel shows no switch for None. Zero RPM is also None
+    for a card without it.
 
-    Two questions to the daemon, and one pair in BOOST_EVERY seconds at the
+    Three questions to the daemon, and one set in BOOST_EVERY seconds at the
     most, because the status comes every three seconds. A press makes the
     next status ask again, so the switch shows the press at once. The answer
-    is the card and not a flag of ours, as for the plugin: somebody can set
-    the same speed in LACT. See ctl.boosting.
+    is the card and LACT and not a flag of ours, as for the plugin: somebody
+    can set the same speed in LACT. See ctl.boosting and lact.zero_rpm.
     """
 
     def __init__(self, path=None, clock=time.monotonic):
         self.path = path
         self.clock = clock
         self._value = None
+        self._zero_rpm = None
         self._at = None
         # ThreadingHTTPServer answers each request in a thread of its own.
         self._lock = threading.Lock()
 
     def read(self):
+        """Whether Cooling Boost has the fan."""
         with self._lock:
-            now = self.clock()
-            if self._at is None or now - self._at >= BOOST_EVERY:
-                self._value = self._ask()
-                self._at = now
+            self._fresh()
             return self._value
+
+    def zero_rpm(self):
+        """Whether zero RPM is on, from the same answers as read."""
+        with self._lock:
+            self._fresh()
+            return self._zero_rpm
+
+    def _fresh(self):
+        now = self.clock()
+        if self._at is None or now - self._at >= BOOST_EVERY:
+            self._value, self._zero_rpm = self._ask()
+            self._at = now
 
     def forget(self):
         """The next read asks the daemon again."""
@@ -1131,26 +1172,34 @@ class BoostState:
 
     def _ask(self):
         if not lact.available(self.path):
-            return None
+            return None, None
         try:
             devices = lact.talk("list_devices", self.path, timeout=BOOST_WAIT)
             first = devices[0] if isinstance(devices, list) and devices else {}
             gpu = first.get("id", "") if isinstance(first, dict) else ""
             if not gpu:
-                return None
+                return None, None
             config = lact.talk("get_gpu_config", self.path, {"id": gpu},
                                timeout=BOOST_WAIT)
         except lact.LactError:
-            return None
-        return ctl.boosting(lact.fan(config if isinstance(config, dict)
-                                     else {}))
+            return None, None
+        config = config if isinstance(config, dict) else {}
+        # The stats only for zero RPM. A daemon that does not give them
+        # takes the button of zero RPM away, and not the boost.
+        try:
+            stats = lact.talk("device_stats", self.path, {"id": gpu},
+                              timeout=BOOST_WAIT)
+        except lact.LactError:
+            stats = None
+        return (ctl.boosting(lact.fan(config)),
+                lact.zero_rpm(config, stats if isinstance(stats, dict) else {}))
 
 
 _boost = BoostState()
 
 
 def boost_press(action, run=None):
-    """Runs one press of Cooling Boost. Returns (HTTP code, body).
+    """Runs one press of the fan of the card. Returns (HTTP code, body).
 
     The plugin in Game Mode holds its own switch while a change of the card
     waits for Keep it, because the boost keeps whatever waits. The panel
@@ -1159,10 +1208,10 @@ def boost_press(action, run=None):
     """
     try:
         (ctl.ACTION[action] if run is None else run)()
-    except ctl.CtlError:
-        return 501, {"error": "no graphics card that LACT reports"}
+    except ctl.CtlError as exc:
+        return 501, {"error": str(exc)}
     except (lact.LactError, ValueError) as exc:
-        sys.stderr.write("Cooling Boost was refused: %s\n" % exc)
+        sys.stderr.write("%s was refused: %s\n" % (action, exc))
         return 503, {"error": "LACT did not take the change"}
     finally:
         _boost.forget()
@@ -1225,22 +1274,31 @@ class LedSettings:
             values[LED_LOOK["desktop_color"]])
         found["desktop_brightness"] = int(
             values[LED_LOOK["desktop_brightness"]])
+        for key, (name, _) in LED_MIRROR.items():
+            found[key] = values[name]
         return found
 
 
 _led_settings = LedSettings()
 
 
-def led(settings=None, present=None):
+def led(settings=None, present=None, mirror=screen.read_status):
     """The effects, the colour and the brightness for the page of the LED
     bar, or None.
 
     None where the LED module is not on this machine, or where its file has
     an error. The panel then shows a sentence in place of the buttons.
+
+    With the mirror in Game Mode, also what the service that reads the
+    screen does. It runs as this user, so its file is in the same runtime
+    directory. The panel shows it below the effect.
     """
     if not modules.installed(modules.LED, present=present):
         return None
-    return (_led_settings if settings is None else settings).read()
+    values = (_led_settings if settings is None else settings).read()
+    if values is not None and values.get("game") == render.SHOWS_MIRROR:
+        values = dict(values, mirror=mirror())
+    return values
 
 
 # One change at a time for each module. A change of the LED bar starts the
@@ -1291,9 +1349,10 @@ def led_change(request, write=None):
 
     Returns (HTTP code, body) for the panel. request is the JSON of the
     body: {"desktop": "fire"}, {"game": "ooze"}, {"desktop_color":
-    "#ff0000"}, {"desktop_brightness": 200}, or more than one of these
-    keys together. A key that is not in LED_CHOICES or LED_LOOK, or a value
-    that is not in its list or its limits, reaches nothing.
+    "#ff0000"}, {"desktop_brightness": 200}, {"mirror_profile": "solid"},
+    or more than one of these keys together. A key that is not in
+    LED_CHOICES, LED_LOOK or LED_MIRROR, or a value that is not in its list
+    or its limits, reaches nothing.
 
     The change goes through ctl.strip_write, as a change from the plugin in
     Game Mode does. The LED service checks the new file before the applier
@@ -1301,7 +1360,8 @@ def led_change(request, write=None):
     second or two, and the panel waits for this answer.
     """
     if (not isinstance(request, dict) or not request
-            or not set(request) <= set(LED_CHOICES) | set(LED_LOOK)):
+            or not set(request) <= (set(LED_CHOICES) | set(LED_LOOK)
+                                    | set(LED_MIRROR))):
         return 400, {"error": "invalid request"}
     updates = {}
     for key, value in request.items():
@@ -1310,7 +1370,7 @@ def led_change(request, write=None):
                 return 400, {"error": "unsupported colour or brightness"}
             updates[LED_LOOK[key]] = value
             continue
-        name, allowed = LED_CHOICES[key]
+        name, allowed = LED_CHOICES.get(key) or LED_MIRROR[key]
         if not isinstance(value, str) or value not in allowed:
             return 400, {"error": "unsupported effect"}
         updates[name] = value
@@ -1402,10 +1462,44 @@ class Nonces:
             return self._open.pop(value, None) is not None
 
 
-def make_handler(token, nonces=None, offer=None):
-    """The request handler for one token."""
+class Secret:
+    """The token of the service, which a pairing can replace while it runs.
+
+    A replacement goes into the file first, with mode 0600, and then into
+    the memory. With no file, a replacement stays in the memory.
+    """
+
+    def __init__(self, value, path=None):
+        self.path = path
+        self._value = value or ""
+        self._lock = threading.Lock()
+
+    @property
+    def value(self):
+        with self._lock:
+            return self._value
+
+    def replace(self, value):
+        with self._lock:
+            if self.path:
+                folder = os.path.dirname(self.path)
+                os.makedirs(folder, mode=0o700, exist_ok=True)
+                temporary = self.path + ".new"
+                descriptor = os.open(temporary,
+                                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                                     0o600)
+                with os.fdopen(descriptor, "w") as handle:
+                    handle.write(value + "\n")
+                os.replace(temporary, self.path)
+            self._value = value
+
+
+def make_handler(token, nonces=None, offer=None, pair=None):
+    """The request handler for one token, or for a Secret that holds it."""
+    secret = token if isinstance(token, Secret) else Secret(token)
     nonces = Nonces() if nonces is None else nonces
     offer = _firmware if offer is None else offer
+    pair = pairing.Pairing() if pair is None else pair
 
     class Handler(BaseHTTPRequestHandler):
         # The log of BaseHTTPRequestHandler goes to stderr, which is the
@@ -1435,7 +1529,8 @@ def make_handler(token, nonces=None, offer=None):
         def authorized(self, body=b""):
             nonce = self.headers.get(NONCE_HEADER, "")
             given = self.headers.get(AUTH_HEADER, "")
-            if not nonce or not given:
+            token = secret.value
+            if not nonce or not given or len(token) < TOKEN_MINIMUM:
                 return False
             wanted = signature(token, self.command, self.path, nonce, body)
             # The signature first and the spend second. The other order lets
@@ -1445,6 +1540,19 @@ def make_handler(token, nonces=None, offer=None):
             return nonces.spend(nonce)
 
         def do_GET(self):
+            # A new panel asks for the answer to its pairing. Each other
+            # path needs the signature.
+            asked = PAIR_ID.match(self.path)
+            if asked:
+                code, said, new = pair.check(asked.group(1))
+                if new:
+                    try:
+                        secret.replace(new)
+                    except OSError as exc:
+                        sys.stderr.write("The new token cannot be saved: %s\n"
+                                         % exc)
+                        return self.reply(500, {"error": "not saved"})
+                return self.reply(code, said)
             # The check comes before the path, so a stranger cannot learn
             # which paths exist by reading the codes that come back.
             if not self.authorized():
@@ -1452,7 +1560,7 @@ def make_handler(token, nonces=None, offer=None):
             if self.path == "/v1/status":
                 return self.reply(200,
                                   status(self.connection.getsockname()[0],
-                                         token, offer))
+                                         secret.value, offer))
             if self.path == FIRMWARE_PATH:
                 return self.send_firmware()
             self.reply(404, {"error": "not found"})
@@ -1492,6 +1600,12 @@ def make_handler(token, nonces=None, offer=None):
                 body = self.rfile.read(length)
             except (ValueError, TypeError):
                 return self.reply(400, {"error": "invalid request"})
+            if self.path == PAIR_PATH:
+                try:
+                    asked = json.loads(body)
+                except ValueError:
+                    return self.reply(400, {"error": "invalid request"})
+                return self.reply(*pair.ask(asked, self.client_address[0]))
             if not self.authorized(body):
                 return self.reply(401, {"error": "unauthorized"})
             if self.path not in ("/v1/action", LED_PATH, CPU_PATH):
@@ -1512,17 +1626,20 @@ def make_handler(token, nonces=None, offer=None):
 
 
 def read_token(path):
-    """The secret from its file, or a message that says what to do.
+    """The secret from its file, or "" with no file.
 
-    A missing file is the ordinary state before the first install, so it
-    gives a sentence and not a traceback in the journal.
+    With no file the service still runs, because a pairing writes the file.
+    Until then it refuses each request that needs the secret. A token that
+    is too short is an error that a person must see.
     """
     try:
         token = Path(path).read_text().strip()
+    except FileNotFoundError:
+        sys.stderr.write("No token in %s yet. Pair a panel to write one.\n"
+                         % path)
+        return ""
     except OSError as exc:
-        raise SystemExit("cannot read %s: %s\n"
-                         "Install the companion module to write one."
-                         % (path, exc))
+        raise SystemExit("cannot read %s: %s" % (path, exc))
     if len(token) < TOKEN_MINIMUM:
         raise SystemExit("the token in %s is shorter than %d characters"
                          % (path, TOKEN_MINIMUM))
@@ -1530,6 +1647,12 @@ def read_token(path):
 
 
 def serve(host="0.0.0.0", port=PORT, home=None):
-    """Answers until the service stops."""
-    token = read_token(token_path(home))
-    ThreadingHTTPServer((host, port), make_handler(token)).serve_forever()
+    """Answers until the service stops.
+
+    It also answers a panel that looks for the PC, on the same port number
+    with UDP. See pairing.Responder.
+    """
+    path = token_path(home)
+    secret = Secret(read_token(path), path)
+    pairing.Responder(port).start()
+    ThreadingHTTPServer((host, port), make_handler(secret)).serve_forever()

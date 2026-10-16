@@ -31,7 +31,7 @@ add_subdirectory(../managed_components/lvgl__lvgl lvgl)
 # .github/workflows/companion-firmware.yml builds and runs them now.
 set(PANEL_UI_SOURCES ../main/ui.c ../main/icons.c ../main/panel_text.c
                      ../main/panel_ui_sleep.c ../main/panel_count_font.c
-                     ../main/panel_clock_font.c ../main/panel_timer.c
+                     ../main/panel_clock_font.c ../main/panel_timer.c ../main/panel_alarm.c
                      ../main/panel_history.c ../main/panel_pages.c ../main/panel_frames.c ../main/panel_led.c ../main/panel_cpu.c ../main/panel_taps.c ../main/panel_theme.c
                      ../main/panel_font_12.c ../main/panel_font_14.c
                      ../main/panel_font_16.c ../main/panel_font_18.c
@@ -56,7 +56,7 @@ target_link_libraries(check_idle PRIVATE lvgl m)
 target_compile_options(check_idle PRIVATE -UNDEBUG)
 add_executable(check_power check_power.c ../main/panel_key.c
                            ../main/panel_ui_sleep.c ../main/panel_clock_font.c
-                           ../main/panel_font_24.c)
+                           ../main/panel_font_24.c ../main/icons.c)
 target_include_directories(check_power PRIVATE ../main)
 target_link_libraries(check_power PRIVATE lvgl m)
 target_compile_options(check_power PRIVATE -UNDEBUG)
@@ -69,6 +69,12 @@ add_executable(check_pages check_pages.c ${PANEL_UI_SOURCES})
 target_include_directories(check_pages PRIVATE ../main)
 target_link_libraries(check_pages PRIVATE lvgl m)
 target_compile_options(check_pages PRIVATE -UNDEBUG)
+# check_touch walks every screen with the hit test of LVGL and holds the
+# size of the place that takes each tap. See check_touch.c.
+add_executable(check_touch check_touch.c ${PANEL_UI_SOURCES})
+target_include_directories(check_touch PRIVATE ../main)
+target_link_libraries(check_touch PRIVATE lvgl m)
+target_compile_options(check_touch PRIVATE -UNDEBUG)
 add_executable(check_boot check_boot.c ../main/panel_boot.c)
 target_include_directories(check_boot PRIVATE ../main)
 target_link_libraries(check_boot PRIVATE lvgl m)

@@ -9,9 +9,9 @@
 // is a gap, and the curve on the screen breaks there and does not draw a
 // line across the time it knows nothing about.
 //
-// The panel keeps an hour. The page shows the last 15, 30 or 60 minutes, as
-// was asked: 15 to 30, and the hour is the room above that. A restart of the
-// panel starts the history again; the PC keeps none.
+// The panel keeps the last 30 minutes, and the page shows all of them. There
+// is no choice of a window. A restart of the panel starts the history
+// again; the PC keeps none.
 //
 // No ESP-IDF and no LVGL in here, so tests/test_panel_history.py builds this
 // file on the machine that runs the tests and asks it.
@@ -21,9 +21,10 @@
 #include <stdint.h>
 
 #define PANEL_HISTORY_STEP_MS 5000u
-#define PANEL_HISTORY_POINTS 720
-// The points the screen draws for any window. 15 minutes are 180 points,
-// and the longer windows are their mean, two or four to one.
+// The window of the page, and the points that it holds.
+#define PANEL_HISTORY_MINUTES 30
+#define PANEL_HISTORY_POINTS 360
+// The points the screen draws: each is the mean of two points.
 #define PANEL_HISTORY_DRAWN 180
 // A point with no reading.
 #define PANEL_HISTORY_GAP INT16_MIN

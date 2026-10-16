@@ -16,6 +16,7 @@ if (api._version != API_VERSION) {
     console.warn(`[@decky/api] Requested API version ${API_VERSION} but the running loader only supports version ${api._version}. Some features may not work.`);
 }
 const callable = api.callable;
+const toaster = api.toaster;
 const definePlugin = (fn) => {
     return (...args) => {
         return fn(...args);
@@ -86,6 +87,12 @@ const getFullStatus = callable("get_full_status");
 const getArea = callable("get_area");
 const setArea = callable("set_area");
 const doAction = callable("do_action");
+const getPairing = callable("get_pairing");
+const answerPairing = callable("answer_pairing");
+// "482913" as "482 913", which is easier to compare.
+function spaced(code) {
+    return code.slice(0, 3) + " " + code.slice(3);
+}
 // The scenes of the strip, in words. The command answers with the names that
 // the configuration file uses.
 const SCENE_WORDS = {
@@ -97,8 +104,10 @@ const SCENE_WORDS = {
     rainbow: "Rainbow",
     fire: "Fire",
     aurora: "Aurora",
+    ooze: "Ooze",
     temperature: "Temperature gauge",
     load: "Load gauge",
+    mirror: "Mirror the screen",
 };
 function words(value) {
     return SCENE_WORDS[value] ?? value;
@@ -157,6 +166,7 @@ function Choice(props) {
 // So the values live here, where a component that is built again reads the
 // same ones, and `draw` below puts them on the screen.
 const held = {
+    pairing: null,
     status: null,
     strip: null,
     pegboard: null,
@@ -278,6 +288,8 @@ function Content() {
     // was given, which is one way for a box to name a value that is gone.
     const rainbowOptions = SP_REACT.useMemo(() => options(held.strip?.offers?.RAINBOW_SHOWS), [held.strip]);
     const sceneOptions = SP_REACT.useMemo(() => options(held.strip?.offers?.DESKTOP_SCENE), [held.strip]);
+    // The command sends a label with each profile, from the table of screen.py.
+    const profileOptions = SP_REACT.useMemo(() => labelled(held.strip?.offers?.MIRROR_PROFILE), [held.strip]);
     const effectOptions = SP_REACT.useMemo(() => labelled(held.pegboard?.offers?.EFFECT), [held.pegboard]);
     // The effects of each device, by the token that names it. The names come
     // off the device, so they are used as they are: words() is for a value of
@@ -391,6 +403,9 @@ function Content() {
     const features = (Array.isArray(held.cec?.offers?.features) ? held.cec?.offers?.features : []);
     const rainbow = shown("strip", "RAINBOW_SHOWS", settings.RAINBOW_SHOWS, "rainbow");
     const scene = shown("strip", "DESKTOP_SCENE", settings.DESKTOP_SCENE, "steam");
+    const profile = shown("strip", "MIRROR_PROFILE", settings.MIRROR_PROFILE, "pop");
+    // The desktop has a profile of its own, from the same list.
+    const desktopProfile = shown("strip", "DESKTOP_MIRROR_PROFILE", settings.DESKTOP_MIRROR_PROFILE, "pop");
     const effect = shown("pegboard", "EFFECT", board.EFFECT, "rainbow");
     // Whether a board answered on the USB bus. The settings are kept either
     // way, and a person in Game Mode cannot look in /sys to find out why the
@@ -398,18 +413,65 @@ function Content() {
     const boardHere = Boolean(held.pegboard?.offers?.here);
     const governor = shown("power", "CPU_GOVERNOR", cpu.CPU_GOVERNOR);
     const preference = shown("power", "CPU_EPP", cpu.CPU_EPP);
-    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [(held.said !== "" || held.status?.sudo_rule === false) && (SP_JSX.jsxs(DFL.PanelSection, { children: [held.said !== "" && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d85c5c" }, children: held.said }) })), held.status?.sudo_rule === false && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d9a441" }, children: "Nothing here can change a setting. Install the panel again in Desktop Mode to get the rule that permits it." }) }))] })), held.status?.modules?.length === 0 && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d9a441" }, children: "No module is installed. The control panel in Desktop Mode installs the LED bar, the CPU and GPU power, HDMI CEC and the drives, each from its own page." }) }) })), has("led") && (SP_JSX.jsxs(DFL.PanelSection, { title: "LED bar", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Rainbow slot", options: rainbowOptions, value: rainbow, disabled: held.busy || !held.strip?.ok, onPick: (value) => pick("strip", "RAINBOW_SHOWS", value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Desktop scene", options: sceneOptions, value: scene, disabled: held.busy || !held.strip?.ok, onPick: (value) => pick("strip", "DESKTOP_SCENE", value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Notifications", checked: Boolean(settings.NOTIFY), disabled: held.busy || !held.strip?.ok, onChange: (on) => write("strip", { NOTIFY: on }) }) })] })), (has("pegboard") || devices.length > 0) && (SP_JSX.jsxs(DFL.PanelSection, { title: "Nanoleaf", children: [has("pegboard") && (SP_JSX.jsxs(SP_REACT.Fragment, { children: [!boardHere && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", opacity: 0.75 }, children: "No board answered on the USB bus. What you set here is kept, and the board draws it when you plug one in." }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Light the board", checked: Boolean(board.ENABLED), disabled: held.busy || !held.pegboard?.ok, onChange: (on) => write("pegboard", { ENABLED: on }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Effect", options: effectOptions, value: effect, disabled: held.busy || !held.pegboard?.ok, onPick: (value) => pick("pegboard", "EFFECT", value) }) })] })), devices.map((one) => (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: (one.name || one.ip || "Nanoleaf")
+    // The answer of the person to a panel that asks to pair.
+    const pairAnswer = (accept) => {
+        const asked = held.pairing;
+        if (!asked) {
+            return;
+        }
+        held.pairing = null;
+        void change(() => answerPairing(asked.id, accept));
+    };
+    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [has("companion") && held.pairing && (SP_JSX.jsxs(DFL.PanelSection, { title: "Steam Companion", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em" }, children: (held.pairing.name || "A panel") + " at " +
+                                (held.pairing.address || "?") + " asks to pair. Accept it " +
+                                "only when the panel shows the same code." }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "1.6em", textAlign: "center" }, children: spaced(String(held.pairing.code)) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: held.busy, onClick: () => pairAnswer(true), children: "Accept" }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: held.busy, onClick: () => pairAnswer(false), children: "Refuse" }) })] })), (held.said !== "" || held.status?.sudo_rule === false) && (SP_JSX.jsxs(DFL.PanelSection, { children: [held.said !== "" && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d85c5c" }, children: held.said }) })), held.status?.sudo_rule === false && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d9a441" }, children: "Nothing here can change a setting. Install the panel again in Desktop Mode to get the rule that permits it." }) }))] })), held.status?.modules?.length === 0 && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d9a441" }, children: "No module is installed. The control panel in Desktop Mode installs the LED bar, the CPU and GPU power, HDMI CEC and the drives, each from its own page." }) }) })), has("led") && (SP_JSX.jsxs(DFL.PanelSection, { title: "LED bar", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Rainbow slot", options: rainbowOptions, value: rainbow, disabled: held.busy || !held.strip?.ok, onPick: (value) => pick("strip", "RAINBOW_SHOWS", value) }) }), rainbow === "mirror" && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Mirror profile", options: profileOptions, value: profile, disabled: held.busy || !held.strip?.ok, onPick: (value) => pick("strip", "MIRROR_PROFILE", value) }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Desktop scene", options: sceneOptions, value: scene, disabled: held.busy || !held.strip?.ok, onPick: (value) => pick("strip", "DESKTOP_SCENE", value) }) }), scene === "mirror" && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Desktop mirror profile", options: profileOptions, value: desktopProfile, disabled: held.busy || !held.strip?.ok, onPick: (value) => pick("strip", "DESKTOP_MIRROR_PROFILE", value) }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Notifications", checked: Boolean(settings.NOTIFY), disabled: held.busy || !held.strip?.ok, onChange: (on) => write("strip", { NOTIFY: on }) }) })] })), (has("pegboard") || devices.length > 0) && (SP_JSX.jsxs(DFL.PanelSection, { title: "Nanoleaf", children: [has("pegboard") && (SP_JSX.jsxs(SP_REACT.Fragment, { children: [!boardHere && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", opacity: 0.75 }, children: "No board answered on the USB bus. What you set here is kept, and the board draws it when you plug one in." }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Light the board", checked: Boolean(board.ENABLED), disabled: held.busy || !held.pegboard?.ok, onChange: (on) => write("pegboard", { ENABLED: on }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Effect", options: effectOptions, value: effect, disabled: held.busy || !held.pegboard?.ok, onPick: (value) => pick("pegboard", "EFFECT", value) }) })] })), devices.map((one) => (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: (one.name || one.ip || "Nanoleaf")
                                         + (one.ok ? "" : " (no answer)"), checked: Boolean(one.on), disabled: held.busy || !one.ok, onChange: (on) => write("nanoleaf", { token: one.token, on }) }) }), one.ok && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Effect", options: deviceOptions[one.token] ?? [], value: playing(one), disabled: held.busy, onPick: (value) => play(one.token, value) }) }))] }, one.token)))] })), has("power") && (SP_JSX.jsx(DFL.PanelSection, { title: "CPU power", children: Number(offered.policies ?? 0) === 0 ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em" }, children: "This machine has no cpufreq, so there is nothing to set." }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Governor", options: governorOptions, value: governor, disabled: held.busy || !held.power?.ok, onPick: (value) => pick("power", "CPU_GOVERNOR", value) }) }), Array.isArray(offered.epp) && offered.epp.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(Choice, { label: "Energy preference", options: eppOptions, value: preference, disabled: held.busy || !held.power?.ok, onPick: (value) => pick("power", "CPU_EPP", value) }) }))] })) })), has("power") && (SP_JSX.jsx(DFL.PanelSection, { title: "Graphics card", children: !Boolean((held.gpu?.settings ?? {}).available) ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em" }, children: "LACT is not running, so there is nothing to set." }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [knobs.length === 0 ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em" }, children: "LACT reports no control for this card." }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [knobs.map((knob) => (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.SliderField, { label: knob.label + (knob.unit ? " (" + knob.unit + ")" : ""), value: held.wanted[knob.key] ?? knob.start, min: knob.min, max: knob.max, step: 1, notchTicksVisible: false, showValue: true, disabled: held.busy, onChange: (value) => {
                                             held.wanted[knob.key] = value;
                                             draw();
                                         } }) }, knob.key))), held.keeping === "" ? (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: held.busy || Object.keys(held.wanted).length === 0, onClick: () => void send(), children: "Send to the card" }) })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { style: { fontSize: "0.8em", color: "#d9a441" }, children: held.keeping }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: held.busy, onClick: () => void keep(), children: "Keep it" }) })] }))] })), card !== "" && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Cooling Boost", checked: boosted, disabled: held.busy || held.keeping !== "", onChange: (on) => void boostFan(on) }) }))] })) })), has("cec") && (SP_JSX.jsx(DFL.PanelSection, { title: "Television", children: features.map((feature) => (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: feature.label, checked: Boolean(switches[feature.name]), disabled: held.busy, onChange: (on) => write("cec", { [feature.name]: on }) }) }, feature.name))) }))] }));
 }
-var index = definePlugin(() => ({
-    name: "SteamOS Utility Center",
-    titleView: SP_JSX.jsx("div", { children: "SteamOS Utility Center" }),
-    content: SP_JSX.jsx(Content, {}),
-    icon: SP_JSX.jsx(FaLightbulb, {}),
-}));
+// The question for a panel that asks to pair, also while this page is closed:
+// one toast for each new request, and the buttons on the page. A read of a
+// small file each few seconds, and no run of the command.
+const PAIRING_LOOK_MS = 3000;
+let pairingSeen = "";
+async function lookForPairing() {
+    let answer;
+    try {
+        answer = await getPairing();
+    }
+    catch {
+        return;
+    }
+    const found = answer.ok ? (answer.waiting ?? null) : null;
+    const waiting = found && typeof found.id === "string" && found.until * 1000 > Date.now()
+        ? found
+        : null;
+    if (waiting && waiting.id !== pairingSeen) {
+        pairingSeen = waiting.id;
+        toaster.toast({
+            title: "Steam Companion",
+            body: "A panel asks to pair. Code " + spaced(String(waiting.code)) +
+                ". Accept it in SteamOS Utility Center.",
+        });
+    }
+    if ((held.pairing?.id ?? "") !== (waiting?.id ?? "")) {
+        held.pairing = waiting;
+        draw();
+    }
+}
+var index = definePlugin(() => {
+    const timer = setInterval(() => void lookForPairing(), PAIRING_LOOK_MS);
+    return {
+        name: "SteamOS Utility Center",
+        titleView: SP_JSX.jsx("div", { children: "SteamOS Utility Center" }),
+        content: SP_JSX.jsx(Content, {}),
+        icon: SP_JSX.jsx(FaLightbulb, {}),
+        onDismount() {
+            clearInterval(timer);
+        },
+    };
+});
 
 export { index as default };
 //# sourceMappingURL=index.js.map

@@ -17,13 +17,14 @@ the Quick Access menu of Game Mode.
 6. [CPU and GPU power](#cpu-and-gpu-power)
 7. [HDMI CEC](#hdmi-cec)
 8. [Keyboard, controller wake and drives](#keyboard-controller-wake-and-drives)
-9. [The control panel](#the-control-panel)
-10. [Game Mode](#game-mode)
-11. [The command that speaks JSON](#the-command-that-speaks-json)
-12. [Settings reference](#settings-reference)
-13. [Troubleshooting](#troubleshooting)
-14. [Updates and removal](#updates-and-removal)
-15. [Credits and licence](#credits-and-licence)
+9. [Steam Companion](#steam-companion)
+10. [The control panel](#the-control-panel)
+11. [Game Mode](#game-mode)
+12. [The command that speaks JSON](#the-command-that-speaks-json)
+13. [Settings reference](#settings-reference)
+14. [Troubleshooting](#troubleshooting)
+15. [Updates and removal](#updates-and-removal)
+16. [Credits and licence](#credits-and-licence)
 
 ## Install
 
@@ -159,6 +160,7 @@ Mode. The download progress bar comes from there too.
 | `fire` | a flame that moves along the strip | ![fire](docs/previews/fire.png) |
 | `aurora` | slow green and violet curtains | ![aurora](docs/previews/aurora.png) |
 | `ooze` | thick acid blobs that creep and merge | ![ooze](docs/previews/ooze.png) |
+| `mirror` | the colours of the screen, from the left to the right | ![mirror](docs/previews/mirror.png) |
 
 Set the option, then select **Rainbow** in Steam's LED menu. A machine that
 cannot show your selection gets the rainbow, with the reason in the log.
@@ -173,14 +175,74 @@ right, in `LOAD_CPU_COLOR` and `LOAD_GPU_COLOR`. `LOAD_SWAP` exchanges the two
 sides. The GPU half needs an amdgpu card.
 `steamos-utility-center --load` gives the counters of your machine.
 
+**Mirror.** The bar takes the colours of the screen, in Game Mode and on the
+desktop. Each LED shows the mean colour of one of 17 zones across the screen. The black bars of a
+film are not in the zones.
+
+A user service, `steamos-utility-center-mirror`, reads the screen with
+GStreamer and its `pipewiresrc` element. It reads only while the bar shows the
+mirror. It stops while a different program reads the screen, for example a
+recording of Steam. The wall panel and the Status page of the control panel
+show what it does. The log is
+`journalctl --user -u steamos-utility-center-mirror -f`.
+
+gamescope sends a picture only when the screen changes. On a still screen the
+bar keeps the last picture. A capture that starts on a still screen waits for
+the first change, and the panel shows "Mirror waits for a picture". Until the
+first picture comes, the bar stays dark. The rainbow of Steam shows only when
+the mirror cannot run.
+
+Three profiles give the colours of the screen to the bar in different ways.
+Game Mode and the desktop each have a profile of their own. The wall panel,
+the control panel and the Game Mode plugin select them. In the settings file,
+`MIRROR_PROFILE` is for Game Mode and `DESKTOP_MIRROR_PROFILE` for the desktop:
+
+| Profile | What the bar shows |
+| --- | --- |
+| Color Pop (`pop`, the default) | the colourful parts of each zone, strong and quick; a dim colour still shows |
+| Cinematic (`cinematic`) | the mean light of each zone, with a little more colour and calm changes |
+| Solid (`solid`) | one colour for the whole bar, the colour of the screen, with calm changes |
+
+Each profile gives the bar the light of the screen and not the values of the
+pixels. A screen gives light by the sRGB curve, and an LED gives light in
+proportion to its value. With the values, the middle tones were too bright,
+and the colours went pale.
+
+The desktop has a mirror too: the scene `mirror` (`DESKTOP_SCENE=mirror`, or
+**Mirror** on the panel). On a Wayland desktop, KWin gives its picture only
+through the screen cast portal. So the first time, KDE shows a dialog: select
+the screen and allow the share. The portal keeps the approval, and the next
+start comes with no dialog. A share that you stop in KDE, or a dialog that you
+cancel, keeps the mirror off until the next desktop session. The button
+**Ask again for the screen** on the Status page asks at once.
+
+The probe tries the share and measures it. Run it in a terminal on the
+desktop, as your normal user:
+
+```
+steamos-utility-center --screen-probe
+```
+
+It asks the portal for the screen, so a dialog of KDE can come. It then
+measures 10 s for each step: no capture, a capture that reads each picture,
+and the slow reader that the mirror uses. For each step it says how many
+pictures came and what the capture costs KWin. Show something that moves
+while it measures, for example a video.
+
+The slow reader has two buffers and takes one picture each 1/15 s. Between
+two pictures the screen finds no free buffer, so it copies no picture for
+the mirror. With a test stream like that of gamescope, this halved the work
+of the stream. For KWin, the probe measures it.
+
 ### Desktop Mode
 
 Steam sets the LEDs in Game Mode only. The panel's **Desktop mode** page gives
 the desktop a scene of its own: `steam`, `off`, `color`, `breath`, `patrol`,
 `rainbow`, `fire`, `aurora`, `ooze`, `temperature` or `load`.
 
-Every effect is available here, and not only the one in the rainbow slot. The
-two modes can show different effects.
+Every effect of the rainbow slot except the mirror is available here, and not
+only the one in the slot. The mirror reads the screen of Game Mode. The two
+modes can show different effects.
 
 Game Mode stays Steam's. A download keeps the bar for its whole length and
 gives it back at the end, also when you leave Game Mode while one runs.
@@ -968,6 +1030,34 @@ A drive that reports `NO UNIT` is mounted again at the next boot.
 Caution: A mount point that holds a symlink is recorded under its resolved
 name. `/mnt/games` on a machine where `/mnt` is a link becomes
 `/var/mnt/games`.
+
+## Steam Companion
+
+The Steam Companion is the panel on the wall: a Waveshare
+ESP32-S3-Touch-LCD-4B with the firmware in `firmware/companion`. It shows the
+PC and its controllers, and its buttons reach the PC.
+
+### Pair the panel
+
+1. Hold the **Set up** button of the panel, and join the network that it shows.
+2. Open `http://192.168.4.1` on a phone, and give the panel your Wi-Fi.
+3. The panel finds the PC by itself and shows a code of six digits.
+4. Accept the panel on the PC when the PC shows the same code. The control
+   panel asks in a window. In Game Mode, the plugin shows a message and has
+   the buttons.
+
+The panel and the PC do a key exchange, so the secret never goes over the
+network. The code shows that the two ends talk to each other and to no other
+device. Only one panel waits at a time, and a request ends after five minutes.
+
+To pair again, open the settings of the panel and press **Pair**. The panel
+keeps its old secret until the PC accepts the new one.
+
+The panel finds the PC with a broadcast on UDP port 8765. A network that
+stops broadcasts between its devices gives "No PC answered". Then give the
+address of the PC on the setup page. The token from
+`~/.config/steamos-utility-center/companion-token` can go there too, for a
+setup by hand.
 
 ## The control panel
 

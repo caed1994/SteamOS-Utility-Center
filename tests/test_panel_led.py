@@ -36,7 +36,7 @@ PREVIEW = os.path.join(REPO, "firmware", "companion", "preview")
 HARNESS = os.path.join(REPO, "tests", "c", "panel-led-harness.c")
 sys.path.insert(0, os.path.join(REPO, "server"))
 
-from steamos_utility_center import companion, desktop, render  # noqa: E402
+from steamos_utility_center import companion, desktop, render, screen  # noqa: E402
 
 
 def read(path):
@@ -151,6 +151,32 @@ class ListsTest(unittest.TestCase):
                            longest)
 
 
+class MirrorTableTest(unittest.TestCase):
+    """The states of the mirror on the panel against those of the PC."""
+
+    def lines(self):
+        found = re.search(r"\} mirror_lines\[\] = \{(.*?)\};",
+                          code("panel_led.c"), re.S)
+        assert found
+        return re.findall(r'\{"([\w-]+)", (TXT_\w+)\}', found.group(1))
+
+    def test_each_state_of_the_pc_has_a_line(self):
+        self.assertEqual([state for state, _ in self.lines()],
+                         [state for state in screen.STATES])
+
+    def test_a_bar_on_a_different_effect_gets_the_usual_line(self):
+        self.assertIn(("idle", "TXT_LED_GAME_WHAT"), self.lines())
+
+    def test_the_rooms_hold_what_the_pc_sends(self):
+        header = code("panel_led.h")
+        self.assertEqual(number("PANEL_MIRROR_DETAIL", header),
+                         screen.DETAIL_CHARS + 1)
+        self.assertGreater(number("PANEL_MIRROR_SOURCE", header),
+                           len("65535x65535"))
+        self.assertGreater(number("PANEL_LED_KEY", header),
+                           max(len(state) for state in screen.STATES))
+
+
 class RequestTest(unittest.TestCase):
     """What the panel sends, against what the companion service reads."""
 
@@ -191,7 +217,8 @@ class RequestTest(unittest.TestCase):
         body = json.dumps(dict({mode: longest
                                 for mode in companion.LED_CHOICES},
                                desktop_color="#ffffff",
-                               desktop_brightness=255),
+                               desktop_brightness=255,
+                               mirror_profile=max(screen.PROFILES, key=len)),
                           separators=(",", ":"))
         self.assertLessEqual(len(body), companion.BODY_LIMIT)
         found = re.search(r"static int led_request\(.*?char body\[(\d+)\];",
@@ -227,7 +254,8 @@ class HarnessTest(unittest.TestCase):
         done = subprocess.run(
             [compiler(), "-std=gnu17", "-Wall", "-Wextra", "-Werror",
              "-I", FIRMWARE, "-o", cls.program, HARNESS,
-             os.path.join(FIRMWARE, "panel_led.c")],
+             os.path.join(FIRMWARE, "panel_led.c"),
+             os.path.join(FIRMWARE, "panel_text.c")],
             capture_output=True, text=True)
         # A failure and not a skip: the file is plain C, so a build that
         # fails is a fault in it.
@@ -315,6 +343,50 @@ class HarnessTest(unittest.TestCase):
             self.assertEqual(code_, 200, body)
             self.assertEqual(wrote, [{companion.LED_CHOICES[mode][0]: value
                                       for mode, value in wanted.items()}])
+
+    def mirror(self, state, fps=-1, cpu=-1, source="-", detail="-",
+               language=0, room=200):
+        return self.ask("mirror %d %d %d %d %s %s %s" % (
+            room, language, fps, cpu, state, source, detail))[0]
+
+    def test_a_running_mirror_gives_its_rate_its_load_and_the_screen(self):
+        self.assertEqual(self.mirror("running", 15, 12, "1280x800"),
+                         "Mirror runs: 15 fps, CPU 1.2 %, 1280x800")
+        self.assertEqual(self.mirror("running", 15, 12, "1280x800",
+                                     language=1),
+                         "Spiegel läuft: 15 fps, CPU 1,2 %, 1280x800")
+        self.assertEqual(self.mirror("running", 9, 0),
+                         "Mirror runs: 9 fps, CPU 0.0 %")
+
+    def test_a_still_screen_is_a_wait_and_no_error(self):
+        self.assertEqual(self.mirror("waiting"), "Mirror waits for a picture")
+        self.assertEqual(self.mirror("waiting", language=1),
+                         "Spiegel wartet auf ein Bild")
+
+    def test_a_running_mirror_with_no_numbers_says_only_that(self):
+        self.assertEqual(self.mirror("running"), "Mirror runs")
+
+    def test_the_detail_names_what_stops_it(self):
+        self.assertEqual(self.mirror("busy", detail="steam"),
+                         "Mirror paused: steam reads the screen")
+        self.assertEqual(self.mirror("no-plugin", detail="pipewiresrc"),
+                         "Mirror: the PC has no GStreamer pipewiresrc")
+        self.assertEqual(self.mirror("failed",
+                                     detail="pipewiresrc: target not found"),
+                         "Mirror error: pipewiresrc: target not found")
+        self.assertEqual(self.mirror("failed"), "Mirror error: ?")
+
+    def test_a_state_this_firmware_does_not_know_gets_the_usual_line(self):
+        usual = "Shows when the LED menu of Steam is on Rainbow"
+        self.assertEqual(self.mirror("idle"), usual)
+        self.assertEqual(self.mirror("-"), usual)
+        self.assertEqual(self.mirror("dancing"), usual)
+
+    def test_a_small_room_holds_the_start_of_the_line(self):
+        self.assertEqual(self.mirror("running", 15, 12, "1280x800", room=12),
+                         "Mirror runs")
+        self.assertEqual(self.mirror("busy", detail="steam", room=8),
+                         "Mirror ")
 
     def test_a_body_with_no_room_is_no_body(self):
         """Never half an object: the service would refuse it, and the
@@ -417,6 +489,126 @@ class HarnessTest(unittest.TestCase):
             self.assertEqual(code_, 200, body)
             self.assertEqual(wrote, [{names[key]: value
                                       for key, value in wanted.items()}])
+
+    def test_the_profiles_are_those_of_the_service(self):
+        found = re.search(r"\} profiles\[PANEL_LED_PROFILES\] = \{(.*?)\};",
+                          code("panel_led.c"), re.S)
+        self.assertIsNotNone(found)
+        self.assertEqual(tuple(re.findall(r'\{"([a-z]+)", TXT_\w+, TXT_\w+\}',
+                                          found.group(1))), screen.PROFILES)
+        self.assertEqual(number("PANEL_LED_PROFILES", code("panel_led.h")),
+                         len(screen.PROFILES))
+        # The key of each mode, as the service names its setting.
+        keys = {name: key for key, (name, _) in companion.LED_MIRROR.items()}
+        self.assertIn('#define PANEL_LED_PROFILE_KEY "%s"'
+                      % keys["MIRROR_PROFILE"], code("panel_led.h"))
+        self.assertIn('#define PANEL_LED_DESKTOP_PROFILE_KEY "%s"'
+                      % keys["DESKTOP_MIRROR_PROFILE"], code("panel_led.h"))
+        self.assertEqual(self.ask("profilekey 0", "profilekey 1",
+                                  "profilekey 2"),
+                         [keys["DESKTOP_MIRROR_PROFILE"],
+                          keys["MIRROR_PROFILE"], "(none)"])
+        self.assertEqual(self.ask("profile 0", "profile 3", "profile -1",
+                                  "profilefind solid", "profilefind disco"),
+                         ["cinematic", "(none)", "(none)", "2", "-1"])
+
+    def test_the_names_of_the_profiles_are_those_of_screen_in_each_language(self):
+        for language in (0, 1):
+            self.assertEqual(
+                self.ask(*["profilename %d %d" % (index, language)
+                           for index in range(len(screen.PROFILES))]),
+                [screen.PROFILE_NAMES[name] for name in screen.PROFILES])
+
+    def test_each_profile_says_what_it_does_in_each_language(self):
+        count = len(screen.PROFILES)
+        said = [self.ask(*["profilewhat %d %d" % (index, language)
+                           for index in range(count)])
+                for language in (0, 1)]
+        for words in said:
+            self.assertEqual(len(set(words)), count, words)
+            self.assertNotIn("--", words)
+        self.assertNotEqual(said[0], said[1])
+        self.assertEqual(self.ask("profilewhat 3 0", "profilewhat -1 1"),
+                         ["--", "--"])
+
+    def test_each_profile_the_panel_builds_is_taken(self):
+        for game in ("-", "mirror"):
+            for profile in screen.PROFILES:
+                body, length = self.ask("bodyp 160 %s %s" % (game, profile))[0] \
+                    .rsplit(" ", 1)
+                self.assertEqual(int(length), len(body))
+                wanted = {"mirror_profile": profile}
+                if game != "-":
+                    wanted["game"] = game
+                self.assertEqual(json.loads(body), wanted)
+                wrote = []
+                code_, _ = companion.led_change(json.loads(body),
+                                                write=wrote.append)
+                self.assertEqual(code_, 200, body)
+                self.assertEqual(wrote[0]["MIRROR_PROFILE"], profile)
+
+    def test_the_profile_of_the_desktop_has_its_own_key(self):
+        for profile in screen.PROFILES:
+            body, _length = self.ask("bodyp 160 - - %s" % profile)[0] \
+                .rsplit(" ", 1)
+            self.assertEqual(json.loads(body),
+                             {"desktop_mirror_profile": profile})
+            wrote = []
+            code_, _ = companion.led_change(json.loads(body),
+                                            write=wrote.append)
+            self.assertEqual((code_, wrote),
+                             (200, [{"DESKTOP_MIRROR_PROFILE": profile}]))
+        body, _length = self.ask("bodyp 160 - pop solid")[0].rsplit(" ", 1)
+        self.assertEqual(json.loads(body), {"mirror_profile": "pop",
+                                            "desktop_mirror_profile": "solid"})
+
+    def test_a_profile_the_service_does_not_know_is_no_body(self):
+        self.assertEqual(self.ask("bodyp 160 - disco", "bodyp 160 mirror disco",
+                                  "bodyp 160 - - disco",
+                                  "bodyp 160 - pop disco"),
+                         ["(empty) 0"] * 4)
+
+    def test_a_tap_of_the_profile_alone_reaches_the_body(self):
+        """main.c merges each tap into the change that waits. The profile
+        was left out there, so a profile alone sent nothing, and the page
+        said that the PC did not take it."""
+        self.assertEqual(
+            self.ask("merge 160 - - - -1 - - - - - -1 solid -")[0],
+            '{"mirror_profile":"solid"} 26')
+
+    def test_two_taps_before_a_request_give_one_change_with_both(self):
+        answers = self.ask("merge 160 - mirror - -1 - - - - - -1 pop -",
+                           "merge 160 - - - -1 cinematic - - - - -1 solid -",
+                           "merge 160 - - - -1 solid - breath - #ff0000 200 - -")
+        self.assertEqual([json.loads(answer.rsplit(" ", 1)[0])
+                          for answer in answers],
+                         [{"game": "mirror", "mirror_profile": "pop"},
+                          {"mirror_profile": "solid"},
+                          {"desktop": "breath", "desktop_color": "#ff0000",
+                           "desktop_brightness": 200,
+                           "mirror_profile": "solid"}])
+
+    def test_the_two_profiles_merge_each_on_its_own(self):
+        """A tap on each card before the request: both go, and a second tap
+        on one card replaces only its own."""
+        answers = self.ask("merge 160 - - - -1 pop - - - - -1 - solid",
+                           "merge 160 - - - -1 - cinematic - - - -1 - solid")
+        self.assertEqual([json.loads(answer.rsplit(" ", 1)[0])
+                          for answer in answers],
+                         [{"mirror_profile": "pop",
+                           "desktop_mirror_profile": "solid"},
+                          {"desktop_mirror_profile": "solid"}])
+
+    def test_main_merges_with_panel_led(self):
+        main = code("main.c")
+        self.assertIn("panel_led_merge(&led_wanted,change);", main)
+        self.assertNotIn("led_wanted.colour", main)
+
+    def test_the_profile_is_read_with_the_name_of_panel_led_h(self):
+        main = code("main.c")
+        self.assertIn("pc_text(state.led_profile[mode],sizeof "
+                      "state.led_profile[mode],led,", main)
+        self.assertIn("panel_led_profile_key((panel_led_mode_t)mode));", main)
 
     def test_a_colour_or_brightness_the_service_cannot_read_is_no_body(self):
         """The panel builds neither, and a body with one would be half an

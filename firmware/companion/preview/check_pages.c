@@ -9,9 +9,11 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "lvgl.h"
 #include "ui.h"
+#include "icons.h"
 #include "panel_fonts.h"
 #include "panel_frames.h"
 #include "panel_taps.h"
@@ -29,12 +31,14 @@ static unsigned led_changes;
 static char led_last[PANEL_LED_MODES][PANEL_LED_KEY];
 static char led_last_colour[PANEL_LED_COLOUR];
 static int led_last_brightness=-1;
+static char led_last_profile[PANEL_LED_MODES][PANEL_LED_KEY];
 static void led_change(const panel_led_change_t *change)
 {
     led_changes++;
     for(int m=0;m<PANEL_LED_MODES;m++)snprintf(led_last[m],PANEL_LED_KEY,"%s",change->effect[m]);
     snprintf(led_last_colour,sizeof led_last_colour,"%s",change->colour);
     led_last_brightness=change->brightness;
+    for(int m=0;m<PANEL_LED_MODES;m++)snprintf(led_last_profile[m],PANEL_LED_KEY,"%s",change->profile[m]);
 }
 // The profiles of the page of the CPU, as main.c gets them.
 static unsigned cpu_changes;
@@ -65,6 +69,12 @@ static void click_in(lv_obj_t *root,const char *text)
     lv_obj_send_event(b,LV_EVENT_CLICKED,NULL);
 }
 static void click(const char *text){click_in(lv_screen_active(),text);}
+// The box of the menu of the profiles of the mirror, or NULL with no menu.
+static lv_obj_t *profile_box(void)
+{
+    lv_obj_t *title=label(lv_screen_active(),panel_text(TXT_PROFILE_TITLE));
+    return title?lv_obj_get_parent(title):NULL;
+}
 // Where the one sign in "holder" starts that stands from "start" on and
 // ends before "words": the sign of a third of the card of the sensors.
 static int32_t sign_before(lv_obj_t *holder,int32_t start,int32_t words)
@@ -112,6 +122,22 @@ static lv_obj_t *button_with(lv_obj_t *row,const char *caption)
         if(lv_obj_check_type(c,&lv_button_class)&&label(c,caption))return c;
     }
     return NULL;
+}
+// The image under root that shows that picture, or NULL.
+static lv_obj_t *image_of(lv_obj_t *root,const lv_image_dsc_t *picture)
+{
+    if(lv_obj_check_type(root,&lv_image_class)&&lv_image_get_src(root)==picture)return root;
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++){
+        lv_obj_t *found=image_of(lv_obj_get_child(root,i),picture);
+        if(found)return found;
+    }
+    return NULL;
+}
+static int32_t middle_of(lv_obj_t *o)
+{
+    lv_area_t at;
+    lv_obj_get_coords(o,&at);
+    return (at.x1+at.x2)/2;
 }
 // Whether the knob of a switch stands in the right half of its track: on.
 static bool knob_right(lv_obj_t *knob)
@@ -957,6 +983,109 @@ int main(void)
         news=panel_ui_timer_tick();
         assert(news.gave_up&&!panel_ui_timer_ringing());
         assert(!label(lv_screen_active(),panel_text(TXT_TIME_UP)));
+        lv_refr_now(screen);
+        assert(complaints==0);
+    }
+
+    // The alarm clock. A button in the corner of the clock card opens the
+    // layer that sets it. The wheels and the days change what the layer
+    // shows, and the close sets it and stores it. It rings over the whole
+    // screen, a tap anywhere on it snoozes it, and Off ends it.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_alarm_clock_t wednesday={.known=true,.day=1,.weekday=3,.hour=18,.minute=42};
+        panel_alarm_news_t news=panel_ui_alarm_clock_tick(&wednesday);
+        assert(!news.went_off&&!panel_ui_alarm_clock_ringing());
+        char next[24];
+        panel_ui_alarm_clock_next(next,sizeof next);
+        assert(next[0]==0);
+        lv_obj_t *card=lv_obj_get_child(lv_obj_get_child(find_band(lv_screen_active()),3),0);
+        lv_obj_t *button=lv_obj_get_child(card,2);
+        assert(lv_obj_check_type(button,&lv_button_class));
+        lv_obj_t *bell=lv_obj_get_child(button,0);
+        lv_color_t off_colour=lv_obj_get_style_image_recolor(bell,0);
+        lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
+        lv_obj_t *title=label(lv_screen_active(),panel_text(TXT_ALARM_TITLE));
+        assert(title);
+        lv_obj_t *layer=lv_obj_get_parent(lv_obj_get_parent(title));
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_width(layer)==480&&lv_obj_get_height(layer)==480);
+        assert(lv_obj_get_index(layer)==(int32_t)lv_obj_get_child_count(lv_screen_active())-1);
+        assert(strcmp(panel_ui_where(),"the alarm clock")==0);
+        // The two wheels: the hours, then the minutes. A turn switches the
+        // alarm on in the layer, and the line under the days says when it
+        // rings. Nothing is stored before the close.
+        lv_obj_t *box=lv_obj_get_parent(title),*wheels[2]={NULL,NULL};
+        for(unsigned i=0,n=0;i<lv_obj_get_child_count(box)&&n<2;i++)
+            if(lv_obj_check_type(lv_obj_get_child(box,i),&lv_roller_class))wheels[n++]=lv_obj_get_child(box,i);
+        assert(wheels[0]&&wheels[1]);
+        assert(lv_roller_get_selected(wheels[0])==7&&lv_roller_get_selected(wheels[1])==0);
+        unsigned before=saved_count;
+        lv_roller_set_selected(wheels[0],6,LV_ANIM_OFF);lv_obj_send_event(wheels[0],LV_EVENT_VALUE_CHANGED,NULL);
+        lv_roller_set_selected(wheels[1],30,LV_ANIM_OFF);lv_obj_send_event(wheels[1],LV_EVENT_VALUE_CHANGED,NULL);
+        assert(label(layer,"Rings Th 06:30"));
+        click(panel_text(TXT_MONDAY_SHORT));
+        assert(label(layer,"Rings Mo 06:30"));
+        assert(saved_count==before);
+        click(panel_text(TXT_ALARM_DONE));
+        assert(!label(lv_screen_active(),panel_text(TXT_ALARM_TITLE)));
+        assert(saved_count==before+1&&saved_key==PANEL_ALARM);
+        assert((uint32_t)saved_value==panel_alarm_pack((panel_alarm_set_t){.on=true,.hour=6,.minute=30,.days=1}));
+        assert(!lv_color_eq(lv_obj_get_style_image_recolor(bell,0),off_colour));
+        panel_ui_alarm_clock_next(next,sizeof next);
+        assert(strcmp(next,"Mo 06:30")==0);
+        // Monday at 6:30: it rings, over everything, and a new screen for a
+        // new language keeps the ring.
+        panel_alarm_clock_t monday={.known=true,.day=6,.weekday=1,.hour=6,.minute=30};
+        news=panel_ui_alarm_clock_tick(&monday);
+        assert(news.went_off&&news.beep&&panel_ui_alarm_clock_ringing());
+        assert(label(lv_screen_active(),panel_text(TXT_SNOOZE)));
+        panel_settings_t german={.brightness=70,.sound_volume=30,.language=PANEL_GERMAN};
+        panel_ui_create(action,setting,sound,&german);
+        lv_obj_t *snooze=label(lv_screen_active(),panel_text(TXT_SNOOZE));
+        assert(snooze&&label(lv_screen_active(),"06:30"));
+        // A tap beside the buttons snoozes it, and main.c hears of it one
+        // time.
+        layer=lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(snooze)));
+        assert(lv_obj_get_parent(layer)==lv_screen_active());
+        lv_obj_send_event(layer,LV_EVENT_CLICKED,NULL);
+        assert(!panel_ui_alarm_clock_ringing()&&!label(lv_screen_active(),panel_text(TXT_SNOOZE)));
+        assert(panel_ui_alarm_clock_take_snooze()&&!panel_ui_alarm_clock_take_snooze());
+        panel_ui_alarm_clock_next(next,sizeof next);
+        assert(strcmp(next,"Mo 06:35")==0);
+        // The layer during a snooze says so, and ends it on request. The
+        // alarm of each Monday stays.
+        card=lv_obj_get_child(lv_obj_get_child(find_band(lv_screen_active()),3),0);
+        lv_obj_send_event(lv_obj_get_child(card,2),LV_EVENT_CLICKED,NULL);
+        assert(label(lv_screen_active(),"Schlummert bis Mo 06:35"));
+        click(panel_text(TXT_SNOOZE_END));
+        assert(!label(lv_screen_active(),panel_text(TXT_ALARM_TITLE)));
+        panel_ui_alarm_clock_next(next,sizeof next);
+        assert(strcmp(next,"Mo 06:30")==0);
+        // The next Monday: Off ends it, and a key would have snoozed it.
+        monday.day=13;
+        news=panel_ui_alarm_clock_tick(&monday);
+        assert(news.went_off);
+        click(panel_text(TXT_ALARM_OFF));
+        assert(!panel_ui_alarm_clock_ringing()&&!panel_ui_alarm_clock_snooze());
+        assert(!panel_ui_alarm_clock_take_snooze());
+        // The home key closes the layer, and sets what it shows.
+        before=saved_count;
+        lv_obj_send_event(lv_obj_get_child(card,2),LV_EVENT_CLICKED,NULL);
+        title=label(lv_screen_active(),panel_text(TXT_ALARM_TITLE));
+        assert(title);
+        box=lv_obj_get_parent(title);
+        for(unsigned i=0;i<lv_obj_get_child_count(box);i++)
+            if(lv_obj_check_type(lv_obj_get_child(box,i),&lv_roller_class)){
+                lv_roller_set_selected(lv_obj_get_child(box,i),7,LV_ANIM_OFF);
+                lv_obj_send_event(lv_obj_get_child(box,i),LV_EVENT_VALUE_CHANGED,NULL);
+                break;
+            }
+        assert(panel_ui_home());
+        assert(!label(lv_screen_active(),panel_text(TXT_ALARM_TITLE)));
+        assert(saved_count==before+1&&saved_key==PANEL_ALARM);
+        assert((uint32_t)saved_value==panel_alarm_pack((panel_alarm_set_t){.on=true,.hour=7,.minute=30,.days=1}));
         lv_refr_now(screen);
         assert(complaints==0);
     }
@@ -2130,38 +2259,84 @@ int main(void)
         lv_obj_update_layout(screen_now);
         assert(strcmp(panel_ui_where(),"the card")==0);
         panel_state_t g=base();
-        g.gpu_load=87;g.gpu_mhz=2450;g.vram_used=10522460160ULL;g.vram_total=17163091968ULL;
+        g.gpu_load=87;g.gpu_mhz=2450;g.gpu_mhz_max=2970;
+        g.vram_used=10522460160ULL;g.vram_total=17163091968ULL;
         panel_ui_update(&g);
-        assert(label(page,"GPU load")&&label(page,"VRAM")&&label(page,"GPU clock"));
-        assert(label(page,"87 %")&&label(page,"9.8 / 16.0 GB")&&label(page,"2450 MHz"));
-        // Each bar as long as its share: 87 of 100, and 9.8 of 16.0 GB.
+        const char *names[3]={"GPU load","VRAM","GPU clock"},*values[3]={"87 %","9.8 / 16.0 GB","2450 MHz"};
+        for(int i=0;i<3;i++)assert(label(page,names[i])&&label(page,values[i]));
+        // Each bar as long as its share: 87 of 100, 9.8 of 16.0 GB, and 2450
+        // of the 2970 MHz of the highest level of the clock. The three are
+        // one length with one gap between them, as far from each side of
+        // the card. The name and the value of each stand in the middle
+        // over it.
         lv_obj_update_layout(screen_now);
         lv_obj_t *gpu_card=lv_obj_get_parent(label(page,"87 %"));
+        const uint64_t share[3][2]={{87,100},{10522460160ULL,17163091968ULL},{2450,2970}};
+        lv_area_t inside,at[3];
+        lv_obj_get_content_coords(gpu_card,&inside);
         int bars=0;
         for(unsigned i=0;i<lv_obj_get_child_count(gpu_card);i++){
             lv_obj_t *track=lv_obj_get_child(gpu_card,i);
             if(lv_obj_get_height(track)!=8||lv_obj_get_child_count(track)!=1)continue;
+            assert(bars<3&&!lv_obj_has_flag(track,LV_OBJ_FLAG_HIDDEN));
             int32_t full=lv_obj_get_width(track),filled=lv_obj_get_width(lv_obj_get_child(track,0));
-            assert(bars==0?filled==full*87/100:filled==(int32_t)(full*10522460160ULL/17163091968ULL));
+            assert(filled==(int32_t)(full*share[bars][0]/share[bars][1]));
+            lv_obj_get_coords(track,&at[bars]);
+            lv_obj_t *over[2]={label(page,names[bars]),label(page,values[bars])};
+            for(int k=0;k<2;k++){
+                assert(lv_obj_get_style_text_align(over[k],0)==LV_TEXT_ALIGN_CENTER);
+                assert(abs(middle_of(over[k])-middle_of(track))<=1);
+            }
             bars++;
         }
-        assert(bars==2);
+        assert(bars==3);
+        assert(lv_area_get_width(&at[0])==lv_area_get_width(&at[1])&&
+               lv_area_get_width(&at[1])==lv_area_get_width(&at[2]));
+        assert(at[1].x1-at[0].x2==at[2].x1-at[1].x2);
+        assert(at[0].x1-inside.x1==inside.x2-at[2].x2);
+        // A clock past its highest level fills its bar, and no more.
+        g.gpu_mhz=3100;
+        panel_ui_update(&g);
+        lv_obj_update_layout(screen_now);
+        lv_obj_t *clock_track=lv_obj_get_child(gpu_card,-1);
+        assert(lv_obj_get_width(lv_obj_get_child(clock_track,0))==lv_obj_get_width(clock_track));
+        // A service older than this firmware sends no highest level: the
+        // clock, and no bar under it.
+        g.gpu_mhz_max=-1;
+        panel_ui_update(&g);
+        assert(label(page,"3100 MHz")&&lv_obj_has_flag(clock_track,LV_OBJ_FLAG_HIDDEN));
         // The longest of each fits its room, with no dots: a full card, the
-        // memory of a card of 24 GB, and a clock past three thousand.
-        g.gpu_load=100;g.gpu_mhz=3100;g.vram_used=25662623334ULL;g.vram_total=25769803776ULL;
+        // memory of a card of 24 GB, and the widest clock of four digits.
+        // Each stays clear of the next and inside the card.
+        int widest_mhz=1000;
+        lv_coord_t widest=0;
+        for(int mhz=1000;mhz<=9999;mhz++){
+            char said[16];
+            snprintf(said,sizeof said,"%d MHz",mhz);
+            lv_point_t size;
+            lv_text_get_size(&size,said,&panel_font_24,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+            if(size.x>widest){widest=size.x;widest_mhz=mhz;}
+        }
+        g.gpu_load=100;g.gpu_mhz=widest_mhz;g.gpu_mhz_max=widest_mhz;
+        g.vram_used=25662623334ULL;g.vram_total=25769803776ULL;
         panel_ui_update(&g);
         lv_obj_update_layout(screen_now);
         lv_refr_now(screen);
-        const char *longest[]={"100 %","23.9 / 24.0 GB","3100 MHz"};
+        char clock_said[16];
+        snprintf(clock_said,sizeof clock_said,"%d MHz",widest_mhz);
+        const char *longest[]={"100 %","23.9 / 24.0 GB",clock_said};
+        int32_t end=inside.x1+8-6;
         for(int i=0;i<3;i++){
             lv_obj_t *value=label(page,longest[i]);
             assert(value);
             lv_point_t size;
             lv_text_get_size(&size,longest[i],&panel_font_24,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
             assert(size.x<=lv_obj_get_width(value));
-            // And inside the card.
-            assert(lv_obj_get_x(value)+size.x<=lv_obj_get_width(gpu_card)-8);
+            int32_t start=middle_of(value)-size.x/2;
+            assert(start>=end+6);
+            end=start+size.x;
         }
+        assert(end<=inside.x2-8);
         // What the service did not send is "--", and so is all of it while
         // the PC is gone; the bars go.
         g.gpu_load=-1;g.gpu_mhz=-1;g.vram_used=0;g.vram_total=0;
@@ -2231,107 +2406,216 @@ int main(void)
         assert(history.count==14&&history.points[PANEL_HISTORY_CPU][last]==PANEL_HISTORY_GAP);
         g.online=true;
         panel_ui_update(&g);
-        // The window: 30 minutes, then the hour.
+        // The window: the 30 minutes of the history, and no button that
+        // chooses another. The buttons of the card are the three of the fan.
         assert(label(page,"-30 min"));
-        click("60 min");
-        assert(label(page,"-60 min")&&!label(page,"-30 min"));
-        // The chart takes no press, so a swipe over it moves the band.
-        lv_obj_t *history_card=lv_obj_get_parent(label(page,"-60 min"));
+        lv_obj_t *history_card=lv_obj_get_parent(label(page,"-30 min"));
         lv_obj_t *chart=NULL;
-        for(unsigned i=0;i<lv_obj_get_child_count(history_card);i++)
-            if(lv_obj_check_type(lv_obj_get_child(history_card,i),&lv_chart_class))
-                chart=lv_obj_get_child(history_card,i);
+        for(unsigned i=0;i<lv_obj_get_child_count(history_card);i++){
+            lv_obj_t *o=lv_obj_get_child(history_card,i);
+            assert(!lv_obj_check_type(o,&lv_button_class)||image_of(o,&icon_snowflake)||
+                   image_of(o,&icon_fan_off)||
+                   strcmp(lv_label_get_text(lv_obj_get_child(o,0)),panel_text(TXT_FAN_AUTO))==0);
+            if(lv_obj_check_type(o,&lv_chart_class))chart=o;
+        }
+        // The chart takes no press, so a swipe over it moves the band.
         assert(chart&&!lv_obj_has_flag(chart,LV_OBJ_FLAG_CLICKABLE));
         assert(lv_chart_get_point_count(chart)==PANEL_HISTORY_DRAWN);
         lv_refr_now(screen);
         assert(complaints==0);
-        // A new screen for a new language keeps the history and the window.
+        // A new screen for a new language keeps the history.
         panel_settings_t german=chosen;german.language=PANEL_GERMAN;
         panel_ui_create(action,setting,sound,&german);
         page=lv_obj_get_child(find_band(lv_screen_active()),4);
-        assert(label(page,"GPU-Last")&&label(page,"Verlauf"));
-        assert(label(page,"80 °C")&&label(page,"-60 Min"));
+        assert(label(page,"GPU-Last")&&!label(page,"Verlauf"));
+        assert(label(page,"80 °C")&&label(page,"-30 Min"));
         assert(!label(page,"Noch keine Werte"));
         lv_refr_now(screen);
         assert(complaints==0);
         panel_ui_create(action,setting,sound,&english);
     }
 
-    // Cooling Boost on the page of the card: a switch under the clock,
-    // there where the PC has LACT with a card, that sends where to go at a
-    // tap and asks nothing first. It shows what the status says.
+    // The card of the history, as the owner drew it. On the left the chart
+    // with no title over it, the time under it and the legend under the
+    // time: from the left edge of the chart to its right edge, with one gap
+    // between a name and the next dot. On the right a column of three
+    // squares of one size for the fan of the card: zero RPM, Auto and
+    // Cooling Boost, from the top of the card to its foot, there where the
+    // PC has LACT with a card. Each sends where to go at a tap and asks
+    // nothing first.
     {
         panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
         for(int language=0;language<2;language++){
             panel_settings_t in_it=english;in_it.language=language?PANEL_GERMAN:PANEL_ENGLISH;
             panel_ui_create(action,setting,sound,&in_it);
+            panel_palette_t colours=panel_palette(in_it.theme,in_it.accent);
             panel_state_t t=base();
+            t.pc.gpu_fan_rpm=2950;
             lv_obj_t *page=lv_obj_get_child(find_band(lv_screen_active()),PANEL_PAGE_CARD);
-            // A PC without LACT, or a service older than this firmware:
-            // no switch.
+            lv_obj_t *flake=image_of(page,&icon_snowflake),*crossed=image_of(page,&icon_fan_off);
+            assert(flake&&crossed);
+            lv_obj_t *button=lv_obj_get_parent(flake),*zero=lv_obj_get_parent(crossed);
+            assert(lv_obj_check_type(button,&lv_button_class)&&lv_obj_check_type(zero,&lv_button_class));
+            lv_obj_t *card=lv_obj_get_parent(button);
+            // A PC without LACT, or a service older than this firmware: no
+            // column.
             panel_ui_update(&t);
-            assert(!label(page,panel_text(TXT_GPU_BOOST)));
+            assert(lv_obj_has_flag(button,LV_OBJ_FLAG_HIDDEN)&&lv_obj_has_flag(zero,LV_OBJ_FLAG_HIDDEN));
+            assert(!label(card,panel_text(TXT_FAN_AUTO)));
             t.boost_here=true;t.answers++;
             panel_ui_update(&t);
-            lv_obj_t *name=label(page,panel_text(TXT_GPU_BOOST));
-            assert(name);
+            lv_obj_t *auto_caption=label(card,panel_text(TXT_FAN_AUTO));
+            assert(auto_caption);
+            lv_obj_t *automatic=lv_obj_get_parent(auto_caption);
+            assert(lv_obj_check_type(automatic,&lv_button_class));
+            lv_obj_t *column[3]={zero,automatic,button};
+            for(int i=0;i<3;i++)assert(!lv_obj_has_flag(column[i],LV_OBJ_FLAG_HIDDEN));
             lv_obj_update_layout(page);
-            // The name whole on one line, left of its switch, and the row
-            // under the clock of the card.
-            lv_point_t size;
-            lv_text_get_size(&size,lv_label_get_text(name),lv_obj_get_style_text_font(name,0),
-                             0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
-            assert(size.x<=lv_obj_get_width(name));
-            assert(lv_obj_get_height(name)==lv_font_get_line_height(lv_obj_get_style_text_font(name,0)));
-            lv_obj_t *field=lv_obj_get_parent(name),*track=NULL;
-            for(unsigned i=0;i<lv_obj_get_child_count(field);i++)
-                if(lv_obj_get_child(field,i)!=name)track=lv_obj_get_child(field,i);
-            assert(track&&lv_obj_get_child_count(track)==1);
-            lv_obj_t *knob=lv_obj_get_child(track,0);
-            lv_area_t at_name,at_track,at_field,at_clock;
-            lv_obj_get_coords(name,&at_name);lv_obj_get_coords(track,&at_track);
-            lv_obj_get_coords(field,&at_field);
-            lv_obj_get_coords(label(page,panel_text(TXT_GPU_CLOCK)),&at_clock);
-            assert(at_name.x1+size.x<at_track.x1);
-            assert(at_name.x1==at_clock.x1);
-            assert(at_field.y1>at_clock.y2);
-            lv_obj_t *card=lv_obj_get_parent(field);
-            lv_area_t at_card;lv_obj_get_coords(card,&at_card);
-            assert(at_field.y2<at_card.y2&&at_track.x2<at_card.x2);
-            // Off: the knob at the left, and a tap asks for on, at once.
-            assert(knob_right(knob)==false);
-            lv_color_t off_colour=lv_obj_get_style_bg_color(track,0);
+            // No title, and no fan reading.
+            char speed[24];
+            snprintf(speed,sizeof speed,panel_text(TXT_RPM),2950);
+            assert(!label(page,"History")&&!label(page,"Verlauf"));
+            assert(!label(page,panel_text(TXT_PC_GPU_FAN))&&!label(page,speed));
+            // The column: three squares of one size, each with one thing in
+            // it, one gap between them, from 10 under the top of the card to
+            // 10 over its foot, at its right edge. Nothing else of the card
+            // is right of the column.
+            lv_area_t at_card,at[3];
+            lv_obj_get_coords(card,&at_card);
+            for(int i=0;i<3;i++){
+                lv_obj_get_coords(column[i],&at[i]);
+                assert(lv_area_get_width(&at[i])==lv_area_get_height(&at[i]));
+                assert(lv_area_get_width(&at[i])==lv_area_get_width(&at[0])&&at[i].x1==at[0].x1);
+                assert(lv_area_get_width(&at[i])>=48&&lv_obj_get_child_count(column[i])==1);
+            }
+            assert(at[1].y1-at[0].y2==at[2].y1-at[1].y2);
+            assert(at[0].y1-at_card.y1==at_card.y2-at[2].y2&&at[0].y1-at_card.y1<=12);
+            assert(at_card.x2-at[0].x2<=12);
+            lv_obj_t *chart=NULL;
+            for(unsigned i=0;i<lv_obj_get_child_count(card);i++){
+                lv_obj_t *o=lv_obj_get_child(card,i);
+                if(lv_obj_check_type(o,&lv_chart_class))chart=o;
+                if(o==zero||o==automatic||o==button)continue;
+                lv_area_t at_o;lv_obj_get_coords(o,&at_o);
+                assert(at_o.x2<at[0].x1);
+            }
+            // The chart at the top, the time under it, and the legend under
+            // the time, its foot on the foot of the column.
+            assert(chart);
+            lv_area_t at_chart,at_time;
+            lv_obj_get_coords(chart,&at_chart);
+            assert(at_chart.y1-at_card.y1<=16);
+            char ago[16];
+            snprintf(ago,sizeof ago,"-%d %s",PANEL_HISTORY_MINUTES,panel_text(TXT_MINUTES));
+            lv_obj_get_coords(label(card,ago),&at_time);
+            assert(at_time.y1>at_chart.y2);
+            // The legend: three dots and three names in one line, the first
+            // dot on the left edge of the chart, the last name to its right
+            // edge, and one gap from each name to the next dot.
+            const char *names[PANEL_HISTORY_SERIES]={"CPU °C","GPU °C","GPU W"};
+            int32_t gaps[PANEL_HISTORY_SERIES]={0},next=at_chart.x1;
+            for(int i=0;i<PANEL_HISTORY_SERIES;i++){
+                lv_obj_t *name=label(card,names[i]);
+                assert(name);
+                lv_obj_t *dot=lv_obj_get_child(card,lv_obj_get_index(name)-1);
+                lv_area_t at_name,at_dot;
+                lv_obj_get_coords(name,&at_name);lv_obj_get_coords(dot,&at_dot);
+                assert(lv_area_get_width(&at_dot)==10&&lv_area_get_height(&at_dot)==10);
+                assert(at_name.y1>at_time.y2&&at_name.y2==at[2].y2);
+                assert(abs((at_dot.y1+at_dot.y2)/2-(at_name.y1+at_name.y2)/2)<=1);
+                assert(at_dot.x2<at_name.x1);
+                gaps[i]=at_dot.x1-next;
+                lv_point_t size;
+                lv_text_get_size(&size,names[i],lv_obj_get_style_text_font(name,0),0,0,LV_COORD_MAX,
+                                 LV_TEXT_FLAG_NONE);
+                assert(size.x<=lv_obj_get_width(name));
+                next=at_name.x1+size.x;
+            }
+            assert(gaps[0]==0&&gaps[1]>=16&&abs(gaps[2]-gaps[1])<=1);
+            assert(next==at_chart.x2+1);
+            // Of Auto and Cooling Boost one is lit, the profile that the
+            // fan runs. Zero RPM is lit while it is on, whatever the
+            // profile. Lit is the face and the edge in the accent, and the
+            // rest is grey. With no boost the fan runs in Auto. A card
+            // without zero RPM has its button dim, and a tap on it sends
+            // nothing.
+            #define LIT(profile,zero) do{ \
+                for(int k=0;k<3;k++){ \
+                    bool on=k?k==(profile):(zero); \
+                    uint32_t want=on?colours.accent_text:colours.muted; \
+                    if(k==1)assert(rgb_of(lv_obj_get_style_text_color(auto_caption,0))==want); \
+                    else assert(rgb_of(lv_obj_get_style_image_recolor(k?flake:crossed,0))==want); \
+                    assert(rgb_of(lv_obj_get_style_border_color(column[k],0))== \
+                           (on?colours.accent_text:colours.edge)); \
+                } \
+            }while(0)
+            LIT(1,false);
+            assert(lv_obj_has_state(zero,LV_STATE_DISABLED));
+            assert(!lv_obj_has_state(automatic,LV_STATE_DISABLED));
             actions=0;
-            lv_obj_send_event(field,LV_EVENT_CLICKED,NULL);
-            assert(actions==1&&last_action==PANEL_GPU_BOOST_ON);
+            lv_obj_send_event(zero,LV_EVENT_CLICKED,NULL);
+            assert(actions==0);
+            // A card with zero RPM, and it is off: a tap asks for on.
+            t.zero_rpm_here=true;t.zero_rpm_on=false;t.answers++;
+            panel_ui_update(&t);
+            assert(!lv_obj_has_state(zero,LV_STATE_DISABLED));
+            LIT(1,false);
+            lv_obj_send_event(zero,LV_EVENT_CLICKED,NULL);
+            assert(actions==1&&last_action==PANEL_GPU_ZERO_RPM_ON);
+            // A tap on the profile that runs asks for nothing.
+            lv_obj_send_event(automatic,LV_EVENT_CLICKED,NULL);
+            assert(actions==1);
+            // The buttons change when the status says so, and not before.
+            LIT(1,false);
+            t.zero_rpm_on=true;t.answers++;
+            panel_ui_update(&t);
+            LIT(1,true);
+            // The snowflake asks for Cooling Boost at once, with no question.
+            lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
+            assert(actions==2&&last_action==PANEL_GPU_BOOST_ON);
             assert(!label(lv_screen_active(),panel_text(TXT_CONFIRM)));
-            // The switch moves when the status says so, and not before.
-            assert(knob_right(knob)==false);
+            LIT(1,true);
             t.boost_on=true;t.answers++;
             panel_ui_update(&t);
-            lv_obj_update_layout(page);
-            assert(knob_right(knob)==true);
-            assert(!lv_color_eq(lv_obj_get_style_bg_color(track,0),off_colour));
-            lv_obj_send_event(field,LV_EVENT_CLICKED,NULL);
-            assert(actions==2&&last_action==PANEL_GPU_BOOST_OFF);
-            // A PC that does not answer: the switch stays, grey, and a tap
-            // sends nothing.
+            LIT(2,true);
+            lv_obj_send_event(button,LV_EVENT_CLICKED,NULL);
+            assert(actions==2);
+            // Zero RPM goes off and on again under the boost, and the boost
+            // stays lit.
+            lv_obj_send_event(zero,LV_EVENT_CLICKED,NULL);
+            assert(actions==3&&last_action==PANEL_GPU_ZERO_RPM_OFF);
+            t.zero_rpm_on=false;t.answers++;
+            panel_ui_update(&t);
+            LIT(2,false);
+            // Auto ends the boost.
+            lv_obj_send_event(automatic,LV_EVENT_CLICKED,NULL);
+            assert(actions==4&&last_action==PANEL_GPU_BOOST_OFF);
+            LIT(2,false);
+            t.zero_rpm_on=true;t.answers++;
+            panel_ui_update(&t);
+            // A PC that does not answer: the column stays, grey and dim,
+            // and a tap sends nothing.
             t.online=false;
             panel_ui_update(&t);
-            lv_obj_update_layout(page);
-            assert(label(page,panel_text(TXT_GPU_BOOST)));
-            assert(lv_obj_has_state(field,LV_STATE_DISABLED));
-            assert(knob_right(knob)==false);
-            assert(lv_color_eq(lv_obj_get_style_bg_color(track,0),off_colour));
-            lv_obj_send_event(field,LV_EVENT_CLICKED,NULL);
-            assert(actions==2);
+            for(int i=0;i<3;i++){
+                assert(!lv_obj_has_flag(column[i],LV_OBJ_FLAG_HIDDEN));
+                assert(lv_obj_has_state(column[i],LV_STATE_DISABLED));
+            }
+            LIT(3,false);
+            for(int i=0;i<3;i++)lv_obj_send_event(column[i],LV_EVENT_CLICKED,NULL);
+            assert(actions==4);
             t.online=true;
             panel_ui_update(&t);
-            assert(!lv_obj_has_state(field,LV_STATE_DISABLED));
-            // LACT gone from the PC: the switch goes with it.
+            assert(!lv_obj_has_state(button,LV_STATE_DISABLED));
+            LIT(2,true);
+            t.boost_on=false;t.answers++;
+            panel_ui_update(&t);
+            LIT(1,true);
+            #undef LIT
+            // LACT gone from the PC: the column goes with it.
             t.boost_here=false;t.boost_on=false;t.answers++;
             panel_ui_update(&t);
-            assert(!label(page,panel_text(TXT_GPU_BOOST)));
+            for(int i=0;i<3;i++)assert(lv_obj_has_flag(column[i],LV_OBJ_FLAG_HIDDEN));
             lv_refr_now(screen);
             assert(complaints==0);
         }
@@ -2568,10 +2852,10 @@ int main(void)
         led_tap(page,PANEL_LED_GAME,LV_SYMBOL_LEFT);
         led_tap(page,PANEL_LED_GAME,LV_SYMBOL_LEFT);
         led_tap(page,PANEL_LED_GAME,LV_SYMBOL_LEFT);
-        assert(label(game,"Ooze"));
+        assert(label(game,"Mirror"));
         // A refusal takes the choice back, and says why.
         led_wait(1600);
-        assert(led_changes==2&&strcmp(led_last[PANEL_LED_GAME],"ooze")==0&&!led_last[PANEL_LED_DESKTOP][0]);
+        assert(led_changes==2&&strcmp(led_last[PANEL_LED_GAME],"mirror")==0&&!led_last[PANEL_LED_DESKTOP][0]);
         t.led_replies++;t.led_code=403;
         panel_ui_update(&t);
         assert(label(game,"Fire")&&label(game,panel_text(TXT_CHANGE_NO_RULE)));
@@ -2603,6 +2887,189 @@ int main(void)
         t.game_mode=true;
         panel_ui_update(&t);
         assert(!label(desktop,panel_text(TXT_LED_NOW))&&label(game,panel_text(TXT_LED_NOW)));
+        // The mirror says what it does on the PC, in place of the usual
+        // line of its card.
+        strcpy(t.led_effect[PANEL_LED_GAME],"mirror");
+        t.led_mirror=(panel_led_mirror_t){.state="running",.fps=15,.cpu=12,.source="1280x800"};
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,"Mirror")&&label(game,"Mirror runs: 15 fps, CPU 1.2 %, 1280x800"));
+        // With no profile from the PC, no button of the profile.
+        assert(!label(game,"Color Pop"));
+        // The profile: a button beside the name of the mirror. A tap opens
+        // the menu of the profiles, each with what it does and a mark on
+        // the profile of the PC.
+        strcpy(t.led_profile[PANEL_LED_GAME],"pop");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,"Mirror")&&label(game,"Color Pop")&&!profile_box());
+        before=led_changes;
+        click_in(game,"Color Pop");
+        lv_obj_t *box=profile_box();
+        assert(box&&strcmp(panel_ui_where(),"the profile of the mirror")==0);
+        assert(label(box,"Cinematic")&&label(box,LV_SYMBOL_OK "  Color Pop")&&label(box,"Solid"));
+        for(int i=0;i<PANEL_LED_PROFILES;i++)assert(label(box,panel_text(panel_led_profile_what(i))));
+        // A second tap on the button opens no second menu.
+        uint32_t layers=lv_obj_get_child_count(lv_screen_active());
+        click_in(game,"Color Pop");
+        assert(lv_obj_get_child_count(lv_screen_active())==layers);
+        // A row chooses and closes the menu, and the choice goes to the PC
+        // as an effect does.
+        click_in(box,"Solid");
+        assert(!profile_box()&&strcmp(panel_ui_where(),"the profile of the mirror")!=0);
+        assert(label(game,"Solid")&&label(game,panel_text(TXT_CHANGE_APPLYING)));
+        led_wait(1600);
+        assert(led_changes==before+1&&strcmp(led_last_profile[PANEL_LED_GAME],"solid")==0);
+        assert(!led_last[PANEL_LED_GAME][0]&&!led_last_profile[PANEL_LED_DESKTOP][0]);
+        strcpy(t.led_profile[PANEL_LED_GAME],"solid");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,"Solid")&&!label(game,panel_text(TXT_CHANGE_APPLYING)));
+        // The profile of the PC is no change, and neither is a tap beside
+        // the rows, which closes the menu.
+        click_in(game,"Solid");
+        click_in(profile_box(),LV_SYMBOL_OK "  Solid");
+        assert(!profile_box()&&!label(game,panel_text(TXT_CHANGE_APPLYING)));
+        click_in(game,"Solid");
+        lv_obj_send_event(lv_obj_get_parent(profile_box()),LV_EVENT_CLICKED,NULL);
+        assert(!profile_box());
+        led_wait(1600);
+        assert(led_changes==before+1&&label(game,"Solid"));
+        // A profile that the PC takes from somewhere else moves the mark of
+        // the open menu.
+        click_in(game,"Solid");
+        strcpy(t.led_profile[PANEL_LED_GAME],"cinematic");
+        t.answers++;
+        panel_ui_update(&t);
+        box=profile_box();
+        assert(box&&label(box,LV_SYMBOL_OK "  Cinematic")&&label(box,"Solid")&&!label(box,LV_SYMBOL_OK "  Solid"));
+        // A refusal takes the profile back, and says why.
+        click_in(box,"Color Pop");
+        led_wait(1600);
+        assert(led_changes==before+2&&strcmp(led_last_profile[PANEL_LED_GAME],"pop")==0);
+        t.led_replies++;t.led_code=403;
+        panel_ui_update(&t);
+        assert(label(game,"Cinematic")&&label(game,panel_text(TXT_CHANGE_NO_RULE)));
+        lv_tick_inc(9000);
+        t.answers++;
+        panel_ui_update(&t);
+        // A service with no profiles: no button, and the open menu closes.
+        click_in(game,"Cinematic");
+        assert(profile_box());
+        t.led_profile[PANEL_LED_GAME][0]=0;
+        t.answers++;
+        panel_ui_update(&t);
+        assert(!profile_box());
+        assert(label(game,"Mirror")&&!label(game,"Solid")&&!label(game,"Cinematic"));
+        strcpy(t.led_mirror.state,"busy");strcpy(t.led_mirror.detail,"steam");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,"Mirror paused: steam reads the screen"));
+        // A service older than this firmware sends no status.
+        t.led_mirror.state[0]=0;
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,panel_text(TXT_LED_GAME_WHAT)));
+        // A different effect never shows the status of the mirror.
+        strcpy(t.led_mirror.state,"failed");
+        strcpy(t.led_effect[PANEL_LED_GAME],"fire");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,panel_text(TXT_LED_GAME_WHAT))&&!label(game,"Mirror error: steam"));
+        // The mirror of the desktop. Its card has the button of the profile
+        // too, and the line of the mirror until the mirror runs: a person
+        // must allow the share of the screen on the PC. The line is on the
+        // card of the mode that the PC is in.
+        t.game_mode=false;t.led_look=true;t.led_brightness=128;
+        strcpy(t.led_effect[PANEL_LED_DESKTOP],"mirror");
+        strcpy(t.led_effect[PANEL_LED_GAME],"mirror");
+        // Each mode has its own profile.
+        strcpy(t.led_profile[PANEL_LED_DESKTOP],"pop");
+        strcpy(t.led_profile[PANEL_LED_GAME],"cinematic");
+        t.led_mirror=(panel_led_mirror_t){.state="asking"};
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(desktop,"Mirror")&&label(desktop,"Color Pop"));
+        assert(label(desktop,panel_text(TXT_MIRROR_ASKING)));
+        assert(!label(desktop,look_words_for(TXT_COLOUR_RED,50,false)));
+        assert(label(game,"Cinematic")&&label(game,panel_text(TXT_LED_GAME_WHAT)));
+        assert(!label(game,panel_text(TXT_MIRROR_ASKING)));
+        static const struct { const char *state; panel_text_id_t line; } desktop_lines[]={
+            {"refused",TXT_MIRROR_REFUSED},{"no-portal",TXT_MIRROR_NO_PORTAL},
+            {"starting",TXT_MIRROR_STARTING}};
+        for(unsigned i=0;i<sizeof desktop_lines/sizeof desktop_lines[0];i++){
+            strcpy(t.led_mirror.state,desktop_lines[i].state);
+            t.answers++;
+            panel_ui_update(&t);
+            assert(label(desktop,panel_text(desktop_lines[i].line)));
+        }
+        // A mirror that runs gives the line to the button of the brightness.
+        t.led_mirror=(panel_led_mirror_t){.state="running",.fps=15,.cpu=9,.source="2194x1234"};
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(desktop,look_words_for(TXT_COLOUR_RED,50,false)));
+        assert(!label(desktop,"Mirror runs: 15 fps, CPU 0.9 %, 2194x1234"));
+        // The menu of each card marks the profile of its own mode.
+        click_in(game,"Cinematic");
+        assert(label(profile_box(),LV_SYMBOL_OK "  Cinematic"));
+        // A new answer of the PC keeps the mark of the card of the menu.
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(profile_box(),LV_SYMBOL_OK "  Cinematic"));
+        assert(!label(profile_box(),LV_SYMBOL_OK "  Color Pop"));
+        lv_obj_send_event(lv_obj_get_parent(profile_box()),LV_EVENT_CLICKED,NULL);
+        // A profile chosen on the card of the desktop: that card says that
+        // it goes, and only its own button shows it. One change goes, for
+        // the profile of the desktop alone.
+        before=led_changes;
+        click_in(desktop,"Color Pop");
+        assert(label(profile_box(),LV_SYMBOL_OK "  Color Pop"));
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(profile_box(),LV_SYMBOL_OK "  Color Pop"));
+        assert(!label(profile_box(),LV_SYMBOL_OK "  Cinematic"));
+        click_in(profile_box(),"Solid");
+        assert(label(desktop,panel_text(TXT_CHANGE_APPLYING))&&!label(game,panel_text(TXT_CHANGE_APPLYING)));
+        assert(label(desktop,"Solid")&&label(game,"Cinematic"));
+        led_wait(1600);
+        assert(led_changes==before+1&&strcmp(led_last_profile[PANEL_LED_DESKTOP],"solid")==0);
+        assert(!led_last_profile[PANEL_LED_GAME][0]);
+        // Its refusal goes to the same card.
+        t.led_replies++;t.led_code=403;
+        panel_ui_update(&t);
+        assert(label(desktop,panel_text(TXT_CHANGE_NO_RULE))&&!label(game,panel_text(TXT_CHANGE_NO_RULE)));
+        assert(label(desktop,"Color Pop")&&label(game,"Cinematic"));
+        lv_tick_inc(9000);
+        // The profile of Game Mode, chosen on its card, goes alone too.
+        t.answers++;
+        panel_ui_update(&t);
+        before=led_changes;
+        click_in(game,"Cinematic");
+        click_in(profile_box(),"Solid");
+        assert(label(game,"Solid")&&label(desktop,"Color Pop"));
+        led_wait(1600);
+        assert(led_changes==before+1&&strcmp(led_last_profile[PANEL_LED_GAME],"solid")==0);
+        assert(!led_last_profile[PANEL_LED_DESKTOP][0]);
+        strcpy(t.led_profile[PANEL_LED_GAME],"solid");
+        t.answers++;
+        panel_ui_update(&t);
+        // In Game Mode the line goes to the card of Game Mode, and the card
+        // of the desktop has the button of the brightness.
+        t.game_mode=true;
+        t.led_mirror=(panel_led_mirror_t){.state="waiting"};
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(game,panel_text(TXT_MIRROR_WAITING))&&!label(desktop,panel_text(TXT_MIRROR_WAITING)));
+        assert(label(desktop,look_words_for(TXT_COLOUR_RED,50,false)));
+        // A different scene of the desktop has no button of the profile.
+        strcpy(t.led_effect[PANEL_LED_DESKTOP],"aurora");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(!label(desktop,"Color Pop")&&label(game,"Solid"));
+        strcpy(t.led_effect[PANEL_LED_GAME],"fire");t.led_look=false;
+        t.led_profile[PANEL_LED_DESKTOP][0]=0;t.led_profile[PANEL_LED_GAME][0]=0;
+        t.answers++;
+        panel_ui_update(&t);
         // A PC with no LED module: no effect, no arrow to press, and the
         // reason once.
         t.led_here=false;t.answers++;
@@ -3225,6 +3692,13 @@ int main(void)
             panel_state_t setup=s;setup.setup=true;
             strcpy(setup.setup_ssid,"SteamOS-Panel-3A12");strcpy(setup.setup_password,"ABCD2345EFGH");
             panel_ui_update(&setup);READ_ALL("the setup");
+            // The pairing, with the code and both buttons.
+            panel_state_t pairing=s;pairing.pairing=PANEL_PAIRING_WAIT;pairing.pair_can_cancel=true;
+            strcpy(pairing.pair_code,"482913");strcpy(pairing.pair_pc,"steamdeck");
+            strcpy(pairing.pair_address,"192.168.178.20:8765");
+            panel_ui_update(&pairing);READ_ALL("the pairing");
+            pairing.pairing=PANEL_PAIRING_NOT_FOUND;pairing.pair_code[0]=0;
+            panel_ui_update(&pairing);READ_ALL("the pairing that found no PC");
             #undef READ_ALL
             lv_refr_now(screen);
         }
@@ -3234,6 +3708,70 @@ int main(void)
         panel_ui_create(action,setting,sound,&english);
     }
 
+    // The pairing with the PC: a screen over everything, with the code to
+    // compare, and a button for each way out that the moment has.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        panel_state_t p=base();
+        p.pairing=PANEL_PAIRING_WAIT;p.pair_can_cancel=true;
+        strcpy(p.pair_code,"482913");strcpy(p.pair_pc,"steamdeck");strcpy(p.pair_address,"192.168.178.20:8765");
+        panel_ui_update(&p);
+        lv_obj_t *screen=lv_screen_active();
+        assert(label(screen,panel_text(TXT_PAIR_TITLE))&&label(screen,panel_text(TXT_PAIR_WAIT)));
+        // Three and three, which is easier to compare than six.
+        assert(label(screen,"482 913"));
+        assert(label(screen,"PC: steamdeck (192.168.178.20:8765)"));
+        // A panel with a secret of its own can go back to it.
+        lv_obj_t *page=lv_obj_get_child(screen,-1);
+        lv_obj_t *cancel=button_with(page,panel_text(TXT_CANCEL));
+        assert(cancel&&button_with(page,panel_text(TXT_SETUP)));
+        actions=0;
+        lv_obj_send_event(cancel,LV_EVENT_CLICKED,NULL);
+        assert(actions==1&&last_action==PANEL_PAIR_CANCEL);
+        // One with none has nothing to go back to.
+        p.pair_can_cancel=false;
+        panel_ui_update(&p);
+        assert(!button_with(page,panel_text(TXT_CANCEL)));
+        // An end with no secret offers a new try.
+        p.pairing=PANEL_PAIRING_EXPIRED;p.pair_code[0]=0;
+        panel_ui_update(&p);
+        assert(label(screen,panel_text(TXT_PAIR_EXPIRED))&&!label(screen,"482 913"));
+        lv_obj_t *again=button_with(page,panel_text(TXT_PAIR_AGAIN));
+        assert(again);
+        lv_obj_send_event(again,LV_EVENT_CLICKED,NULL);
+        assert(actions==2&&last_action==PANEL_PAIR);
+        // The search, and a search that found nothing: the setup takes an
+        // address by hand.
+        p.pairing=PANEL_PAIRING_SEARCH;p.pair_pc[0]=p.pair_address[0]=0;
+        panel_ui_update(&p);
+        assert(label(screen,panel_text(TXT_PAIR_SEARCH))&&!button_with(page,panel_text(TXT_PAIR_AGAIN)));
+        p.pairing=PANEL_PAIRING_NOT_FOUND;
+        panel_ui_update(&p);
+        assert(label(screen,panel_text(TXT_PAIR_NOT_FOUND))&&button_with(page,panel_text(TXT_SETUP)));
+        // The end that worked has no button: it closes by itself.
+        p.pairing=PANEL_PAIRING_DONE;p.pair_can_cancel=true;
+        panel_ui_update(&p);
+        assert(label(screen,panel_text(TXT_PAIR_DONE)));
+        assert(!button_with(page,panel_text(TXT_SETUP))&&!button_with(page,panel_text(TXT_CANCEL)));
+        // And then the screen goes, and the band is back.
+        p.pairing=PANEL_PAIRING_NONE;
+        panel_ui_update(&p);
+        assert(!label(screen,panel_text(TXT_PAIR_TITLE))&&find_band(screen));
+        // The settings start a new pairing, and ask nothing first: the
+        // secret of the panel stays until the PC gives a new one.
+        panel_ui_settings_open();
+        lv_obj_t *settings=lv_obj_get_child(screen,-1);
+        lv_obj_t *pair_button=NULL;
+        for(unsigned i=0;i<lv_obj_get_child_count(settings)&&!pair_button;i++)
+            pair_button=button_with(lv_obj_get_child(settings,i),panel_text(TXT_PAIR_START));
+        assert(pair_button);
+        actions=0;
+        lv_obj_send_event(pair_button,LV_EVENT_CLICKED,NULL);
+        assert(actions==1&&last_action==PANEL_PAIR);
+        assert(panel_ui_home());
+    }
+
     puts("OK: seven pages that snap, in an order somebody can change, any of them "
          "but the last one hidden with an eye, the "
          "session and its target button, the "
@@ -3241,14 +3779,15 @@ int main(void)
          "them drawn with nothing for LVGL to complain about, the battery of "
          "the panel in the corner with the network mark against it, the "
          "achievements of the game under its name, room under both "
-         "display sliders, the clock with a timer that rings, and two "
+         "display sliders, the clock with a timer that rings and an alarm that snoozes, and two "
          "controllers in the head with a page of four behind it, and the "
          "page of the PC that scrolls, and a choice of sensor for each tile "
          "of the temperatures, and the page of the panel with its update, "
          "its power chip in detail and its frames in movement, and the page "
          "of the card with its history and its Cooling Boost, the page of "
          "the LED bar with the effect of each mode of the PC and the colour and the brightness of the desktop, and the page "
-         "of the energy profile of its CPU, and all of it in a dark theme and a "
+         "of the energy profile of its CPU, and the pairing with the PC and its "
+         "code, and all of it in a dark theme and a "
          "light one, each in eight accents that a card of the settings chooses, "
          "with every label of every page readable in each.");
     return 0;

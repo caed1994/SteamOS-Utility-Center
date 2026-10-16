@@ -43,7 +43,37 @@ bool panel_config_load(panel_config_t *config)
     if (nvs_get_str(handle, "wol_mac", config->wol_mac, &len) != ESP_OK)
         config->wol_mac[0]='\0';
     nvs_close(handle);
-    return ok == ESP_OK && strlen(config->ssid)>0 && strlen(config->token)>=32;
+    /* A network is the setup. The address and the secret can be empty: the
+     * panel then finds the PC and pairs with it. A secret that is there
+     * has the length of one. */
+    size_t token=strlen(config->token);
+    return ok == ESP_OK && strlen(config->ssid)>0 && (token==0 || token>=32);
+}
+
+/* The address and the secret of a pairing, in one commit. */
+esp_err_t panel_config_save_pairing(const char *server, const char *token)
+{
+    nvs_handle_t handle;
+    if (!server || !token) return ESP_ERR_INVALID_ARG;
+    esp_err_t err=nvs_open("panel", NVS_READWRITE, &handle);
+    if (err!=ESP_OK) return err;
+    err=nvs_set_str(handle,"server",server);
+    if (err==ESP_OK) err=nvs_set_str(handle,"token",token);
+    if (err==ESP_OK) err=nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t panel_config_save_server(const char *server)
+{
+    nvs_handle_t handle;
+    if (!server) return ESP_ERR_INVALID_ARG;
+    esp_err_t err=nvs_open("panel", NVS_READWRITE, &handle);
+    if (err!=ESP_OK) return err;
+    err=nvs_set_str(handle,"server",server);
+    if (err==ESP_OK) err=nvs_commit(handle);
+    nvs_close(handle);
+    return err;
 }
 
 esp_err_t panel_config_save_wol(const char *mac)
@@ -120,14 +150,17 @@ static esp_err_t save_post(httpd_req_t *req)
     body[received]=0;
     panel_config_t config={0};
     cJSON *root=cJSON_Parse(body);
+    /* The address and the token can be empty: the panel then finds the PC
+     * by itself and pairs with it. A value that is there must be valid. */
     bool ok=copy_json(root,"ssid",config.ssid,sizeof(config.ssid),1)
         && copy_json(root,"password",config.password,sizeof(config.password),8)
-        && copy_json(root,"server",config.server,sizeof(config.server),8)
-        && copy_json(root,"token",config.token,sizeof(config.token),32);
+        && copy_json(root,"server",config.server,sizeof(config.server),0)
+        && copy_json(root,"token",config.token,sizeof(config.token),0);
     cJSON_Delete(root);
-    size_t slen=strlen(config.server);
+    size_t slen=strlen(config.server), tlen=strlen(config.token);
     if (slen && config.server[slen-1]=='/') config.server[slen-1]=0;
-    if (!ok || !valid_server(config.server)) return error_reply(req,panel_text(TXT_FORM_BAD));
+    if (!ok || (slen && !valid_server(config.server)) || (tlen && tlen<32))
+        return error_reply(req,panel_text(TXT_FORM_BAD));
     for (const char *p=config.token; *p; p++) if (!isalnum((unsigned char)*p) && *p!='_' && *p!='-') return error_reply(req,panel_text(TXT_TOKEN_BAD));
     nvs_handle_t handle;
     esp_err_t err=nvs_open("panel", NVS_READWRITE, &handle);

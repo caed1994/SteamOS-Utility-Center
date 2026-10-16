@@ -41,14 +41,22 @@ typedef enum { PANEL_LED_DESKTOP, PANEL_LED_GAME, PANEL_LED_MODES } panel_led_mo
 #define PANEL_LED_COLOUR_KEY "desktop_color"
 #define PANEL_LED_BRIGHTNESS_KEY "desktop_brightness"
 
+/* The profiles of the mirror: screen.PROFILES, in its order. Each mode
+ * has its own profile, with its own key in the status and in a change:
+ * companion.LED_MIRROR. The names are English in each language, as the
+ * owner asked. */
+#define PANEL_LED_PROFILES 3
+#define PANEL_LED_PROFILE_KEY "mirror_profile"
+#define PANEL_LED_DESKTOP_PROFILE_KEY "desktop_mirror_profile"
 /* A change of the page: the key of the new effect of each mode, the new
- * colour of the desktop scenes, and their new brightness from 0 to 255.
- * An empty key or colour, and a brightness below nought, keep what the PC
- * has. */
+ * colour of the desktop scenes, their new brightness from 0 to 255, and the
+ * new profile of the mirror of each mode. An empty key, colour or profile,
+ * and a brightness below nought, keep what the PC has. */
 typedef struct {
     char effect[PANEL_LED_MODES][PANEL_LED_KEY];
     char colour[PANEL_LED_COLOUR];
     int brightness;
+    char profile[PANEL_LED_MODES][PANEL_LED_KEY];
 } panel_led_change_t;
 
 /* How many effects the mode has. */
@@ -82,6 +90,18 @@ const char *panel_led_colour(int index);
 int panel_led_colour_find(const char *colour);
 /* The name of the colour at "index" on the screen. */
 panel_text_id_t panel_led_colour_name(int index);
+/* The key of the profile at "index", or NULL for an index outside the
+ * list. */
+const char *panel_led_profile(int index);
+/* The place of a profile, or -1 for one that this firmware does not know. */
+int panel_led_profile_find(const char *key);
+/* The name of the profile at "index" on the screen. */
+panel_text_id_t panel_led_profile_name(int index);
+/* What the profile at "index" does, in a few words for its menu. */
+panel_text_id_t panel_led_profile_what(int index);
+/* The key of the profile of a mode in the status and in a change, or NULL
+ * for a mode that is not there. */
+const char *panel_led_profile_key(panel_led_mode_t mode);
 /* A colour "#rrggbb" as the number 0xRRGGBB. false, and nothing in "rgb",
  * for a text that is no such colour. */
 bool panel_led_rgb(const char *colour, uint32_t *rgb);
@@ -89,11 +109,39 @@ bool panel_led_rgb(const char *colour, uint32_t *rgb);
  * a brightness. Each per cent comes back to itself through the two. */
 int panel_led_percent(int brightness);
 int panel_led_brightness(int percent);
+/* Puts each part of "change" that has a value into "into": the effect of
+ * each mode, the colour, the brightness and the profile. A part that
+ * "change" leaves out keeps what "into" has, so two taps before one
+ * request give one change with both. */
+void panel_led_merge(panel_led_change_t *into, const panel_led_change_t *change);
 /* The body of a change for the companion service: a JSON object with the
- * key of each mode that has one, the colour and the brightness, as
- * {"desktop":"breath","desktop_color":"#ff0000"}. What keeps the value of
- * the PC is left out. Answers the length, and nought for nothing to send,
- * for too little room, and for a colour that is no "#rrggbb" or a
- * brightness above 255. The keys come from the lists above, which hold
- * letters and nothing to escape. */
+ * key of each mode that has one, the colour, the brightness and the
+ * profile, as {"desktop":"breath","desktop_color":"#ff0000"}. What keeps
+ * the value of the PC is left out. Answers the length, and nought for
+ * nothing to send, for too little room, for a colour that is no "#rrggbb",
+ * a brightness above 255 and a profile that is not in the list. The keys
+ * come from the lists above, which hold letters and nothing to escape. */
 size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change);
+
+/* The room for the detail and for the size of the screen in the status of
+ * the mirror, each with its end: screen.DETAIL_CHARS and "65535x65535". */
+#define PANEL_MIRROR_DETAIL 41
+#define PANEL_MIRROR_SOURCE 12
+
+/* The status of the mirror on the PC: the state word of screen.STATES, its
+ * detail, the pictures each second, the processor time in tenths of a per
+ * cent, and the size of the screen. An empty state is a PC that sends no
+ * status, and a number below nought is a number that the status does not
+ * have. */
+typedef struct {
+    char state[PANEL_LED_KEY];
+    char detail[PANEL_MIRROR_DETAIL];
+    char source[PANEL_MIRROR_SOURCE];
+    int fps;
+    int cpu;
+} panel_led_mirror_t;
+
+/* The line under the Game Mode card while it shows the mirror, in the
+ * language of the panel. A state that this firmware does not know gets the
+ * line of each other effect of that card. */
+void panel_led_mirror_line(char *out, size_t room, const panel_led_mirror_t *mirror);
