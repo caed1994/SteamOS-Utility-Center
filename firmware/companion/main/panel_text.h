@@ -32,6 +32,34 @@
                            "WLAN und PC-Verbindung einrichten") \
     X(TXT_CONFIRM_HERE,    "Confirm on this display.", \
                            "Bitte am Display bestätigen.") \
+    X(TXT_PAIR,            "Pairing",               "Kopplung") \
+    X(TXT_PAIR_WHAT,       "A new secret from the PC, with a code", \
+                           "Neues Geheimnis vom PC, mit Code") \
+    X(TXT_PAIR_START,      "Pair",                  "Koppeln") \
+    X(TXT_PAIR_TITLE,      "Pair with the PC",      "Mit dem PC koppeln") \
+    X(TXT_PAIR_SEARCH,     "The panel looks for your PC on the network ...", \
+                           "Das Panel sucht deinen PC im WLAN ...") \
+    X(TXT_PAIR_ASK,        "The panel asks the PC ...", \
+                           "Das Panel fragt den PC ...") \
+    X(TXT_PAIR_WAIT,       "Accept this code on the PC: in the control panel, " \
+                           "or in Game Mode in the plugin SteamOS Utility Center.", \
+                           "Diesen Code am PC annehmen: im Kontrollpanel oder im " \
+                           "Spielmodus im Plugin SteamOS Utility Center.") \
+    X(TXT_PAIR_DONE,       "Paired.",               "Gekoppelt.") \
+    X(TXT_PAIR_BUSY,       "A different panel waits on the PC. The panel tries again ...", \
+                           "Am PC wartet ein anderes Panel. Das Panel versucht es erneut ...") \
+    X(TXT_PAIR_NO_ANSWER,  "The PC does not answer. The panel tries again ...", \
+                           "Der PC antwortet nicht. Das Panel versucht es erneut ...") \
+    X(TXT_PAIR_REFUSED,    "The PC refused this panel.", \
+                           "Der PC hat das Panel abgelehnt.") \
+    X(TXT_PAIR_EXPIRED,    "Nobody accepted the code in time.", \
+                           "Niemand hat den Code rechtzeitig angenommen.") \
+    X(TXT_PAIR_NOT_FOUND,  "No PC answered. The module Steam Companion must run on " \
+                           "the PC. Or give the address of the PC in the setup.", \
+                           "Kein PC hat geantwortet. Am PC muss das Modul Steam " \
+                           "Companion laufen. Oder die PC-Adresse im Setup eintragen.") \
+    X(TXT_PAIR_AGAIN,      "Try again",             "Erneut versuchen") \
+    X(TXT_PAIR_PC,         "PC: %s",                "PC: %s") \
     X(TXT_SETTINGS_TITLE,  "ESP settings",          "ESP-Einstellungen") \
     X(TXT_BRIGHTNESS,      "Display brightness",    "Displayhelligkeit") \
     X(TXT_BRIGHTNESS_WHAT, "The display of this ESP only", \
@@ -272,11 +300,25 @@
     X(TXT_RESET,           "Reset",                 "Zurücksetzen") \
     X(TXT_TIME_UP,         "Time is up",            "Zeit abgelaufen") \
     X(TXT_STOP,            "Stop",                  "Stopp") \
+    X(TXT_ALARM,           "ALARM",                 "WECKER") \
+    X(TXT_ALARM_TITLE,     "Alarm",                 "Wecker") \
+    X(TXT_SNOOZE,          "Snooze",                "Schlummern") \
+    X(TXT_ALARM_OFF,       "Off",                   "Aus") \
+    X(TXT_ALARM_DONE,      "Done",                  "Fertig") \
+    X(TXT_SNOOZE_END,      "End snooze",            "Schlummern beenden") \
+    X(TXT_ALARM_RINGS,     "Rings %s",              "Klingelt %s") \
+    X(TXT_ALARM_SNOOZED,   "Snoozed until %s",      "Schlummert bis %s") \
+    X(TXT_SUNDAY_SHORT,    "Su",                    "So") \
+    X(TXT_MONDAY_SHORT,    "Mo",                    "Mo") \
+    X(TXT_TUESDAY_SHORT,   "Tu",                    "Di") \
+    X(TXT_WEDNESDAY_SHORT, "We",                    "Mi") \
+    X(TXT_THURSDAY_SHORT,  "Th",                    "Do") \
+    X(TXT_FRIDAY_SHORT,    "Fr",                    "Fr") \
+    X(TXT_SATURDAY_SHORT,  "Sa",                    "Sa") \
     X(TXT_GPU_LOAD,        "GPU load",              "GPU-Last") \
     X(TXT_GPU_VRAM,        "VRAM",                  "VRAM") \
     X(TXT_GPU_CLOCK,       "GPU clock",             "GPU-Takt") \
-    X(TXT_GPU_BOOST,       "Cooling Boost",         "Lüfter-Boost") \
-    X(TXT_HISTORY,         "History",               "Verlauf") \
+    X(TXT_FAN_AUTO,        "Auto",                  "Auto") \
     X(TXT_HISTORY_EMPTY,   "No readings yet",       "Noch keine Werte") \
     X(TXT_HISTORY_NOW,     "now",                   "jetzt") \
     X(TXT_LED_DESKTOP,     "LED bar on the desktop", "LED-Leiste im Desktop-Modus") \
@@ -308,6 +350,41 @@
     X(TXT_LED_FIRE,        "Fire",                  "Feuer") \
     X(TXT_LED_AURORA,      "Aurora",                "Polarlicht") \
     X(TXT_LED_OOZE,        "Ooze",                  "Schleim") \
+    X(TXT_LED_MIRROR,      "Mirror",                "Spiegel") \
+    X(TXT_MIRROR_RUNNING,  "Mirror runs: %d fps, CPU %d.%d %%", \
+                           "Spiegel läuft: %d fps, CPU %d,%d %%") \
+    X(TXT_MIRROR_RUNS,     "Mirror runs",           "Spiegel läuft") \
+    X(TXT_MIRROR_STARTING, "Mirror starts ...",     "Spiegel startet ...") \
+    X(TXT_MIRROR_WAITING,  "Mirror waits for a picture", \
+                           "Spiegel wartet auf ein Bild") \
+    X(TXT_PROFILE_TITLE,   "Mirror profile",        "Spiegelprofil") \
+    X(TXT_PROFILE_CINEMATIC,"Cinematic",            "Cinematic") \
+    X(TXT_PROFILE_CINEMATIC_WHAT,"True to the screen, calm", \
+                           "Nah am Bild, ruhig") \
+    X(TXT_PROFILE_POP,     "Color Pop",             "Color Pop") \
+    X(TXT_PROFILE_POP_WHAT,"Strong colours, quick", "Kräftige Farben, schnell") \
+    X(TXT_PROFILE_SOLID,   "Solid",                 "Solid") \
+    X(TXT_PROFILE_SOLID_WHAT,"One colour for the bar", \
+                           "Eine Farbe für die Leiste") \
+    X(TXT_MIRROR_NO_SCREEN,"Mirror waits for Game Mode", \
+                           "Spiegel wartet auf den Spielmodus") \
+    X(TXT_MIRROR_ASKING,   "Mirror: allow the share of the screen on the PC", \
+                           "Spiegel: Bildschirmfreigabe am PC erlauben") \
+    X(TXT_MIRROR_REFUSED,  "Mirror: the screen of the PC is not shared", \
+                           "Spiegel: Bildschirm des PCs nicht freigegeben") \
+    X(TXT_MIRROR_NO_PORTAL,"Mirror: the desktop has no screen portal", \
+                           "Spiegel: Desktop ohne Bildschirm-Portal") \
+    X(TXT_MIRROR_BUSY,     "Mirror paused: %s reads the screen", \
+                           "Spiegel pausiert: %s liest das Bild") \
+    X(TXT_MIRROR_NO_GSTREAMER,"Mirror: GStreamer is not on the PC", \
+                           "Spiegel: GStreamer fehlt am PC") \
+    X(TXT_MIRROR_NO_PLUGIN,"Mirror: the PC has no GStreamer %s", \
+                           "Spiegel: am PC fehlt GStreamer %s") \
+    X(TXT_MIRROR_FAILED,   "Mirror error: %s",      "Spiegel-Fehler: %s") \
+    X(TXT_MIRROR_OFF,      "Mirror: the LED service does not run", \
+                           "Spiegel: LED-Dienst läuft nicht") \
+    X(TXT_MIRROR_GONE,     "Mirror: the capture service does not run", \
+                           "Spiegel: Aufnahmedienst läuft nicht") \
     X(TXT_LED_TEMPERATURE, "Temperature",           "Temperatur") \
     X(TXT_LED_LOAD,        "CPU and GPU load",      "CPU- und GPU-Last") \
     X(TXT_LED_COLOUR,      "Colour",                "Farbe") \

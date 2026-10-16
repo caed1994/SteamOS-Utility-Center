@@ -16,3 +16,6 @@ extern const lv_image_dsc_t icon_power;
 extern const lv_image_dsc_t icon_cpu;
 extern const lv_image_dsc_t icon_circuit_board;
 extern const lv_image_dsc_t icon_zap;
+extern const lv_image_dsc_t icon_alarm_clock;
+extern const lv_image_dsc_t icon_snowflake;
+extern const lv_image_dsc_t icon_fan_off;

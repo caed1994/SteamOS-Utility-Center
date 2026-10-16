@@ -314,6 +314,9 @@ DECKY_PLUGIN="homebrew/plugins/SteamOS Utility Center"
 
 WATCHER_UNIT="$NAME-achievements.service"
 PHONE_UNIT="$NAME-phone.service"
+# The capture of the screen for the mirror effect. It reads PipeWire, which
+# is a service of the user, and the sandbox of the LED service hides that.
+MIRROR_UNIT="$NAME-mirror.service"
 # The wall panel's service. It is a user unit for the same reason as the two
 # above, and it is not in WATCHER_UNITS because it is a module of its own:
 # the core installs those two and this one arrives with its module.
@@ -321,7 +324,7 @@ COMPANION_UNIT="$NAME-companion.service"
 # Each unit that this installs into the systemd of the user. Both scripts walk
 # this list. A unit in one script and not in the other is a file that nothing
 # removes.
-WATCHER_UNITS=("$WATCHER_UNIT" "$PHONE_UNIT")
+WATCHER_UNITS=("$WATCHER_UNIT" "$PHONE_UNIT" "$MIRROR_UNIT")
 # This must be equal to WantedBy= in those units. It is the directory of the
 # enable symlink.
 WATCHER_WANTS="default.target.wants"

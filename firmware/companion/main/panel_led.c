@@ -29,6 +29,7 @@ static const effect_t desktop[] = {
     {"ooze", TXT_LED_OOZE, false, true},
     {"temperature", TXT_LED_TEMPERATURE, false, true},
     {"load", TXT_LED_LOAD, false, false},
+    {"mirror", TXT_LED_MIRROR, false, true},
 };
 
 /* render.RAINBOW_CHOICES of the LED service, in its order. */
@@ -39,6 +40,30 @@ static const effect_t game[] = {
     {"fire", TXT_LED_FIRE, false, false},
     {"aurora", TXT_LED_AURORA, false, false},
     {"ooze", TXT_LED_OOZE, false, false},
+    {"mirror", TXT_LED_MIRROR, false, false},
+};
+
+/* screen.STATES of the LED service, and the line of each one. "idle" is a
+ * bar on a different effect of Steam, so its line is the line of the other
+ * effects. */
+static const struct {
+    const char *state;
+    panel_text_id_t text;
+} mirror_lines[] = {
+    {"off", TXT_MIRROR_OFF},
+    {"idle", TXT_LED_GAME_WHAT},
+    {"no-gstreamer", TXT_MIRROR_NO_GSTREAMER},
+    {"no-plugin", TXT_MIRROR_NO_PLUGIN},
+    {"no-screen", TXT_MIRROR_NO_SCREEN},
+    {"asking", TXT_MIRROR_ASKING},
+    {"refused", TXT_MIRROR_REFUSED},
+    {"no-portal", TXT_MIRROR_NO_PORTAL},
+    {"busy", TXT_MIRROR_BUSY},
+    {"starting", TXT_MIRROR_STARTING},
+    {"waiting", TXT_MIRROR_WAITING},
+    {"running", TXT_MIRROR_RUNNING},
+    {"failed", TXT_MIRROR_FAILED},
+    {"gone", TXT_MIRROR_GONE},
 };
 
 /* companion.LED_COLOURS, in its order. */
@@ -55,6 +80,17 @@ static const struct {
     {"#8000ff", TXT_COLOUR_PURPLE},
     {"#ff00ff", TXT_COLOUR_MAGENTA},
     {"#ffffff", TXT_COLOUR_WHITE},
+};
+
+/* screen.PROFILES, in its order, with what each does. */
+static const struct {
+    const char *key;
+    panel_text_id_t name;
+    panel_text_id_t what;
+} profiles[PANEL_LED_PROFILES] = {
+    {"cinematic", TXT_PROFILE_CINEMATIC, TXT_PROFILE_CINEMATIC_WHAT},
+    {"pop", TXT_PROFILE_POP, TXT_PROFILE_POP_WHAT},
+    {"solid", TXT_PROFILE_SOLID, TXT_PROFILE_SOLID_WHAT},
 };
 
 static const effect_t *effects(panel_led_mode_t mode, int *count)
@@ -149,6 +185,35 @@ panel_text_id_t panel_led_colour_name(int index)
     return index >= 0 && index < PANEL_LED_COLOURS ? colours[index].name : TXT_COLOUR_OWN;
 }
 
+const char *panel_led_profile(int index)
+{
+    return index >= 0 && index < PANEL_LED_PROFILES ? profiles[index].key : NULL;
+}
+
+int panel_led_profile_find(const char *key)
+{
+    for (int i = 0; key && i < PANEL_LED_PROFILES; i++)
+        if (strcmp(profiles[i].key, key) == 0) return i;
+    return -1;
+}
+
+panel_text_id_t panel_led_profile_name(int index)
+{
+    return index >= 0 && index < PANEL_LED_PROFILES ? profiles[index].name : TXT_LED_UNKNOWN;
+}
+
+panel_text_id_t panel_led_profile_what(int index)
+{
+    return index >= 0 && index < PANEL_LED_PROFILES ? profiles[index].what : TXT_LED_UNKNOWN;
+}
+
+const char *panel_led_profile_key(panel_led_mode_t mode)
+{
+    if (mode == PANEL_LED_DESKTOP) return PANEL_LED_DESKTOP_PROFILE_KEY;
+    if (mode == PANEL_LED_GAME) return PANEL_LED_PROFILE_KEY;
+    return NULL;
+}
+
 bool panel_led_rgb(const char *colour, uint32_t *rgb)
 {
     if (!colour || colour[0] != '#' || strlen(colour) != 7) return false;
@@ -195,6 +260,19 @@ static bool add(char *out, size_t room, size_t *at, const char *format, ...)
     return true;
 }
 
+void panel_led_merge(panel_led_change_t *into, const panel_led_change_t *change)
+{
+    if (!into || !change) return;
+    for (int mode = 0; mode < PANEL_LED_MODES; mode++)
+        if (change->effect[mode][0])
+            snprintf(into->effect[mode], sizeof into->effect[mode], "%s", change->effect[mode]);
+    if (change->colour[0]) snprintf(into->colour, sizeof into->colour, "%s", change->colour);
+    if (change->brightness >= 0) into->brightness = change->brightness;
+    for (int mode = 0; mode < PANEL_LED_MODES; mode++)
+        if (change->profile[mode][0])
+            snprintf(into->profile[mode], sizeof into->profile[mode], "%s", change->profile[mode]);
+}
+
 size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
 {
     if (!out || room == 0) return 0;
@@ -204,6 +282,8 @@ size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
      * the service reads, so a body is never half an object. */
     if (change->colour[0] && !panel_led_rgb(change->colour, NULL)) return 0;
     if (change->brightness > 255) return 0;
+    for (int mode = 0; mode < PANEL_LED_MODES; mode++)
+        if (change->profile[mode][0] && panel_led_profile_find(change->profile[mode]) < 0) return 0;
     size_t at = 0;
     out[at++] = '{';
     for (int mode = 0; mode < PANEL_LED_MODES; mode++) {
@@ -221,8 +301,44 @@ size_t panel_led_body(char *out, size_t room, const panel_led_change_t *change)
         out[0] = 0;
         return 0;
     }
+    for (int mode = 0; mode < PANEL_LED_MODES; mode++) {
+        if (!change->profile[mode][0]) continue;
+        if (!add(out, room, &at, "\"%s\":\"%s\"", panel_led_profile_key((panel_led_mode_t)mode),
+                 change->profile[mode])) { out[0] = 0; return 0; }
+    }
     if (at == 1 || at + 2 > room) { out[0] = 0; return 0; }
     out[at++] = '}';
     out[at] = 0;
     return at;
+}
+
+void panel_led_mirror_line(char *out, size_t room, const panel_led_mirror_t *mirror)
+{
+    if (!out || !room) return;
+    out[0] = '\0';
+    panel_text_id_t text = TXT_LED_GAME_WHAT;
+    for (size_t i = 0; mirror && i < sizeof mirror_lines / sizeof mirror_lines[0]; i++)
+        if (strcmp(mirror->state, mirror_lines[i].state) == 0) text = mirror_lines[i].text;
+    switch (text) {
+    case TXT_MIRROR_RUNNING:
+        /* The rate and the load, and the size of the screen where the PC
+         * knows it. A status with no numbers says only that it runs. */
+        if (mirror->fps >= 0 && mirror->cpu >= 0) {
+            int used = snprintf(out, room, panel_text(TXT_MIRROR_RUNNING), mirror->fps,
+                                mirror->cpu / 10, mirror->cpu % 10);
+            if (mirror->source[0] && used > 0 && (size_t)used < room)
+                snprintf(out + used, room - (size_t)used, ", %s", mirror->source);
+        } else {
+            snprintf(out, room, "%s", panel_text(TXT_MIRROR_RUNS));
+        }
+        break;
+    case TXT_MIRROR_BUSY:
+    case TXT_MIRROR_NO_PLUGIN:
+    case TXT_MIRROR_FAILED:
+        snprintf(out, room, panel_text(text), mirror->detail[0] ? mirror->detail : "?");
+        break;
+    default:
+        snprintf(out, room, "%s", panel_text(text));
+        break;
+    }
 }

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "panel_alarm.h"
 #include "panel_cpu.h"
 #include "panel_history.h"
 #include "panel_led.h"
@@ -26,18 +27,40 @@ typedef enum {
      * means "switch" would now and then switch to the side it is already
      * on. companion.py carries the same reasoning at its end. */
     PANEL_DESKTOP_MODE, PANEL_GAME_MODE,
-    /* Cooling Boost of the card, on and off, for the same reason. Its
-     * switch on the page of the card sends these at a tap and asks
-     * nothing first: a fan at full speed interrupts nothing. */
+    /* Cooling Boost of the card, on and off, for the same reason, and
+     * zero RPM of its fan. Their buttons on the page of the card send these
+     * at a tap and ask nothing first: a fan at full speed interrupts
+     * nothing, and nor does a fan that stops on a cool card. */
     PANEL_GPU_BOOST_ON, PANEL_GPU_BOOST_OFF,
+    PANEL_GPU_ZERO_RPM_ON, PANEL_GPU_ZERO_RPM_OFF,
     PANEL_SETUP,
     /* After PANEL_SETUP on purpose. Everything below it is a name that
      * main.c sends to the service, and the dispatch there reads that table
      * by this number. These last ones are done by the panel itself:
      * PANEL_UPDATE takes the firmware the PC offers. */
     PANEL_WAKE,
-    PANEL_UPDATE
+    PANEL_UPDATE,
+    /* The pairing with the PC: start it, or try again, and stop a new
+     * pairing of a panel that has a secret already. See panel_pair.h. */
+    PANEL_PAIR,
+    PANEL_PAIR_CANCEL
 } panel_action_t;
+
+/* Where the pairing with the PC is, for its screen. NONE is a panel that
+ * does not pair now. The last five wait: BUSY and NO_ANSWER try again by
+ * themselves, the other three wait for a tap. */
+typedef enum {
+    PANEL_PAIRING_NONE,
+    PANEL_PAIRING_SEARCH,
+    PANEL_PAIRING_ASK,
+    PANEL_PAIRING_WAIT,
+    PANEL_PAIRING_DONE,
+    PANEL_PAIRING_BUSY,
+    PANEL_PAIRING_NO_ANSWER,
+    PANEL_PAIRING_REFUSED,
+    PANEL_PAIRING_EXPIRED,
+    PANEL_PAIRING_NOT_FOUND
+} panel_pairing_t;
 
 /* One drive, as the second page draws it.
  *
@@ -157,15 +180,18 @@ typedef struct {
      * worse than no button. */
     bool can_wake;
     int volume, cpu_temp, gpu_temp, gpu_watts;
-    /* The rest of the card, for its page: how busy it is in per cent and
-     * its clock in MHz, or -1; its memory in bytes, and a total of nought
-     * for none. */
-    int gpu_load, gpu_mhz;
+    /* The rest of the card, for its page: how busy it is in per cent, its
+     * clock and the highest level of its clock in MHz, or -1; its memory
+     * in bytes, and a total of nought for none. */
+    int gpu_load, gpu_mhz, gpu_mhz_max;
     uint64_t vram_used, vram_total;
     /* Cooling Boost: boost_here where the PC has LACT with a card in it,
      * and boost_on where the boost has the fan. A PC without LACT, and a
-     * service older than this firmware, have no switch. */
+     * service older than this firmware, have no switch. Zero RPM the same
+     * way: zero_rpm_here where the card has it, and zero_rpm_on where it
+     * is on. */
     bool boost_here, boost_on;
+    bool zero_rpm_here, zero_rpm_on;
     /* Counts the answers of the PC. The history takes a point from an
      * answer, and the readings above stay as they were while the PC is
      * gone: the count is what tells a new reading from the last one. */
@@ -228,6 +254,20 @@ typedef struct {
     int led_brightness;
     uint32_t led_replies;
     int led_code;
+    /* What the mirror of the LED bar does on the PC, for the line of its
+     * card. See panel_led.h. led_profile is the key of the profile of the
+     * mirror of each mode, and empty from a service older than this
+     * firmware, which has none for that mode. */
+    panel_led_mirror_t led_mirror;
+    char led_profile[PANEL_LED_MODES][PANEL_LED_KEY];
+    /* The pairing with the PC, for its screen: where it is, the code while
+     * a person must compare it, the name of the PC and its address, and
+     * whether the panel has a secret already, which it can keep. */
+    panel_pairing_t pairing;
+    char pair_code[7];
+    char pair_pc[25];
+    char pair_address[48];
+    bool pair_can_cancel;
     /* The CPU of the PC, for its page, the same way. cpu_profile is the
      * key of the profile of its settings, "custom" for a setting of the
      * control panel that no profile is, and cpu_offers has a bit for each
@@ -250,7 +290,7 @@ typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
                PANEL_LANGUAGE, PANEL_SLEEP_AFTER,
                PANEL_CPU_SENSOR, PANEL_GPU_SENSOR, PANEL_LIFT_WAKE,
                PANEL_PAGE_ORDER, PANEL_PAGE_HIDDEN,
-               PANEL_THEME, PANEL_ACCENT } panel_setting_t;
+               PANEL_THEME, PANEL_ACCENT, PANEL_ALARM } panel_setting_t;
 /* The lowest brightness of the display that the settings page offers, in
  * per cent: the lowest that the backlight of this board holds steady, as a
  * test on the board found it. BACKLIGHT_SLEEP_PERCENT in panel_display.c
@@ -276,16 +316,23 @@ typedef enum { PANEL_BRIGHTNESS, PANEL_SOUND_VOLUME, PANEL_TOUCH_TONES,
  *
  * theme and accent: the colours of the screen, as panel_theme.h numbers
  * them. Nought for both is the dark theme in its blue, the panel as it was
- * before there was a choice. */
+ * before there was a choice.
+ *
+ * alarm: the alarm clock, as panel_alarm_pack stores it. Nought, or any
+ * number that this firmware did not write, is an alarm that is off. */
 typedef struct { int brightness, sound_volume; bool touch_tones;
                  panel_language_t language; int sleep_after;
                  uint32_t cpu_sensor, gpu_sensor; bool lift_wake;
                  uint32_t page_order, page_hidden;
-                 panel_theme_t theme; panel_accent_t accent; }
+                 panel_theme_t theme; panel_accent_t accent;
+                 uint32_t alarm; }
     panel_settings_t;
 typedef void (*panel_setting_cb_t)(panel_setting_t key, int value, bool save);
 typedef void (*panel_sound_cb_t)(int volume);
 void panel_ui_create(panel_action_cb_t callback, panel_setting_cb_t setting_cb, panel_sound_cb_t sound_cb, const panel_settings_t *settings);
+/* The pages over the band slide in and out when this is on. Off, which is
+ * how the checks of the screen run, each page opens and closes at once. */
+void panel_ui_slides(bool on);
 /* A change of the page of the LED bar: the new effects, colour and
  * brightness, as panel_led.h says. main.c sends it to the PC, and the
  * answer comes back in led_replies and led_code. */
@@ -331,5 +378,19 @@ panel_timer_news_t panel_ui_timer_tick(void);
 bool panel_ui_timer_stop(void);
 bool panel_ui_timer_ringing(void);
 /* The volume of the alarm: the volume of the sounds, and never so low that
- * a timer goes off unheard. */
+ * a timer goes off unheard. The alarm clock rings at it too. */
 int panel_ui_alarm_volume(void);
+/* The alarm clock of the fourth page, once a tick of the panel, asleep or
+ * awake, with the local time. main.c wakes the display and beeps for it,
+ * as it does for the timer. See panel_alarm.h. */
+panel_alarm_news_t panel_ui_alarm_clock_tick(const panel_alarm_clock_t *now);
+bool panel_ui_alarm_clock_ringing(void);
+/* A press of a key: a snooze of an alarm that rings. false when none
+ * rang. */
+bool panel_ui_alarm_clock_snooze(void);
+/* true one time after a snooze by a touch, so that main.c can put the
+ * display back where the ring found it, as it does for a key. */
+bool panel_ui_alarm_clock_take_snooze(void);
+/* The next ring for the cover of a sleep, as "Mo 07:00", or an empty text
+ * when no alarm is set. Always ends inside room. */
+void panel_ui_alarm_clock_next(char *out, size_t room);

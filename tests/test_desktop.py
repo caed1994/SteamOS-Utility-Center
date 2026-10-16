@@ -181,6 +181,13 @@ class SteadyTemperature:
         return 61.0
 
 
+class SteadyScreen:
+    """A screen that always shows the same colours, for the same reason."""
+
+    def colours(self, now=None):
+        return [(200, 40, 10)] * 17
+
+
 class ScenesOfTheirOwnTest(unittest.TestCase):
     """A user asked for desktop effects that do not use the rainbow slot.
 
@@ -520,13 +527,14 @@ class DescribeTest(unittest.TestCase):
         see no change.
 
         This draws each scene as the service draws it: the `shows` value of the
-        scene goes down with the snapshot. For the four effects of this project
-        that value is the complete difference between them. Both sensors are here,
-        so each scene draws itself and does not use the rainbow. The rainbow is a
-        different effect with different settings.
+        scene goes down with the snapshot. For the effects of this project that
+        value is the complete difference between them. Both sensors and a screen
+        are here, so each scene draws itself and does not use the rainbow. The
+        rainbow is a different effect with different settings.
         """
         renderer = render.Renderer(led_count=17, temperature=SteadyTemperature(),
-                                   load=SteadyLoad(), **renderer_options)
+                                   load=SteadyLoad(), screen=SteadyScreen(),
+                                   **renderer_options)
 
         def lit(scene, color="#00b0ff", brightness=90, speed=2.0):
             return renderer.render(

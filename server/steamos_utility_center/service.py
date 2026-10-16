@@ -18,10 +18,10 @@ import time
 
 from . import config as config_module
 from . import desktop, elf, load, mounts, notify, phone, render
-from . import repair
+from . import repair, screen
 from . import link as link_module
 from . import serialport, shim
-from . import steamworks
+from . import steamapps, steamworks
 from . import temperature
 from .link import EspLink
 
@@ -109,8 +109,8 @@ def anything_shows(config, shows):
     gauge selected on the desktop alone had no counters to read, and
     render._substitute gave the slot back to the rainbow it replaced.
 
-    Only the two effects that read hardware need the question. Fire and the
-    aurora are arithmetic.
+    Only the effects that read hardware or the screen need the question.
+    Fire and the aurora are arithmetic.
     """
     return (config["RAINBOW_SHOWS"] == shows
             or desktop.scene_shows(config["DESKTOP_SCENE"]) == shows)
@@ -170,7 +170,25 @@ def build_overheat_watch(config):
     return temperature.OverheatWatch()
 
 
-def build_renderer(config):
+def build_mirror(config):
+    """Returns the end of the pipe from the screen, or None.
+
+    The rainbow slot of Game Mode and the scene of the desktop can each show
+    the mirror. The user service of the mirror waits for this pipe, and it
+    finds the screen of each mode. See screen.
+    """
+    if not anything_shows(config, render.SHOWS_MIRROR):
+        return None
+    mirror = screen.Mirror(profile=config["MIRROR_PROFILE"],
+                           desktop_profile=config["DESKTOP_MIRROR_PROFILE"])
+    try:
+        mirror.create()
+    except OSError as exc:
+        LOG.warning("mirror: cannot make %s: %s", mirror.path, exc)
+    return mirror
+
+
+def build_renderer(config, mirror=None):
     return render.Renderer(
         led_count=config["LED_COUNT"],
         mapping=config["MAPPING"],
@@ -191,6 +209,7 @@ def build_renderer(config):
         load_cpu_colour=notify.parse_color(config["LOAD_CPU_COLOR"]),
         load_gpu_colour=notify.parse_color(config["LOAD_GPU_COLOR"]),
         load_swap=config["LOAD_SWAP"],
+        screen=mirror,
     )
 
 
@@ -268,7 +287,8 @@ class Runner:
     def __init__(self, config):
         self.config = config
         self.running = True
-        self.renderer = build_renderer(config)
+        self.mirror = build_mirror(config)
+        self.renderer = build_renderer(config, self.mirror)
         self.link = build_link(config)
         self.overlay = notify.NotificationOverlay(
             enabled=config["NOTIFY"],
@@ -375,6 +395,8 @@ class Runner:
                 self.source.close()
             if self.trigger is not None:
                 self.trigger.unlink()
+            if self.mirror is not None:
+                self.mirror.close()
         return 0
 
     def _open_trigger(self):
@@ -566,6 +588,11 @@ class Runner:
             if triggered:
                 self._poll_trigger(time.monotonic())
 
+            if self.mirror is not None:
+                # Closes the pipe when the bar no longer shows the mirror,
+                # and that stops the capture of the screen.
+                self.mirror.poll(time.monotonic())
+
             if self.overheat is not None:
                 # This costs little at most turns: it reads nothing until
                 # its own interval ends. It thus needs no guard here.
@@ -638,6 +665,9 @@ class Runner:
                 self._hold_for_steam()
                 continue
             if payload is None:
+                if self.mirror is not None:
+                    # The scene of the desktop has a profile of its own.
+                    self.mirror.ease_for(showing is self.scene)
                 payload = self.renderer.render(showing, now - started,
                                                self._shows(showing))
             if self._breathing_for_steam:
@@ -1209,14 +1239,34 @@ def _open_friend_listener(stats, want_messages):
         return None
 
 
+def _publish_counts(app_id, counts):
+    """Gives the wall panel the live achievement counts, or removes them.
+
+    Nought unlocked is not given. A late load of the stats also reads as
+    nought, and the page of the game is then the better answer. See
+    steamapps.live_path.
+    """
+    try:
+        if app_id and counts and counts[0] > 0:
+            steamapps.publish_live(app_id, counts[0], counts[1])
+        else:
+            steamapps.clear_live()
+    except OSError as exc:
+        # The flash of the bar does not need the file.
+        LOG.warning("could not write the achievement counts: %s", exc)
+
+
 def run_watch_achievements(config, interval=1.0):
     """Flashes the bar for an achievement and for friend activity in a game.
 
     It runs as the normal user, beside Steam. It does not run as the service in
-    its sandbox. It writes trigger words into the notification pipe and does
-    nothing else.
+    its sandbox. It writes trigger words into the notification pipe, and the
+    live achievement counts of the game into a file for the wall panel. It
+    does nothing else.
     """
     _interrupt_on_sigterm()
+    # A run that stopped with no cleanup can leave old counts.
+    _publish_counts(None, None)
 
     achievements_on = config["NOTIFY_ACHIEVEMENTS"]
     messages_on = config["NOTIFY_MESSAGES"]
@@ -1233,6 +1283,7 @@ def run_watch_achievements(config, interval=1.0):
     listener = None
     current_app = None
     stats = None
+    published = None
 
     # flush, because this runs as a service. Python buffers a stdout that
     # goes to a pipe. These lines thus stay in the buffer until the
@@ -1347,6 +1398,10 @@ def run_watch_achievements(config, interval=1.0):
                             LOG.info("achievement unlocked: %s",
                                      stats.display_name(name))
                             _flash(fifo, "achievement")
+                        counts = watcher.counts()
+                        if counts != published:
+                            _publish_counts(current_app, counts)
+                            published = counts
                     if listener is not None:
                         # One flash for each kind, whatever the number that
                         # arrived. The queue discards a repeat of the flash
@@ -1367,6 +1422,8 @@ def run_watch_achievements(config, interval=1.0):
                     stats.close()
                     stats, watcher, listener = None, None, None
                     current_app = None
+                    _publish_counts(None, None)
+                    published = None
 
             time.sleep(interval)
     except KeyboardInterrupt:
@@ -1376,6 +1433,7 @@ def run_watch_achievements(config, interval=1.0):
             listener.close()
         if stats is not None:
             stats.close()
+        _publish_counts(None, None)
     return 0
 
 
@@ -1540,6 +1598,37 @@ def run_watch_phone(config, print_only=False):
     # session. systemd starts the next monitor.
     LOG.info("the notification bus stopped talking (%d seen, %d flashed)",
              bridge.seen, bridge.flashed)
+    return 0
+
+
+def run_mirror():
+    """The user service of the mirror. See screen.Watcher.
+
+    The LED service opens the pipe while the bar shows the mirror, and that
+    is the one signal to start. The settings file gives the profile, and
+    whether the scene of the desktop is the mirror. Only that scene asks
+    the portal for the desktop screen. Watcher reads both again after each
+    change of the file.
+    """
+    from . import portal
+    _interrupt_on_sigterm()
+    path = config_module.DEFAULT_CONFIG_PATH
+    scene = screen.ProfileFile(
+        path, lambda path: config_module.load(path)["DESKTOP_SCENE"],
+        choices=desktop.SCENES, default=desktop.SCENE_STEAM)
+    watcher = screen.Watcher(
+        profile=screen.ProfileFile(
+            path, lambda path: config_module.load(path)["MIRROR_PROFILE"]),
+        desktop_profile=screen.ProfileFile(
+            path,
+            lambda path: config_module.load(path)["DESKTOP_MIRROR_PROFILE"]),
+        share=portal.Share, desktop=portal.desktop_runs,
+        wanted=lambda: scene() == desktop.SCENE_MIRROR)
+    LOG.info("mirror: the status is in %s", watcher.status)
+    try:
+        watcher.run()
+    except KeyboardInterrupt:
+        pass
     return 0
 
 
@@ -1811,6 +1900,16 @@ def build_parser():
                        dest="watch_achievements",
                        help="flash on every achievement unlocked in the running "
                             "game (run as your normal user, not with sudo)")
+    modes.add_argument("--mirror", action="store_true",
+                       help="read the screen for the mirror effect of the "
+                            "LED bar (the user service runs this as your "
+                            "normal user, not with sudo)")
+    modes.add_argument("--screen-probe", action="store_true",
+                       dest="screen_probe",
+                       help="ask the screen cast portal for the screen of "
+                            "the desktop, measure a capture, and say what "
+                            "was found (run it on the desktop as your normal "
+                            "user, not with sudo)")
     modes.add_argument("--watch-phone", action="store_true",
                        dest="watch_phone",
                        help="flash on your phone's notifications, which KDE "
@@ -1888,6 +1987,15 @@ def main(argv=None):
     if args.repair_check or args.repair:
         configure_logging("warning")
         return run_repair(write=args.repair)
+
+    if args.mirror:
+        configure_logging("info")
+        return run_mirror()
+
+    if args.screen_probe:
+        configure_logging("warning")
+        from . import portal
+        return portal.probe()
 
     overrides = {
         "DEVICE": args.device,
