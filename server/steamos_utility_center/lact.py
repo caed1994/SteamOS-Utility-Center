@@ -639,6 +639,22 @@ def with_firmware(config, values):
     return made
 
 
+def zero_rpm(config, found_stats):
+    """Whether zero RPM is on: True, False or None for a card without it.
+
+    The setting of LACT is the answer where its config has one. LACT puts
+    that setting on the card while the card drives its fan and while a
+    curve drives it. For a static speed it holds zero RPM off on the card,
+    and the setting then waits in the config. Where the config has no
+    setting, the card is the answer.
+    """
+    said = ((config or {}).get(FIRMWARE_CONFIG) or {}).get("zero_rpm")
+    for one in firmware(found_stats):
+        if one["key"] == "zero_rpm":
+            return said if isinstance(said, bool) else bool(one["value"])
+    return None
+
+
 def with_fan(config, enabled=None, mode=None, static_speed=None, curve=None):
     """Returns a copy of the full config with the fan settings changed.
 

@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 caed1994
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -44,6 +45,8 @@ static panel_palette_t palette;
 
 static lv_obj_t *connection,*dot,*audio_status,*audio_toggle,*audio_knob,*volume,*brightness_label,*sleep_label,*message;
 static lv_obj_t *controls[6],*overlay,*setup_screen,*setup_text,*cpu_value,*gpu_value,*power_value;
+/* The screen of the pairing with the PC, and what changes on it. */
+static lv_obj_t *pair_screen,*pair_text,*pair_code,*pair_pc,*pair_left,*pair_right,*pair_right_label;
 /* Not in controls[]: that table is indexed by the action, it holds the
  * six the service performs, and PANEL_WAKE is done by the panel. */
 static lv_obj_t *wake_button,*wake_what;
@@ -64,6 +67,11 @@ static lv_obj_t *no_drives,*band,*esp_power,*wifi_mark;
 LV_FONT_DECLARE(panel_clock_font);
 static lv_obj_t *clock_digits,*clock_date,*timer_value,*timer_minus,*timer_plus;
 static lv_obj_t *timer_go,*timer_go_label,*timer_reset,*alarm_layer;
+/* The alarm clock: its button on the clock card, the layer that sets it,
+ * and the layer over everything while it rings. See alarm_clock_open. */
+static lv_obj_t *alarm_clock_button,*alarm_clock_icon,*alarm_clock_layer,*alarm_clock_ring_layer;
+static lv_obj_t *alarm_clock_switch,*alarm_clock_hours,*alarm_clock_minutes,*alarm_clock_status;
+static lv_obj_t *alarm_clock_days[PANEL_ALARM_DAYS];
 /* The timer itself is not part of the screen. panel_ui_create builds the
  * screen again when the language changes, and a timer that runs goes on
  * running through that. */
@@ -81,47 +89,56 @@ static uint32_t hold_counted;
 static panel_history_t *history;
 static uint32_t history_answers,history_drawn;
 static bool history_stale=true;
-/* The window the page shows, in minutes. Not stored: a restart starts the
- * history again in any case. */
-static int history_minutes=30;
-#define HISTORY_WINDOWS 3
-static const int history_windows[HISTORY_WINDOWS]={15,30,60};
-static lv_obj_t *gpu_load_value,*gpu_load_track,*gpu_load_bar,*vram_value,*vram_track,*vram_bar,*gpu_clock_value;
-/* Cooling Boost, under the clock of the card: the field that takes the tap,
- * and the track and the knob of its switch. boost_shown is what they show,
- * -1 for nothing yet, 0 off and 1 on, so that only a change goes to LVGL. */
-static lv_obj_t *boost_field,*boost_track,*boost_knob;
-static int boost_shown=-1;
-static lv_obj_t *history_chart,*history_empty,*history_ago,*history_axis[4],*history_buttons[HISTORY_WINDOWS];
+static lv_obj_t *gpu_load_value,*gpu_load_track,*gpu_load_bar,*vram_value,*vram_track,*vram_bar;
+static lv_obj_t *gpu_clock_value,*gpu_clock_track,*gpu_clock_bar;
+/* The fan of the card, in a column at the right of the history: zero
+ * RPM, Auto and Cooling Boost, from the top down. The face of a button is
+ * its icon or its word, which takes the colour. fan_lit has a bit for each
+ * button that is lit, and -1 for nothing yet, so that only a change goes
+ * to LVGL. */
+enum{FAN_ZERO_RPM,FAN_AUTO,FAN_BOOST,FAN_BUTTONS};
+static lv_obj_t *fan_buttons[FAN_BUTTONS],*fan_faces[FAN_BUTTONS];
+static int fan_lit=-1;
+static lv_obj_t *history_chart,*history_empty,*history_axis[4];
 static lv_chart_series_t *history_series[PANEL_HISTORY_SERIES];
 /* The colours of the three curves, and the legend that names them: the
  * processor in blue, the card in orange and its power in green, which read
  * apart from each other. Not in the accent, which can be the orange of the
  * card. Each theme has its own three: see panel_theme.h. */
 #define CURVE_COLOURS {palette.curve_cpu,palette.curve_gpu,palette.curve_watts}
-/* The card of the GPU: three columns, each a name, a value and, for the
- * load and the memory, a bar. The room of each value is its longest at
- * 24 px, which check_pages measures: "100 %", the 162 px of "23.9 / 24.0
- * GB" and "2450 MHz". The chart under it: its place in its card, with the
- * degrees on the left of it and the watts on the right. */
-#define GPU_COLUMN_X0 16
-#define GPU_COLUMN_X1 146
-#define GPU_COLUMN_X2 326
+/* The card of the GPU: three columns at one pitch, each a name, a value
+ * and a bar, and the three in the middle of the bar. Inside its border the
+ * card is 458 wide, and the bars stand 16 from each side of that. The
+ * value of the middle column is the longest, the 162 px of "23.9 / 24.0
+ * GB" at 24 px, and has the most room. The rooms of the outer two, for
+ * "100 %" and the 126 px of "4000 MHz", end 8 from the side. check_pages
+ * measures all three. */
+#define GPU_BAR_X 16
 #define GPU_BAR_WIDTH 116
-/* The row of Cooling Boost under the clock of the card: from 62 down to the
- * border, around the line of the bars at 72, and its switch. "Cooling Boost"
- * takes 85 of the 126 of the column in the 12 point font, and the switch
- * takes the rest but a gap of 5. */
-#define BOOST_Y 62
-#define BOOST_HEIGHT 30
-#define BOOST_TRACK_WIDTH 36
-#define BOOST_TRACK_HEIGHT 20
-#define BOOST_KNOB_OFF 2
-#define BOOST_KNOB_ON (BOOST_TRACK_WIDTH-BOOST_TRACK_HEIGHT+2)
+#define GPU_PITCH 155
+#define GPU_ROOM_SIDE 132
+#define GPU_ROOM_MIDDLE 168
+_Static_assert(2*GPU_BAR_X+2*GPU_PITCH+GPU_BAR_WIDTH==460-2,"the bars 16 from each side of the card");
+_Static_assert(GPU_BAR_X+GPU_BAR_WIDTH/2-GPU_ROOM_SIDE/2==8,"the outer rooms 8 from the side");
+/* The card of the history, 192 high inside its border. On the left the
+ * chart, with the degrees on the left of it and the watts on the right,
+ * the time under it, and the legend under the time. The legend runs from
+ * the left edge of the chart to its right edge, with one gap between a
+ * name and the next dot. On the right a column of three squares for the
+ * fan of the card, as large as the alarm clock has on the clock page,
+ * from 10 under the top of the card to 10 over its foot. The foot of the
+ * legend is the foot of the column. */
+#define FAN_SIZE 52
+#define FAN_GAP 8
+#define FAN_X (460-10-FAN_SIZE)
+#define FAN_Y 10
 #define CHART_X 52
-#define CHART_Y 66
-#define CHART_WIDTH 356
-#define CHART_HEIGHT 92
+#define CHART_Y 14
+#define CHART_WIDTH 288
+#define CHART_HEIGHT 120
+#define LEGEND_Y (FAN_Y+3*FAN_SIZE+2*FAN_GAP-16)
+_Static_assert(FAN_Y+3*FAN_SIZE+2*FAN_GAP+10==194-2,"the column from 10 under the top to 10 over the foot");
+_Static_assert(CHART_X+CHART_WIDTH+6+44+8<=FAN_X,"the watts left of the column");
 _Static_assert(TXT_SATURDAY==TXT_SUNDAY+6,"the days of the week in a row, from Sunday as tm_wday counts");
 _Static_assert(TXT_DECEMBER==TXT_JANUARY+11,"the months in a row");
 static panel_action_cb_t send_action;
@@ -184,6 +201,8 @@ static void arrange_forget(void);
 static lv_obj_t *look_layer;
 /* The menu that chooses the sensor of a tile, and which tile it is for. */
 static lv_obj_t *sensor_layer;
+/* The menu that chooses the profile of the mirror. See profile_open. */
+static lv_obj_t *profile_layer;
 static bool sensor_gpu;
 /* The key of each row of the open menu, kept when it opens: a new state
  * while it is open can bring the list in another order. */
@@ -249,6 +268,141 @@ static lv_obj_t *text_at(lv_obj_t *parent,const char *text,int x,int y,int width
     lv_label_set_text(label,text);return label;
 }
 static void center_text(lv_obj_t *label){lv_obj_set_style_text_align(label,LV_TEXT_ALIGN_CENTER,0);}
+/* Writes that change nothing draw nothing.
+ *
+ * LVGL draws a label again at each lv_label_set_text, and an object at
+ * each new local style and at each removal of LV_OBJ_FLAG_HIDDEN, with the
+ * same value as well. panel_ui_update writes the whole screen at each new
+ * state. With no PC the state is new every 5 s too: the readings of the
+ * power chip and the uptime of the panel. Measured on this screen with no
+ * PC, each of those updates drew 14 areas again, 14 % of the screen, and
+ * none of them had changed. The update writes through these, and they
+ * write a change only. The timer and the clock use set_text as well: they
+ * are asked five times a second. */
+static void set_text(lv_obj_t *label,const char *text)
+{
+    if(label&&strcmp(lv_label_get_text(label),text)!=0)lv_label_set_text(label,text);
+}
+static void set_textf(lv_obj_t *label,const char *format,...)
+{
+    char text[128];
+    va_list args;
+    va_start(args,format);vsnprintf(text,sizeof text,format,args);va_end(args);
+    set_text(label,text);
+}
+static void set_bg(lv_obj_t *o,uint32_t rgb)
+{
+    lv_color_t colour=lv_color_hex(rgb);
+    if(o&&!lv_color_eq(lv_obj_get_style_bg_color(o,0),colour))lv_obj_set_style_bg_color(o,colour,0);
+}
+static void set_text_colour(lv_obj_t *o,uint32_t rgb)
+{
+    lv_color_t colour=lv_color_hex(rgb);
+    if(o&&!lv_color_eq(lv_obj_get_style_text_color(o,0),colour))lv_obj_set_style_text_color(o,colour,0);
+}
+static void set_shown(lv_obj_t *o,bool shown)
+{
+    if(!o||lv_obj_has_flag(o,LV_OBJ_FLAG_HIDDEN)!=shown)return;
+    if(shown)lv_obj_remove_flag(o,LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);
+}
+/* The pages over the band slide in from the right when they open, and out
+ * to the right again when they close.
+ *
+ * Asked for: an animation for the pages of the settings, the controllers,
+ * the PC and the panel. The slide moves the page and changes no pixel of
+ * it. A frame draws the page where it stands and the strip of the band
+ * that it left, and no place twice: see slide_step.
+ *
+ * For the rest of the screen a page opens and closes at once: its pointer
+ * is set when it opens and forgotten when it closes. Only the picture
+ * slides. main.c switches the slides on. The checks of the screen leave
+ * them off and get each page at once where it ends, and check_navigation
+ * switches them on to check the slides. */
+/* In a little slower than out: the eye follows what comes, and lets go of
+ * what goes. */
+#define SLIDE_IN_MS 250
+#define SLIDE_OUT_MS 220
+static bool slides;
+void panel_ui_slides(bool on){slides=on;}
+/* One step of a slide.
+ *
+ * lv_obj_set_x marks the place that the page leaves and the place that it
+ * reaches, and LVGL joins the two into one area. On the way out that area
+ * is wider than the page, and a frame then draws the band and the whole
+ * page over it. This marks the two apart: the page where it stands, which
+ * LVGL draws alone, and the strip of the band that the page left. */
+static void slide_step(void *var,int32_t x)
+{
+    lv_obj_t *page=var;
+    lv_display_t *display=lv_obj_get_display(page);
+    /* Anything else that waits for its layout gets it first, and marks what
+     * it changes as it always does. */
+    lv_obj_update_layout(page);
+    lv_area_t was,now;
+    lv_obj_get_coords(page,&was);
+    lv_display_enable_invalidation(display,false);
+    lv_obj_set_x(page,x);
+    lv_obj_update_layout(page);
+    lv_display_enable_invalidation(display,true);
+    lv_obj_get_coords(page,&now);
+    if(now.x1==was.x1)return;
+    lv_obj_invalidate(page);
+    if(now.x1>was.x1){
+        lv_area_t left={was.x1,was.y1,now.x1-1,was.y2};
+        lv_obj_invalidate_area(lv_obj_get_parent(page),&left);
+    }
+}
+static void slide(lv_obj_t *page,int32_t from,int32_t to,uint32_t ms,lv_anim_path_cb_t path,
+                  bool then_delete)
+{
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a,page);
+    lv_anim_set_exec_cb(&a,slide_step);
+    lv_anim_set_values(&a,from,to);
+    lv_anim_set_duration(&a,ms);
+    lv_anim_set_path_cb(&a,path);
+    if(then_delete)lv_anim_set_completed_cb(&a,lv_obj_delete_anim_completed_cb);
+    lv_anim_start(&a);
+}
+/* A new page waits off the screen and hidden while it is built. LVGL
+ * gives a new object its size where its parent starts, and only then
+ * moves it: a page that shows, at that moment, marks the whole screen,
+ * and the first frame of its slide draws the band again under it. */
+static void slide_ready(lv_obj_t *page)
+{
+    if(!slides||!page)return;
+    lv_obj_add_flag(page,LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(page,480);
+}
+/* At the end of the build. An animation counts its time from its start,
+ * and a slide that starts before the build loses the time of the build
+ * and opens the page nearly at once. */
+static void slide_in(lv_obj_t *page)
+{
+    if(!slides||!page)return;
+    lv_obj_update_layout(page);
+    lv_obj_remove_flag(page,LV_OBJ_FLAG_HIDDEN);
+    slide(page,480,0,SLIDE_IN_MS,lv_anim_path_ease_out,false);
+}
+/* A page on its way out takes no press: everything on it is forgotten
+ * already, and a button on it would act on nothing. */
+static void inert(lv_obj_t *o)
+{
+    lv_obj_remove_flag(o,LV_OBJ_FLAG_CLICKABLE);
+    for(uint32_t i=0;i<lv_obj_get_child_count(o);i++)inert(lv_obj_get_child(o,i));
+}
+/* The page goes, and deletes itself at the end of its slide. A page that
+ * still slides in turns round where it is. */
+static void slide_out(lv_obj_t *page)
+{
+    if(!page)return;
+    if(!slides){lv_obj_delete(page);return;}
+    inert(page);
+    lv_anim_delete(page,NULL);
+    slide(page,lv_obj_get_style_x(page,LV_PART_MAIN),480,SLIDE_OUT_MS,lv_anim_path_ease_in_out,true);
+}
 static lv_obj_t *panel(lv_obj_t *parent,int x,int y,int w,int h,uint32_t color,bool border)
 {
     lv_obj_t *o=lv_obj_create(parent);lv_obj_remove_style_all(o);
@@ -273,6 +427,13 @@ static lv_obj_t *knob_in(lv_obj_t *track,int x,int y,int size)
     lv_obj_remove_flag(o,LV_OBJ_FLAG_CLICKABLE);
     return o;
 }
+/* The room past its edge where a button still takes a press.
+ *
+ * A press needs 48 px each way, about 7 mm on this screen, to land without
+ * aim. Most buttons here are 44 px high, and 2 px on each side takes them
+ * to 48. Two buttons stand 4 px apart or more, so the rooms of two meet and
+ * do not overlap. tests/test_panel_display.py and check_touch hold this. */
+#define BUTTON_REACH 2
 static lv_obj_t *button(lv_obj_t *parent,const char *caption,int x,int y,int w,int h,lv_event_cb_t cb,intptr_t data)
 {
     lv_obj_t *b=lv_button_create(parent);lv_obj_set_pos(b,x,y);lv_obj_set_size(b,w,h);
@@ -282,6 +443,7 @@ static lv_obj_t *button(lv_obj_t *parent,const char *caption,int x,int y,int w,i
     lv_obj_set_style_shadow_width(b,0,0);lv_obj_set_style_pad_all(b,0,0);
     lv_obj_set_style_opa(b,LV_OPA_40,LV_STATE_DISABLED);
     if(caption[0]){lv_obj_t *l=lv_label_create(b);lv_label_set_text(l,caption);lv_obj_center(l);}
+    lv_obj_set_ext_click_area(b,BUTTON_REACH);
     lv_obj_add_event_cb(b,cb,LV_EVENT_CLICKED,(void *)data);return b;
 }
 static void confirmation(lv_event_t *e)
@@ -381,7 +543,7 @@ static lv_obj_t *slider_with(lv_obj_t *parent,int x,int y,int minimum,int maximu
     lv_obj_set_style_bg_color(slider,lv_color_hex(EDGE),LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider,lv_color_hex(ACCENT),LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider,lv_color_hex(palette.slider_knob),LV_PART_KNOB);
-    lv_obj_set_style_pad_all(slider,7,LV_PART_KNOB);lv_obj_set_ext_click_area(slider,18);
+    lv_obj_set_style_pad_all(slider,7,LV_PART_KNOB);lv_obj_set_ext_click_area(slider,20);
     lv_obj_add_event_cb(slider,cb,LV_EVENT_VALUE_CHANGED,(void *)data);
     lv_obj_add_event_cb(slider,cb,LV_EVENT_RELEASED,(void *)data);
     return slider;
@@ -399,7 +561,8 @@ static lv_obj_t *switch_at(lv_obj_t *parent,int x,int y,bool on,lv_event_cb_t cb
     lv_obj_set_style_bg_color(sw,lv_color_hex(KNOB),LV_PART_KNOB);
     lv_obj_set_style_border_width(sw,KNOB_RIM,LV_PART_KNOB);
     lv_obj_set_style_border_color(sw,lv_color_hex(KNOB_EDGE),LV_PART_KNOB);
-    lv_obj_set_ext_click_area(sw,8);
+    /* 30 high, and 9 on each side is 48. */
+    lv_obj_set_ext_click_area(sw,9);
     if(on)lv_obj_add_state(sw,LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw,cb,LV_EVENT_VALUE_CHANGED,NULL);
     return sw;
@@ -449,8 +612,23 @@ static void settings_forget(void)
 {
     /* The order of the pages stands on the settings, and goes with them. */
     arrange_forget();
-    if(settings_screen)lv_obj_delete(settings_screen);
+    slide_out(settings_screen);
     settings_drop();
+}
+/* The screen built again, for new words or new colours, with the person
+ * where they were: on the settings, and as far down them as they had
+ * scrolled. Nothing opens or closes for them, so no page slides. */
+static void settings_again(void)
+{
+    int32_t scrolled=settings_screen?lv_obj_get_scroll_y(settings_screen):0;
+    bool sliding=slides;
+    slides=false;
+    settings_forget();
+    panel_ui_create(send_action,save_setting,play_sound,&local);
+    panel_ui_settings_open();
+    slides=sliding;
+    lv_obj_update_layout(settings_screen);
+    lv_obj_scroll_to_y(settings_screen,scrolled,LV_ANIM_OFF);
 }
 static void language_clicked(lv_event_t *e)
 {
@@ -460,27 +638,14 @@ static void language_clicked(lv_event_t *e)
     if(save_setting)save_setting(PANEL_LANGUAGE,(int)next,true);
     // Both screens are built one time, with the words of the language that
     // was current then. Every one of them is now wrong, so both are built
-    // again. The person stays where they were, on the settings page.
-    settings_forget();
-    panel_ui_create(send_action,save_setting,play_sound,&local);
-    panel_ui_settings_open();
+    // again.
+    settings_again();
 }
 /* The colours of the screen, from the card of the appearance.
  *
  * Every object took its colours when it was built, so a new theme or a new
- * accent builds the screen again, the way a new language does. The person
- * stays where they were: on the settings, and as far down them as they had
- * scrolled, which is where the card is. A tap on the choice that is there
- * already changes nothing and builds nothing. */
-static void appearance_again(void)
-{
-    int32_t scrolled=settings_screen?lv_obj_get_scroll_y(settings_screen):0;
-    settings_forget();
-    panel_ui_create(send_action,save_setting,play_sound,&local);
-    panel_ui_settings_open();
-    lv_obj_update_layout(settings_screen);
-    lv_obj_scroll_to_y(settings_screen,scrolled,LV_ANIM_OFF);
-}
+ * accent builds the screen again, the way a new language does. A tap on the
+ * choice that is there already changes nothing and builds nothing. */
 static void theme_clicked(lv_event_t *e)
 {
     panel_theme_t theme=(panel_theme_t)(intptr_t)lv_event_get_user_data(e);
@@ -488,7 +653,7 @@ static void theme_clicked(lv_event_t *e)
     if(theme==local.theme)return;
     local.theme=theme;
     if(save_setting)save_setting(PANEL_THEME,(int)theme,true);
-    appearance_again();
+    settings_again();
 }
 static void accent_clicked(lv_event_t *e)
 {
@@ -497,7 +662,7 @@ static void accent_clicked(lv_event_t *e)
     if(accent==local.accent)return;
     local.accent=accent;
     if(save_setting)save_setting(PANEL_ACCENT,(int)accent,true);
-    appearance_again();
+    settings_again();
 }
 static void settings_close(lv_event_t *e)
 {
@@ -547,7 +712,7 @@ static void arrange_drop(void)
 }
 static void arrange_forget(void)
 {
-    if(arrange_screen)lv_obj_delete(arrange_screen);
+    slide_out(arrange_screen);
     arrange_drop();
 }
 /* The page the band shows now, read from where the band stands: a swipe
@@ -634,12 +799,14 @@ static void pads_forget(void);
 static void pc_forget(void);
 static void self_forget(void);
 static void look_close(void);
+static void profile_close(void);
+static void alarm_clock_close(void);
 bool panel_ui_home(void)
 {
     if(!band||setup_screen||update_layer)return false;
     /* No answer to the question, which is what Cancel sends: nothing. */
     if(overlay){lv_obj_delete(overlay);overlay=NULL;}
-    sensor_close();look_close();settings_forget();pads_forget();pc_forget();
+    sensor_close();look_close();profile_close();alarm_clock_close();settings_forget();pads_forget();pc_forget();
     /* Only when it is open: self_drop starts the counts of the frames and
      * of the touches again, and a press of the key is no visit of that
      * page. */
@@ -652,6 +819,7 @@ void panel_ui_arrange_open(void)
 {
     if(arrange_screen||!settings_screen)return;
     arrange_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    slide_ready(arrange_screen);
     button(arrange_screen,panel_text(TXT_BACK),12,8,112,44,arrange_close,0);
     text_at(arrange_screen,panel_text(TXT_PAGES_TITLE),136,20,320,&panel_font_20,TEXT);
     line(arrange_screen,0,62,480,1);
@@ -672,6 +840,7 @@ void panel_ui_arrange_open(void)
         arrange_down[place]=button(row,LV_SYMBOL_DOWN,378,button_y,48,44,arrange_move,place*2+1);
     }
     arrange_show();
+    slide_in(arrange_screen);
 }
 static void arrange_clicked(lv_event_t *e){(void)e;feedback();panel_ui_arrange_open();}
 /* The card of the appearance: as high as the card of the sound under it.
@@ -690,6 +859,7 @@ void panel_ui_settings_open(void)
     if(settings_screen)return;
     last_state_valid=false;
     settings_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    slide_ready(settings_screen);
     button(settings_screen,panel_text(TXT_BACK),12,8,112,44,settings_close,0);
     text_at(settings_screen,panel_text(TXT_SETTINGS_TITLE),136,20,200,&panel_font_20,TEXT);
     // The name of the other language, written in that language. Somebody
@@ -738,7 +908,7 @@ void panel_ui_settings_open(void)
     /* The colours of the screen, under the display they are on: the
      * theme, and the accent in the eight colours of panel_theme.h. Each
      * colour is a round button in the tone it has in this theme, and the
-     * one chosen has a tick and a ring. See appearance_again for a tap. */
+     * one chosen has a tick and a ring. See settings_again for a tap. */
     lv_obj_t *appearance=panel(settings_screen,20,392,440,APPEARANCE_HIGH,CARD,true);
     text_at(appearance,panel_text(TXT_APPEARANCE),20,16,248,&panel_font_18,TEXT);
     text_at(appearance,panel_text(TXT_APPEARANCE_WHAT),20,44,248,&panel_font_12,MUTED);
@@ -797,7 +967,14 @@ void panel_ui_settings_open(void)
     text_at(link,panel_text(TXT_CONNECTION),20,16,240,&panel_font_18,TEXT);
     text_at(link,panel_text(TXT_SETUP_WHAT),20,44,240,&panel_font_12,MUTED);
     button(link,panel_text(TXT_SETUP),276,20,144,44,clicked,PANEL_SETUP);
-    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,1048,440,&panel_font_12,MUTED);
+    /* A new secret from the PC, with no setup: the network stays, and the
+     * secret of the panel stays until the PC gives the new one. */
+    lv_obj_t *pairing=panel(settings_screen,20,1048,440,84,CARD,true);
+    text_at(pairing,panel_text(TXT_PAIR),20,16,240,&panel_font_18,TEXT);
+    text_at(pairing,panel_text(TXT_PAIR_WHAT),20,44,248,&panel_font_12,MUTED);
+    button(pairing,panel_text(TXT_PAIR_START),276,20,144,44,clicked,PANEL_PAIR);
+    text_at(settings_screen,panel_text(TXT_AUTOSAVE),22,1146,440,&panel_font_12,MUTED);
+    slide_in(settings_screen);
 }
 static void settings_clicked(lv_event_t *e){(void)e;feedback();panel_ui_settings_open();}
 /* What a controller says in the head and on its card: the battery, the
@@ -868,16 +1045,16 @@ static void pads_head(const panel_state_t *s)
          * second controller. */
         bool shown=i==0||i<count;
         if(shown){
-            lv_obj_remove_flag(pad_icons[i],LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(pad_values[i],LV_OBJ_FLAG_HIDDEN);
+            set_shown(pad_icons[i],true);
+            set_shown(pad_values[i],true);
         }else{
-            lv_obj_add_flag(pad_icons[i],LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(pad_values[i],LV_OBJ_FLAG_HIDDEN);
+            set_shown(pad_icons[i],false);
+            set_shown(pad_values[i],false);
         }
         char said[24];
         if(i<count)pad_level(said,sizeof said,&s->pads[i]);
         else snprintf(said,sizeof said,"-- %%");
-        lv_label_set_text(pad_values[i],said);
+        set_text(pad_values[i],said);
     }
 }
 /* Every pointer into the page of the controllers, dropped. The same rule
@@ -892,34 +1069,34 @@ static void pads_drop(void)
 }
 static void pads_forget(void)
 {
-    if(pads_screen)lv_obj_delete(pads_screen);
+    slide_out(pads_screen);
     pads_drop();
 }
 static void pads_show(const panel_state_t *s)
 {
     if(!pads_screen)return;
     int count=pads_known(s);
-    lv_label_set_text(pads_none,panel_text(s->online?TXT_NO_PADS:TXT_PC_OFFLINE));
-    if(count>0)lv_obj_add_flag(pads_none,LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_remove_flag(pads_none,LV_OBJ_FLAG_HIDDEN);
+    set_text(pads_none,panel_text(s->online?TXT_NO_PADS:TXT_PC_OFFLINE));
+    if(count>0)set_shown(pads_none,false);
+    else set_shown(pads_none,true);
     for(int i=0;i<PANEL_PADS;i++){
-        if(i>=count){lv_obj_add_flag(pad_cards[i],LV_OBJ_FLAG_HIDDEN);continue;}
+        if(i>=count){set_shown(pad_cards[i],false);continue;}
         const panel_pad_t *pad=&s->pads[i];
         char said[24];
-        lv_obj_remove_flag(pad_cards[i],LV_OBJ_FLAG_HIDDEN);
+        set_shown(pad_cards[i],true);
         char name[PANEL_PAD_NAME];
         pad_fit(name,sizeof name,pad->name,&panel_font_18,PAD_NAME_WIDTH);
-        lv_label_set_text(pad_names[i],name);
+        set_text(pad_names[i],name);
         pad_level(said,sizeof said,pad);
-        lv_label_set_text(pad_levels[i],said);
+        set_text(pad_levels[i],said);
         /* A bar for a battery, and words for a controller with none: an
          * empty bar reads as a flat battery. */
         if(pad->battery<0){
-            lv_obj_add_flag(pad_tracks[i],LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(pad_unknown[i],LV_OBJ_FLAG_HIDDEN);
+            set_shown(pad_tracks[i],false);
+            set_shown(pad_unknown[i],true);
         }else{
-            lv_obj_remove_flag(pad_tracks[i],LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(pad_unknown[i],LV_OBJ_FLAG_HIDDEN);
+            set_shown(pad_tracks[i],true);
+            set_shown(pad_unknown[i],false);
             lv_obj_set_width(pad_bars[i],PAD_BAR_WIDTH*pad->battery/100);
         }
     }
@@ -929,6 +1106,7 @@ void panel_ui_pads_open(void)
 {
     if(pads_screen||pc_screen||self_screen||settings_screen||setup_screen)return;
     pads_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    slide_ready(pads_screen);
     button(pads_screen,panel_text(TXT_BACK),12,8,112,44,pads_close,0);
     text_at(pads_screen,panel_text(TXT_CONTROLLERS),136,20,200,&panel_font_20,TEXT);
     line(pads_screen,0,62,480,1);
@@ -957,6 +1135,7 @@ void panel_ui_pads_open(void)
     /* What the last update said, at once. panel_ui_update draws nothing
      * for a state it saw before, so the page waits for no change. */
     if(last_state_valid)pads_show(&last_state);
+    slide_in(pads_screen);
 }
 static void pads_clicked(lv_event_t *e){(void)e;feedback();panel_ui_pads_open();}
 /* A place of the head that opens a page: no face of its own, and a shade
@@ -980,7 +1159,7 @@ static void pc_drop(void)
 }
 static void pc_forget(void)
 {
-    if(pc_screen)lv_obj_delete(pc_screen);
+    slide_out(pc_screen);
     pc_drop();
 }
 static void pc_say(int row,const char *text)
@@ -1016,11 +1195,11 @@ static void pc_show(const panel_state_t *s)
     if(!pc_screen)return;
     /* What a PC that does not answer said last is no answer to show. */
     for(int i=0;i<PC_GROUPS;i++){
-        if(s->online)lv_obj_remove_flag(pc_cards[i],LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(pc_cards[i],LV_OBJ_FLAG_HIDDEN);
+        if(s->online)set_shown(pc_cards[i],true);
+        else set_shown(pc_cards[i],false);
     }
-    if(s->online)lv_obj_add_flag(pc_none,LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_remove_flag(pc_none,LV_OBJ_FLAG_HIDDEN);
+    if(s->online)set_shown(pc_none,false);
+    else set_shown(pc_none,true);
     if(!s->online)return;
     const panel_pc_t *pc=&s->pc;
     char said[64];
@@ -1055,6 +1234,7 @@ void panel_ui_pc_open(void)
 {
     if(pc_screen||pads_screen||self_screen||settings_screen||setup_screen)return;
     pc_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    slide_ready(pc_screen);
     button(pc_screen,panel_text(TXT_BACK),12,8,112,44,pc_close,0);
     text_at(pc_screen,panel_text(TXT_PC_DETAILS),136,20,320,&panel_font_20,TEXT);
     line(pc_screen,0,62,480,1);
@@ -1091,6 +1271,7 @@ void panel_ui_pc_open(void)
         top+=height+PC_CARD_GAP;
     }
     if(last_state_valid)pc_show(&last_state);
+    slide_in(pc_screen);
 }
 static void pc_clicked(lv_event_t *e){(void)e;feedback();panel_ui_pc_open();}
 uint32_t panel_sensor_key(const char *id)
@@ -1113,8 +1294,8 @@ static void temperatures_show(const panel_state_t *s)
 {
     int cpu=sensor_shown(s->cpu_sensors,s->cpu_sensor_count,local.cpu_sensor,s->cpu_temp);
     int gpu=sensor_shown(s->gpu_sensors,s->gpu_sensor_count,local.gpu_sensor,s->gpu_temp);
-    if(s->online&&cpu>=0)lv_label_set_text_fmt(cpu_value,"%d °C",cpu);else lv_label_set_text(cpu_value,"-- °C");
-    if(s->online&&gpu>=0)lv_label_set_text_fmt(gpu_value,"%d °C",gpu);else lv_label_set_text(gpu_value,"-- °C");
+    if(s->online&&cpu>=0)set_textf(cpu_value,"%d °C",cpu);else set_text(cpu_value,"-- °C");
+    if(s->online&&gpu>=0)set_textf(gpu_value,"%d °C",gpu);else set_text(gpu_value,"-- °C");
 }
 void panel_ui_history_use(panel_history_t *kept){history=kept;history_stale=true;}
 void panel_ui_history_tick(const panel_state_t *s,uint32_t now_ms)
@@ -1141,26 +1322,20 @@ static void history_show(void)
     if(!history_chart)return;
     if(!history_stale&&(!history||history_drawn==history->version))return;
     history_stale=false;
-    for(int i=0;i<HISTORY_WINDOWS;i++){
-        bool on=history_windows[i]==history_minutes;
-        lv_obj_set_style_border_color(history_buttons[i],lv_color_hex(on?ACCENT_TEXT:EDGE),0);
-        lv_obj_set_style_text_color(history_buttons[i],lv_color_hex(on?ACCENT_TEXT:TEXT),0);
-    }
-    lv_label_set_text_fmt(history_ago,"-%d %s",history_minutes,panel_text(TXT_MINUTES));
     int found=0,low=0,high=0,cpu_low=0,cpu_high=0,watts_low=0,watts_high=0;
     if(history){
         history_drawn=history->version;
         for(int i=0;i<PANEL_HISTORY_SERIES;i++){
             int32_t *points=history->drawn[i];
-            found+=panel_history_read(history,(panel_history_series_t)i,history_minutes,points,PANEL_HISTORY_DRAWN);
+            found+=panel_history_read(history,(panel_history_series_t)i,PANEL_HISTORY_MINUTES,points,PANEL_HISTORY_DRAWN);
             for(int k=0;k<PANEL_HISTORY_DRAWN;k++)if(points[k]==PANEL_HISTORY_GAP)points[k]=LV_CHART_POINT_NONE;
         }
     }
-    bool cpu=history&&panel_history_range(history,PANEL_HISTORY_CPU,history_minutes,&cpu_low,&cpu_high);
-    bool gpu=history&&panel_history_range(history,PANEL_HISTORY_GPU,history_minutes,&low,&high);
+    bool cpu=history&&panel_history_range(history,PANEL_HISTORY_CPU,PANEL_HISTORY_MINUTES,&cpu_low,&cpu_high);
+    bool gpu=history&&panel_history_range(history,PANEL_HISTORY_GPU,PANEL_HISTORY_MINUTES,&low,&high);
     if(cpu&&(!gpu||cpu_low<low))low=cpu_low;
     if(cpu&&(!gpu||cpu_high>high))high=cpu_high;
-    bool watts=history&&panel_history_range(history,PANEL_HISTORY_WATTS,history_minutes,&watts_low,&watts_high);
+    bool watts=history&&panel_history_range(history,PANEL_HISTORY_WATTS,PANEL_HISTORY_MINUTES,&watts_low,&watts_high);
     int bottom=30,top=90,most=300;
     if(cpu||gpu){
         bottom=floor_to(low-3,10);top=ceil_to(high+3,10);
@@ -1172,71 +1347,87 @@ static void history_show(void)
     /* A scale with no curve on it is empty: the note in the middle says
      * why. */
     if(cpu||gpu){
-        lv_label_set_text_fmt(history_axis[0],"%d °C",top);
-        lv_label_set_text_fmt(history_axis[1],"%d °C",bottom);
-    }else{lv_label_set_text(history_axis[0],"");lv_label_set_text(history_axis[1],"");}
+        set_textf(history_axis[0],"%d °C",top);
+        set_textf(history_axis[1],"%d °C",bottom);
+    }else{set_text(history_axis[0],"");set_text(history_axis[1],"");}
     if(watts){
-        lv_label_set_text_fmt(history_axis[2],"%d W",most);
-        lv_label_set_text(history_axis[3],"0 W");
-    }else{lv_label_set_text(history_axis[2],"");lv_label_set_text(history_axis[3],"");}
-    if(found)lv_obj_add_flag(history_empty,LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_remove_flag(history_empty,LV_OBJ_FLAG_HIDDEN);
+        set_textf(history_axis[2],"%d W",most);
+        set_text(history_axis[3],"0 W");
+    }else{set_text(history_axis[2],"");set_text(history_axis[3],"");}
+    if(found)set_shown(history_empty,false);
+    else set_shown(history_empty,true);
     lv_chart_refresh(history_chart);
 }
-static void history_window_clicked(lv_event_t *e)
+/* The profile that the fan of the card runs. Auto is the fan that the PC
+ * has when Cooling Boost does not have it. */
+static int fan_running(const panel_state_t *s){return s->boost_on?FAN_BOOST:FAN_AUTO;}
+/* The column of the fan: there where the PC has LACT with a card, as the
+ * last answer said, and usable while the PC answers. Of Auto and Cooling
+ * Boost one is lit, the profile that runs. Zero RPM is lit while it is on,
+ * whatever the profile, and is usable only on a card that has it. Lit is
+ * the face and the edge in the accent. The rest, and all three while the
+ * PC is gone, are grey. */
+static void fan_show(const panel_state_t *s)
 {
-    int minutes=(int)(intptr_t)lv_event_get_user_data(e);
-    feedback();
-    if(minutes==history_minutes)return;
-    history_minutes=minutes;history_stale=true;
-    history_show();
-}
-/* The load, the memory and the clock of the card. "--" where the
- * service sent nothing, as on the page of the PC, and for all of them
- * while the PC is gone: the last reading would read as current. */
-/* The switch of Cooling Boost: there where the PC has LACT with a card, as
- * the last answer said, and usable while the PC answers. On is blue with the
- * knob at the right, as the switch of the audio. */
-static void boost_show(const panel_state_t *s)
-{
-    if(!boost_field)return;
-    if(s->boost_here==lv_obj_has_flag(boost_field,LV_OBJ_FLAG_HIDDEN)){
-        if(s->boost_here)lv_obj_remove_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
+    if(!fan_buttons[FAN_BOOST])return;
+    for(int i=0;i<FAN_BUTTONS;i++){
+        set_shown(fan_buttons[i],s->boost_here);
+        bool usable=s->online&&(i!=FAN_ZERO_RPM||s->zero_rpm_here);
+        if(usable==lv_obj_has_state(fan_buttons[i],LV_STATE_DISABLED)){
+            if(usable)lv_obj_remove_state(fan_buttons[i],LV_STATE_DISABLED);
+            else lv_obj_add_state(fan_buttons[i],LV_STATE_DISABLED);
+        }
     }
-    if(s->online==lv_obj_has_state(boost_field,LV_STATE_DISABLED)){
-        if(s->online)lv_obj_remove_state(boost_field,LV_STATE_DISABLED);
-        else lv_obj_add_state(boost_field,LV_STATE_DISABLED);
+    int lit=0;
+    if(s->online)lit=(1<<fan_running(s))|((s->zero_rpm_here&&s->zero_rpm_on)<<FAN_ZERO_RPM);
+    if(lit==fan_lit)return;
+    fan_lit=lit;
+    for(int i=0;i<FAN_BUTTONS;i++){
+        bool on=lit>>i&1;
+        lv_color_t face=lv_color_hex(on?ACCENT_TEXT:MUTED);
+        if(lv_obj_check_type(fan_faces[i],&lv_image_class))lv_obj_set_style_image_recolor(fan_faces[i],face,0);
+        else lv_obj_set_style_text_color(fan_faces[i],face,0);
+        lv_obj_set_style_border_color(fan_buttons[i],lv_color_hex(on?ACCENT_TEXT:EDGE),0);
     }
-    int on=s->online&&s->boost_on;
-    if(on==boost_shown)return;
-    boost_shown=on;
-    lv_obj_set_style_bg_color(boost_track,lv_color_hex(on?ACCENT:EDGE),0);
-    lv_obj_set_x(boost_knob,on?BOOST_KNOB_ON:BOOST_KNOB_OFF);
 }
-/* A tap asks for the other state than the one the switch shows. The switch
- * moves when the next status says so, which comes at once after the press:
- * a switch that moved before the PC took it would show a fan that is not.
+/* A tap on Auto or on Cooling Boost asks for the profile of its button.
+ * Auto asks for the end of the boost, which gives the fan back to the
+ * settings that it had before. A tap on the profile that runs asks for
+ * nothing, as on the page of the CPU. A tap on zero RPM asks for the other
+ * state than the one it shows. A button changes when the next status says
+ * so, which comes at once after the press: a button that changed before
+ * the PC took it would show a fan that is not.
  *
- * Not through clicked, whose range asks first and holds these two: a fan at
- * full speed interrupts nothing. */
-static void boost_clicked(lv_event_t *e)
+ * Not through clicked, whose range asks first and holds these: a fan at
+ * full speed interrupts nothing, and nor does a fan that stops. */
+static void fan_clicked(lv_event_t *e)
 {
-    (void)e;
+    int button=(int)(intptr_t)lv_event_get_user_data(e);
     if(!last_state_valid||!last_state.online||!last_state.boost_here)return;
+    if(button==FAN_ZERO_RPM){
+        if(!last_state.zero_rpm_here)return;
+        feedback();
+        if(send_action)send_action(last_state.zero_rpm_on?PANEL_GPU_ZERO_RPM_OFF:PANEL_GPU_ZERO_RPM_ON);
+        return;
+    }
     feedback();
-    if(send_action)send_action(last_state.boost_on?PANEL_GPU_BOOST_OFF:PANEL_GPU_BOOST_ON);
+    if(button==fan_running(&last_state))return;
+    if(send_action)send_action(button==FAN_BOOST?PANEL_GPU_BOOST_ON:PANEL_GPU_BOOST_OFF);
 }
+/* The load, the memory and the clock of the card. "--" where the service
+ * sent nothing, as on the page of the PC, and for all of them while the
+ * PC is gone: the last reading would read as current.
+ * The bar of the clock is its share of the highest level of the clock. */
 static void card_show(const panel_state_t *s)
 {
     if(!gpu_load_value)return;
     if(s->online&&s->gpu_load>=0){
-        lv_label_set_text_fmt(gpu_load_value,"%d %%",s->gpu_load);
-        lv_obj_remove_flag(gpu_load_track,LV_OBJ_FLAG_HIDDEN);
+        set_textf(gpu_load_value,"%d %%",s->gpu_load);
+        set_shown(gpu_load_track,true);
         lv_obj_set_width(gpu_load_bar,GPU_BAR_WIDTH*(s->gpu_load>100?100:s->gpu_load)/100);
     }else{
-        lv_label_set_text(gpu_load_value,"--");
-        lv_obj_add_flag(gpu_load_track,LV_OBJ_FLAG_HIDDEN);
+        set_text(gpu_load_value,"--");
+        set_shown(gpu_load_track,false);
     }
     if(s->online&&s->vram_total>0&&s->vram_used<=s->vram_total){
         char used[16],total[16],said[40];
@@ -1246,16 +1437,23 @@ static void card_show(const panel_state_t *s)
         char *unit=strstr(used," GB");
         if(unit)*unit=0;
         snprintf(said,sizeof said,"%s / %s",used,total);
-        lv_label_set_text(vram_value,said);
-        lv_obj_remove_flag(vram_track,LV_OBJ_FLAG_HIDDEN);
+        set_text(vram_value,said);
+        set_shown(vram_track,true);
         lv_obj_set_width(vram_bar,(int32_t)(GPU_BAR_WIDTH*s->vram_used/s->vram_total));
     }else{
-        lv_label_set_text(vram_value,"--");
-        lv_obj_add_flag(vram_track,LV_OBJ_FLAG_HIDDEN);
+        set_text(vram_value,"--");
+        set_shown(vram_track,false);
     }
-    if(s->online&&s->gpu_mhz>=0)lv_label_set_text_fmt(gpu_clock_value,"%d MHz",s->gpu_mhz);
-    else lv_label_set_text(gpu_clock_value,"--");
-    boost_show(s);
+    if(s->online&&s->gpu_mhz>=0)set_textf(gpu_clock_value,"%d MHz",s->gpu_mhz);
+    else set_text(gpu_clock_value,"--");
+    if(s->online&&s->gpu_mhz>=0&&s->gpu_mhz_max>0){
+        int mhz=s->gpu_mhz>s->gpu_mhz_max?s->gpu_mhz_max:s->gpu_mhz;
+        set_shown(gpu_clock_track,true);
+        lv_obj_set_width(gpu_clock_bar,GPU_BAR_WIDTH*mhz/s->gpu_mhz_max);
+    }else{
+        set_shown(gpu_clock_track,false);
+    }
+    fan_show(s);
 }
 static void sensor_close(void){if(sensor_layer){lv_obj_delete(sensor_layer);sensor_layer=NULL;}}
 static void sensor_outside(lv_event_t *e){(void)e;sensor_close();}
@@ -1289,8 +1487,8 @@ static void sensor_row(lv_obj_t *box,int row,int y,const char *name,int celsius,
  * screen, as a question is. */
 static void sensor_menu(bool gpu)
 {
-    if(sensor_layer||look_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen||update_layer
-       ||setup_screen)return;
+    if(sensor_layer||look_layer||profile_layer||alarm_clock_layer||overlay||settings_screen||pads_screen||pc_screen
+       ||self_screen||update_layer||setup_screen)return;
     const panel_state_t *s=&last_state;
     int count=!last_state_valid?0:gpu?s->gpu_sensor_count:s->cpu_sensor_count;
     if(count<0)count=0;
@@ -1359,6 +1557,9 @@ static lv_obj_t *sensor_field(lv_obj_t *card,int x,int w,lv_event_cb_t cb)
     lv_obj_t *f=lv_obj_create(card);lv_obj_remove_style_all(f);
     lv_obj_set_pos(f,x,0);lv_obj_set_size(f,w,46);
     lv_obj_remove_flag(f,LV_OBJ_FLAG_SCROLLABLE);
+    /* 46 inside the border of its card, and the border takes the press
+     * too: 48. */
+    lv_obj_set_ext_click_area(f,1);
     lv_obj_set_style_radius(f,5,0);
     lv_obj_set_style_bg_color(f,lv_color_hex(BUTTON),LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(f,LV_OPA_COVER,LV_STATE_PRESSED);
@@ -1387,7 +1588,7 @@ static void self_drop(void)
 }
 static void self_forget(void)
 {
-    if(self_screen)lv_obj_delete(self_screen);
+    slide_out(self_screen);
     self_drop();
 }
 static void self_say(int row,const char *text)
@@ -1477,10 +1678,10 @@ static void self_show(const panel_state_t *s)
      * failed, and nowhere else. */
     const panel_update_t *update=&s->update;
     bool failed=update->phase==PANEL_UPDATE_FAILED;
-    if(!update->offered[0]&&!failed){lv_obj_add_flag(update_card,LV_OBJ_FLAG_HIDDEN);return;}
-    lv_obj_remove_flag(update_card,LV_OBJ_FLAG_HIDDEN);
+    if(!update->offered[0]&&!failed){set_shown(update_card,false);return;}
+    set_shown(update_card,true);
     say_version(said,sizeof said,update->offered);
-    lv_label_set_text(update_offered,update->offered[0]?said:"--");
+    set_text(update_offered,update->offered[0]?said:"--");
     /* What stands in the way, or what went wrong the last time. The
      * battery first: it is the one somebody can change now. */
     bool power=update_power_ok(s);
@@ -1491,8 +1692,8 @@ static void self_show(const panel_state_t *s)
         snprintf(note,sizeof note,panel_text(TXT_UPDATE_FAILED),panel_text(update->failure));
         color=RED;
     }
-    lv_label_set_text(update_note,note);
-    lv_obj_set_style_text_color(update_note,lv_color_hex(color),0);
+    set_text(update_note,note);
+    set_text_colour(update_note,color);
     bool can=s->online&&update->offered[0]&&power;
     if(can)lv_obj_remove_state(update_button,LV_STATE_DISABLED);
     else lv_obj_add_state(update_button,LV_STATE_DISABLED);
@@ -1571,8 +1772,10 @@ static lv_obj_t *self_card(lv_obj_t *column,panel_text_id_t title,const int *row
 }
 void panel_ui_self_open(void)
 {
-    if(self_screen||pc_screen||pads_screen||settings_screen||setup_screen||sensor_layer||look_layer)return;
+    if(self_screen||pc_screen||pads_screen||settings_screen||setup_screen||sensor_layer||look_layer
+       ||profile_layer||alarm_clock_layer)return;
     self_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+    slide_ready(self_screen);
     button(self_screen,panel_text(TXT_BACK),12,8,112,44,self_close,0);
     text_at(self_screen,panel_text(TXT_SELF_TITLE),136,20,320,&panel_font_20,TEXT);
     line(self_screen,0,62,480,1);
@@ -1645,6 +1848,7 @@ void panel_ui_self_open(void)
     panel_taps_hold(&panel_taps,true);
     self_taps_show();
     if(last_state_valid)self_show(&last_state);
+    slide_in(self_screen);
 }
 static void self_clicked(lv_event_t *e){(void)e;feedback();panel_ui_self_open();}
 /* The screen of an update that writes, over everything, with its share
@@ -1673,10 +1877,10 @@ static void update_layer_show(const panel_state_t *s)
     }
     bool restarting=s->update.phase==PANEL_UPDATE_RESTARTING;
     int percent=s->update.percent<0?0:s->update.percent>100?100:s->update.percent;
-    lv_label_set_text(update_title,panel_text(TXT_UPDATE_RUNNING));
+    set_text(update_title,panel_text(TXT_UPDATE_RUNNING));
     lv_obj_set_width(update_bar,400*percent/100);
-    lv_label_set_text_fmt(update_percent,"%d %%",percent);
-    lv_label_set_text(update_hint,panel_text(restarting?TXT_UPDATE_RESTART:TXT_UPDATE_KEEP_ON));
+    set_textf(update_percent,"%d %%",percent);
+    set_text(update_hint,panel_text(restarting?TXT_UPDATE_RESTART:TXT_UPDATE_KEEP_ON));
 }
 static void gpu_tile_clicked(lv_event_t *e){(void)e;feedback();sensor_menu(true);}
 const char *panel_ui_where(void)
@@ -1684,7 +1888,9 @@ const char *panel_ui_where(void)
     if(setup_screen)return "the setup";
     if(overlay)return "a question";
     if(sensor_layer)return "a choice of sensor";
+    if(profile_layer)return "the profile of the mirror";
     if(look_layer)return "the colour of the LED bar";
+    if(alarm_clock_layer)return "the alarm clock";
     if(arrange_screen)return "the order of the pages";
     if(settings_screen)return "the settings";
     if(pads_screen)return "the controllers";
@@ -1700,12 +1906,6 @@ const char *panel_ui_where(void)
     return pages[band_page()];
 }
 
-/* A label set only when its text is new. LVGL draws a label again at each
- * set, and the timer and the clock are asked five times a second. */
-static void set_text(lv_obj_t *label,const char *text)
-{
-    if(label&&strcmp(lv_label_get_text(label),text)!=0)lv_label_set_text(label,text);
-}
 static void enable(lv_obj_t *o,bool on)
 {
     if(!o)return;
@@ -1769,6 +1969,24 @@ static int32_t look_dot_rgb=-1;
 static lv_obj_t *look_slider,*look_value,*look_swatches[PANEL_LED_COLOURS];
 static int8_t look_lit[PANEL_LED_COLOURS];
 static bool look_with_colours;
+/* The button of the profile of the mirror on each card, with its words.
+ * It stands beside the name of the effect while that effect is the mirror,
+ * and the name then makes room for it. A tap opens the menu of the
+ * profiles, and the profile goes to the PC as a colour does. Each mode has
+ * its own profile, and its own choice of it. */
+static lv_obj_t *profile_buttons[PANEL_LED_MODES],*profile_words[PANEL_LED_MODES];
+static led_pick_t profile_picks[PANEL_LED_MODES]={{.wanted=-1},{.wanted=-1}};
+static bool profile_beside[PANEL_LED_MODES];
+/* The card of the button that opened the menu: the menu sets the profile
+ * of that mode. */
+static panel_led_mode_t profile_card=PANEL_LED_GAME;
+/* The name on each row of the menu, and what the row shows: -1 for
+ * nothing yet, 0 dark, 1 lit. */
+static lv_obj_t *profile_names[PANEL_LED_PROFILES];
+static int8_t profile_lit[PANEL_LED_PROFILES];
+#define PROFILE_X 224
+#define PROFILE_WIDE 140
+#define PROFILE_NAME_WIDE 120
 /* The count of the answers to changes that the page has seen. */
 static uint32_t led_replies_seen;
 void panel_ui_led_use(panel_led_cb_t callback){led_send=callback;}
@@ -1785,6 +2003,9 @@ static panel_text_id_t change_refusal(int code,panel_text_id_t no_module)
 }
 static void look_button_show(const panel_state_t *s,int index,bool show);
 static void look_show(const panel_state_t *s);
+static void profile_show(const panel_state_t *s,panel_led_mode_t m,bool show);
+/* The line of the mirror on its card. */
+static char mirror_note[96];
 static void led_show(const panel_state_t *s)
 {
     if(!led_cards[PANEL_LED_DESKTOP].name)return;
@@ -1798,11 +2019,16 @@ static void led_show(const panel_state_t *s)
             c->wanted=-1;c->sent=false;
             c->refused=true;c->refusal=change_refusal(s->led_code,TXT_LED_NO_MODULE);c->refused_at=lv_tick_get();
         }
-        for(int i=0;i<2&&s->led_code!=200;i++){
-            led_pick_t *pick=i?&look_level:&look_colour;
+        /* Each choice that is no effect, and the card that says so. */
+        struct { led_pick_t *pick; panel_led_mode_t card; } picks[]={
+            {&look_colour,PANEL_LED_DESKTOP},{&look_level,PANEL_LED_DESKTOP},
+            {&profile_picks[PANEL_LED_DESKTOP],PANEL_LED_DESKTOP},
+            {&profile_picks[PANEL_LED_GAME],PANEL_LED_GAME}};
+        for(size_t i=0;i<sizeof picks/sizeof picks[0]&&s->led_code!=200;i++){
+            led_pick_t *pick=picks[i].pick;
             if(pick->wanted<0||!pick->sent)continue;
             pick->wanted=-1;pick->sent=false;
-            led_card_t *c=&led_cards[PANEL_LED_DESKTOP];
+            led_card_t *c=&led_cards[picks[i].card];
             c->refused=true;c->refusal=change_refusal(s->led_code,TXT_LED_NO_MODULE);c->refused_at=lv_tick_get();
         }
     }
@@ -1812,6 +2038,12 @@ static void led_show(const panel_state_t *s)
                           ||lv_tick_elaps(look_colour.sent_at)>LED_SHOWN_MS)){look_colour.wanted=-1;look_colour.sent=false;}
     if(look_level.sent&&(s->led_brightness==look_level.wanted
                          ||lv_tick_elaps(look_level.sent_at)>LED_SHOWN_MS)){look_level.wanted=-1;look_level.sent=false;}
+    for(int m=0;m<PANEL_LED_MODES;m++){
+        led_pick_t *pick=&profile_picks[m];
+        const char *profile=panel_led_profile(pick->wanted);
+        if(pick->sent&&(!profile||strcmp(s->led_profile[m],profile)==0
+                        ||lv_tick_elaps(pick->sent_at)>LED_SHOWN_MS)){pick->wanted=-1;pick->sent=false;}
+    }
     bool usable=s->online&&s->led_here;
     for(int m=0;m<PANEL_LED_MODES;m++){
         led_card_t *c=&led_cards[m];
@@ -1835,7 +2067,13 @@ static void led_show(const panel_state_t *s)
         }
         const char *note="";
         bool look=false;
-        if(c->wanted>=0||(m==PANEL_LED_DESKTOP&&(look_colour.wanted>=0||look_level.wanted>=0)))
+        const char *key=panel_led_key((panel_led_mode_t)m,index);
+        bool mirror=usable&&key&&strcmp(key,"mirror")==0;
+        /* The capture serves the mode that the PC is in, so its line is on
+         * that card alone. */
+        bool here=(m==PANEL_LED_GAME)==s->game_mode;
+        if(c->wanted>=0||(m==PANEL_LED_DESKTOP&&(look_colour.wanted>=0||look_level.wanted>=0))
+           ||profile_picks[m].wanted>=0)
             note=panel_text(TXT_CHANGE_APPLYING);
         else if(c->refused)note=panel_text(c->refusal);
         else if(s->online&&!s->led_here){
@@ -1845,7 +2083,21 @@ static void led_show(const panel_state_t *s)
              * the usual way to get the second. */
             if(m==PANEL_LED_DESKTOP)note=panel_text(s->led_known?TXT_LED_NONE:TXT_PC_TOO_OLD);
         }
-        else if(m==PANEL_LED_GAME)note=panel_text(TXT_LED_GAME_WHAT);
+        else if(m==PANEL_LED_GAME){
+            /* The mirror says what it does on the PC, so a person sees why
+             * the bar does not follow the screen. */
+            if(mirror&&here){
+                panel_led_mirror_line(mirror_note,sizeof mirror_note,&s->led_mirror);
+                note=mirror_note;
+            }else note=panel_text(TXT_LED_GAME_WHAT);
+        }
+        /* On the desktop the line of the mirror stays until the mirror
+         * runs, because a person has to allow the share of the screen
+         * there. The button of the brightness then takes its place. */
+        else if(mirror&&here&&s->led_mirror.state[0]&&strcmp(s->led_mirror.state,"running")!=0){
+            panel_led_mirror_line(mirror_note,sizeof mirror_note,&s->led_mirror);
+            note=mirror_note;
+        }
         /* The button of the colour and the brightness takes the place of
          * the line, for a scene that uses them. A service that sends
          * neither keeps the line that says where the colour comes from. */
@@ -1853,6 +2105,8 @@ static void led_show(const panel_state_t *s)
         else if(usable&&panel_led_coloured((panel_led_mode_t)m,index))note=panel_text(TXT_LED_COLOUR_WHAT);
         set_text(c->note,note);
         if(m==PANEL_LED_DESKTOP)look_button_show(s,index,look);
+        /* The profile, for the mirror and from a service that has them. */
+        profile_show(s,(panel_led_mode_t)m,mirror&&s->led_profile[m][0]);
     }
     look_show(s);
 }
@@ -1884,6 +2138,16 @@ static void led_due(lv_timer_t *timer)
         if(last_state_valid&&last_state.led_brightness==look_level.wanted)look_level.wanted=-1;
         else{change.brightness=look_level.wanted;look_level.sent=true;look_level.sent_at=lv_tick_get();any=true;}
     }
+    for(int m=0;m<PANEL_LED_MODES;m++){
+        led_pick_t *pick=&profile_picks[m];
+        if(pick->wanted<0||pick->sent)continue;
+        const char *chosen=panel_led_profile(pick->wanted);
+        if(!chosen||(last_state_valid&&strcmp(last_state.led_profile[m],chosen)==0))pick->wanted=-1;
+        else{
+            snprintf(change.profile[m],sizeof change.profile[m],"%s",chosen);
+            pick->sent=true;pick->sent_at=lv_tick_get();any=true;
+        }
+    }
     if(any&&led_send)led_send(&change);
     if(last_state_valid)led_show(&last_state);
 }
@@ -1905,6 +2169,98 @@ static void led_step(lv_event_t *e)
     c->sent=false;c->refused=false;
     led_later();
     led_show(&last_state);
+}
+static void profile_close(void)
+{
+    if(!profile_layer)return;
+    lv_obj_delete(profile_layer);profile_layer=NULL;
+    for(int i=0;i<PANEL_LED_PROFILES;i++)profile_names[i]=NULL;
+}
+static void profile_outside(lv_event_t *e){(void)e;profile_close();}
+/* The mark and the accent on the row of the profile at "index": the
+ * choice, or the profile of the PC. */
+static void profile_mark(int index)
+{
+    for(int i=0;profile_layer&&i<PANEL_LED_PROFILES;i++){
+        int8_t lit=i==index;
+        if(lit==profile_lit[i])continue;
+        profile_lit[i]=lit;
+        char said[48];
+        snprintf(said,sizeof said,"%s%s",lit?LV_SYMBOL_OK "  ":"",panel_text(panel_led_profile_name(i)));
+        set_text(profile_names[i],said);
+        set_text_colour(profile_names[i],lit?ACCENT_TEXT:TEXT);
+    }
+}
+/* A tap on a row chooses and closes the menu, and the choice goes after
+ * LED_WAIT_MS with whatever else the page chose. The profile of the PC,
+ * with no other on its way to it, is no change. Each status that shows a
+ * PC that cannot take a profile closes the menu, so the menu that takes a
+ * tap belongs to a PC that can. */
+static void profile_chosen(lv_event_t *e)
+{
+    int row=(int)(intptr_t)lv_event_get_user_data(e);
+    feedback();
+    profile_close();
+    led_pick_t *pick=&profile_picks[profile_card];
+    if(!pick->sent&&row==panel_led_profile_find(last_state.led_profile[profile_card]))pick->wanted=-1;
+    else{pick->wanted=row;pick->sent=false;led_later();}
+    led_cards[profile_card].refused=false;
+    led_show(&last_state);
+}
+/* The profiles from the top, each with what it does, and a mark on the
+ * one that the button shows. A tap beside the rows closes the menu, as on
+ * the menu of a sensor. */
+static void profile_open(void)
+{
+    if(profile_layer||sensor_layer||look_layer||alarm_clock_layer||overlay||settings_screen||pads_screen||pc_screen
+       ||self_screen||update_layer||setup_screen)return;
+    int high=SENSOR_TITLE_ROOM+PANEL_LED_PROFILES*SENSOR_ROW_STEP+SENSOR_BOX_END;
+    profile_layer=panel(lv_screen_active(),0,0,480,480,BG,false);
+    lv_obj_set_style_bg_opa(profile_layer,LV_OPA_90,0);
+    lv_obj_add_event_cb(profile_layer,profile_outside,LV_EVENT_CLICKED,NULL);
+    lv_obj_t *box=panel(profile_layer,20,(480-high)/2,440,high,CARD,true);
+    lv_obj_remove_flag(box,LV_OBJ_FLAG_CLICKABLE);
+    text_at(box,panel_text(TXT_PROFILE_TITLE),20,18,400,&panel_font_20,TEXT);
+    for(int i=0;i<PANEL_LED_PROFILES;i++){
+        lv_obj_t *b=button(box,"",20,SENSOR_TITLE_ROOM+i*SENSOR_ROW_STEP,400,44,profile_chosen,i);
+        profile_names[i]=text_at(b,"",14,12,150,&panel_font_16,TEXT);
+        lv_obj_set_height(profile_names[i],lv_font_get_line_height(&panel_font_16));
+        lv_obj_t *what=text_at(b,panel_text(panel_led_profile_what(i)),164,14,222,&panel_font_14,MUTED);
+        lv_obj_set_height(what,lv_font_get_line_height(&panel_font_14));
+        lv_obj_set_style_text_align(what,LV_TEXT_ALIGN_RIGHT,0);
+        profile_lit[i]=-1;
+    }
+    const led_pick_t *pick=&profile_picks[profile_card];
+    profile_mark(pick->wanted>=0?pick->wanted:panel_led_profile_find(last_state.led_profile[profile_card]));
+}
+/* The button shows only for a PC that can take a profile. */
+static void profile_clicked(lv_event_t *e)
+{
+    profile_card=(panel_led_mode_t)(intptr_t)lv_event_get_user_data(e);
+    feedback();
+    profile_open();
+}
+static void profile_show(const panel_state_t *s,panel_led_mode_t m,bool show)
+{
+    if(!profile_buttons[m])return;
+    if(show!=profile_beside[m]){
+        profile_beside[m]=show;
+        if(show)lv_obj_remove_flag(profile_buttons[m],LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(profile_buttons[m],LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_width(led_cards[m].name,show?PROFILE_NAME_WIDE:270);
+    }
+    /* A PC that goes, or an effect that is no mirror: the menu of this
+     * card has nothing left to set. */
+    if(!show){
+        if(m==profile_card)profile_close();
+        return;
+    }
+    /* A profile of a later service has no name here, and shows as it is. */
+    int wanted=profile_picks[m].wanted;
+    int index=wanted>=0?wanted:panel_led_profile_find(s->led_profile[m]);
+    set_text(profile_words[m],index>=0?panel_text(panel_led_profile_name(index)):s->led_profile[m]);
+    /* The open menu marks the profile of the card that opened it. */
+    if(m==profile_card)profile_mark(index);
 }
 /* The effect that the card of the desktop shows: the choice, or the PC's. */
 static int look_scene(const panel_state_t *s)
@@ -2018,8 +2374,8 @@ static void look_slid(lv_event_t *e)
  * beside the box, closes it. */
 static void look_open(void)
 {
-    if(look_layer||sensor_layer||overlay||settings_screen||pads_screen||pc_screen||self_screen
-       ||update_layer||setup_screen)return;
+    if(look_layer||sensor_layer||profile_layer||alarm_clock_layer||overlay||settings_screen||pads_screen||pc_screen
+       ||self_screen||update_layer||setup_screen)return;
     int index=look_scene(&last_state);
     look_with_colours=panel_led_coloured(PANEL_LED_DESKTOP,index);
     int colours=look_with_colours?LOOK_COLOURS_ROOM:0;
@@ -2104,8 +2460,8 @@ static void cpu_show(const panel_state_t *s)
         int8_t lit=p==selected;
         if(lit==cpu_lit[p])continue;
         cpu_lit[p]=lit;
-        lv_obj_set_style_bg_color(cpu_buttons[p],lv_color_hex(lit?ACCENT:BUTTON),0);
-        lv_obj_set_style_text_color(cpu_buttons[p],lv_color_hex(lit?ON_ACCENT:TEXT),0);
+        set_bg(cpu_buttons[p],lit?ACCENT:BUTTON);
+        set_text_colour(cpu_buttons[p],lit?ON_ACCENT:TEXT);
     }
     char running[56];
     if(usable&&s->cpu_governor[0])
@@ -2148,6 +2504,7 @@ static void cpu_page(lv_obj_t *page)
     cpu_buttons[PANEL_CPU_STEAMOS]=button(card,panel_text(TXT_CPU_STEAMOS),14,120,430,40,
                                           cpu_clicked,PANEL_CPU_STEAMOS);
     lv_obj_set_style_text_font(cpu_buttons[PANEL_CPU_STEAMOS],&panel_font_14,0);
+    lv_obj_set_ext_click_area(cpu_buttons[PANEL_CPU_STEAMOS],4);
     for(int p=0;p<PANEL_CPU_PROFILES;p++){cpu_lit[p]=-1;enable(cpu_buttons[p],false);}
     lv_obj_t *now=panel(page,10,180,460,120,CARD,true);
     text_at(now,panel_text(TXT_CPU_RUNNING),16,12,300,&panel_font_14,MUTED);
@@ -2176,10 +2533,18 @@ static void led_card(lv_obj_t *page,panel_led_mode_t m,int y)
     center_text(c->name);
     c->note=text_at(card,"",14,m==PANEL_LED_DESKTOP?118:108,430,&panel_font_12,MUTED);
     center_text(c->note);
-    if(m!=PANEL_LED_DESKTOP)return;
+    /* Hidden until the mirror. profile_show sets what it holds. */
+    profile_buttons[m]=button(card,"",PROFILE_X,48,PROFILE_WIDE,52,profile_clicked,m);
+    lv_obj_add_flag(profile_buttons[m],LV_OBJ_FLAG_HIDDEN);
+    profile_words[m]=text_at(profile_buttons[m],"",0,(52-2-lv_font_get_line_height(&panel_font_16))/2,
+                             PROFILE_WIDE-2,&panel_font_16,TEXT);
+    center_text(profile_words[m]);
+    profile_beside[m]=false;
+    if(m==PANEL_LED_GAME)return;
     /* Hidden until a scene that uses it. look_button_show sets what it holds,
      * and where. */
     look_button=button(card,"",14,108,430,36,look_clicked,0);
+    lv_obj_set_ext_click_area(look_button,6);
     lv_obj_add_flag(look_button,LV_OBJ_FLAG_HIDDEN);
     look_dot=panel(look_button,0,(36-2-LOOK_DOT)/2,LOOK_DOT,LOOK_DOT,TEXT,false);
     lv_obj_set_style_radius(look_dot,LV_RADIUS_CIRCLE,0);
@@ -2277,6 +2642,284 @@ int panel_ui_alarm_volume(void)
 {
     return local.sound_volume>ALARM_LEAST_VOLUME?local.sound_volume:ALARM_LEAST_VOLUME;
 }
+/* The alarm clock of the fourth page. See panel_alarm.h.
+ *
+ * The alarm and its state outlive a new screen, as the timer does: a new
+ * language rings on. The button on the clock card opens the layer that
+ * sets it, and the button is in the accent colour while an alarm is set. */
+static panel_alarm_t alarm_clock;
+static bool alarm_clock_ready;
+/* The local time of the last tick, from main.c. */
+static panel_alarm_clock_t alarm_clock_now;
+/* The setting as NVS holds it, so that only a change goes there. */
+static uint32_t alarm_clock_stored;
+/* A snooze by a touch that main.c did not take yet. */
+static bool alarm_clock_snoozed;
+/* What the layer shows, until it closes. */
+static panel_alarm_set_t alarm_clock_draft;
+/* The layer: the box, the two wheels of the time and the colon between
+ * them, a button for each day, a line that says when it rings, and Done. */
+#define ALARM_BOX_HIGH 384
+#define ALARM_ROLLER_TOP 68
+#define ALARM_ROLLER_WIDTH 120
+#define ALARM_ROLLER_SPACE 10
+#define ALARM_COLON_WIDTH 40
+#define ALARM_ROLLER_X ((440-2*ALARM_ROLLER_WIDTH-ALARM_COLON_WIDTH)/2)
+#define ALARM_DAYS_TOP 220
+#define ALARM_DAY_WIDTH 56
+#define ALARM_DAY_GAP 4
+#define ALARM_DAY_X ((440-PANEL_ALARM_DAYS*ALARM_DAY_WIDTH-(PANEL_ALARM_DAYS-1)*ALARM_DAY_GAP)/2)
+#define ALARM_STATUS_TOP 276
+#define ALARM_BUTTONS_TOP 312
+/* The button on the clock card, in its top right corner. */
+#define ALARM_BUTTON_SIZE 52
+static void alarm_clock_store(void)
+{
+    uint32_t packed=panel_alarm_pack(alarm_clock.set);
+    if(packed==alarm_clock_stored)return;
+    alarm_clock_stored=packed;local.alarm=packed;
+    if(save_setting)save_setting(PANEL_ALARM,(int)packed,true);
+}
+static void alarm_clock_mark(void)
+{
+    if(!alarm_clock_icon)return;
+    bool set=alarm_clock.set.on||alarm_clock.phase!=PANEL_ALARM_WAITING;
+    lv_obj_set_style_image_recolor(alarm_clock_icon,lv_color_hex(set?ACCENT_TEXT:MUTED),0);
+}
+/* "Mo 07:00": the short name of the day, and the time. */
+static void alarm_clock_when(char *out,size_t room,panel_alarm_next_t next)
+{
+    if(!room)return;
+    out[0]=0;
+    if(!next.due)return;
+    snprintf(out,room,"%s %02d:%02d",
+             panel_text((panel_text_id_t)(TXT_SUNDAY_SHORT+next.weekday%7)),next.hour,next.minute);
+}
+void panel_ui_alarm_clock_next(char *out,size_t room)
+{
+    alarm_clock_when(out,room,panel_alarm_next(&alarm_clock,&alarm_clock_now,lv_tick_get()));
+}
+static void alarm_clock_ring_hide(void)
+{
+    if(!alarm_clock_ring_layer)return;
+    lv_obj_delete(alarm_clock_ring_layer);alarm_clock_ring_layer=NULL;
+}
+bool panel_ui_alarm_clock_snooze(void)
+{
+    if(!panel_alarm_snooze(&alarm_clock,lv_tick_get()))return false;
+    alarm_clock_ring_hide();alarm_clock_mark();
+    return true;
+}
+static void alarm_clock_snooze_touched(lv_event_t *e){(void)e;if(panel_ui_alarm_clock_snooze())alarm_clock_snoozed=true;}
+static void alarm_clock_off_touched(lv_event_t *e)
+{
+    (void)e;
+    if(!panel_alarm_off(&alarm_clock))return;
+    alarm_clock_ring_hide();alarm_clock_store();alarm_clock_mark();
+}
+/* Over everything else on the screen, as the ring of the timer is. A tap
+ * anywhere on it is a snooze, and so is a key: see ui_tick in main.c. Off
+ * is the one button that ends it, so a hand that gropes for the panel in
+ * the dark does not switch the alarm off by chance. */
+static void alarm_clock_ring_show(void)
+{
+    if(alarm_clock_ring_layer)return;
+    alarm_clock_ring_layer=panel(lv_screen_active(),0,0,480,480,BG,false);
+    lv_obj_set_style_bg_opa(alarm_clock_ring_layer,LV_OPA_90,0);
+    lv_obj_add_event_cb(alarm_clock_ring_layer,alarm_clock_snooze_touched,LV_EVENT_CLICKED,NULL);
+    /* The card takes no press of its own, so a press on it reaches the
+     * layer under it. */
+    lv_obj_t *box=panel(alarm_clock_ring_layer,20,96,440,288,CARD,true);
+    lv_obj_remove_flag(box,LV_OBJ_FLAG_CLICKABLE);
+    center_text(text_at(box,panel_text(TXT_ALARM),20,22,400,&panel_font_20,MUTED));
+    char time[8];
+    snprintf(time,sizeof time,"%02d:%02d",alarm_clock.set.hour%24,alarm_clock.set.minute%60);
+    center_text(text_at(box,time,20,54,400,&panel_count_font,TEXT));
+    lv_obj_t *snooze=button(box,panel_text(TXT_SNOOZE),20,148,400,64,alarm_clock_snooze_touched,0);
+    lv_obj_set_style_bg_color(snooze,lv_color_hex(ACCENT),0);
+    lv_obj_set_style_text_color(snooze,lv_color_hex(ON_ACCENT),0);
+    lv_obj_set_style_text_font(snooze,&panel_font_24,0);
+    lv_obj_t *off=button(box,panel_text(TXT_ALARM_OFF),20,224,400,48,alarm_clock_off_touched,0);
+    lv_obj_set_style_text_font(off,&panel_font_20,0);
+}
+panel_alarm_news_t panel_ui_alarm_clock_tick(const panel_alarm_clock_t *now)
+{
+    alarm_clock_now=*now;
+    panel_alarm_news_t news=panel_alarm_tick(&alarm_clock,now,lv_tick_get());
+    if(news.went_off){alarm_clock_ring_show();alarm_clock_mark();}
+    if(news.gave_up){alarm_clock_ring_hide();alarm_clock_store();alarm_clock_mark();}
+    return news;
+}
+bool panel_ui_alarm_clock_ringing(void){return alarm_clock.phase==PANEL_ALARM_RINGING;}
+bool panel_ui_alarm_clock_take_snooze(void)
+{
+    bool snoozed=alarm_clock_snoozed;
+    alarm_clock_snoozed=false;
+    return snoozed;
+}
+/* The line under the days: when the alarm rings once the layer closes,
+ * with what the layer shows now. */
+static void alarm_clock_status_show(void)
+{
+    if(!alarm_clock_status)return;
+    char when[24],text[64]="";
+    if(!alarm_clock_now.known)snprintf(text,sizeof text,"%s",panel_text(TXT_CLOCK_UNSET));
+    else{
+        panel_alarm_t after=alarm_clock;
+        if(panel_alarm_pack(alarm_clock_draft)!=panel_alarm_pack(alarm_clock.set))
+            panel_alarm_change(&after,alarm_clock_draft,&alarm_clock_now);
+        panel_alarm_next_t next=panel_alarm_next(&after,&alarm_clock_now,lv_tick_get());
+        alarm_clock_when(when,sizeof when,next);
+        if(next.due)snprintf(text,sizeof text,
+                             panel_text(after.phase==PANEL_ALARM_SNOOZING?TXT_ALARM_SNOOZED:TXT_ALARM_RINGS),
+                             when);
+    }
+    set_text(alarm_clock_status,text);
+}
+static void alarm_clock_draft_show(void)
+{
+    if(alarm_clock_switch){
+        if(alarm_clock_draft.on)lv_obj_add_state(alarm_clock_switch,LV_STATE_CHECKED);
+        else lv_obj_remove_state(alarm_clock_switch,LV_STATE_CHECKED);
+    }
+    for(int i=0;i<PANEL_ALARM_DAYS;i++){
+        if(!alarm_clock_days[i])continue;
+        if(alarm_clock_draft.days>>i&1)lv_obj_add_state(alarm_clock_days[i],LV_STATE_CHECKED);
+        else lv_obj_remove_state(alarm_clock_days[i],LV_STATE_CHECKED);
+    }
+    alarm_clock_status_show();
+}
+static void alarm_clock_switched(lv_event_t *e)
+{
+    lv_obj_t *sw=lv_event_get_target(e);
+    alarm_clock_draft.on=lv_obj_has_state(sw,LV_STATE_CHECKED);
+    feedback();alarm_clock_status_show();
+}
+/* A new time or a new day switches the alarm on: that is what somebody
+ * who sets one wants. */
+static void alarm_clock_rolled(lv_event_t *e)
+{
+    lv_obj_t *roller=lv_event_get_target(e);
+    uint8_t value=(uint8_t)lv_roller_get_selected(roller);
+    if(roller==alarm_clock_hours)alarm_clock_draft.hour=value;
+    else alarm_clock_draft.minute=value;
+    alarm_clock_draft.on=true;
+    alarm_clock_draft_show();
+}
+static void alarm_clock_day_clicked(lv_event_t *e)
+{
+    int day=(int)(intptr_t)lv_event_get_user_data(e);
+    alarm_clock_draft.days^=(uint8_t)(1u<<day);
+    alarm_clock_draft.on=true;
+    feedback();alarm_clock_draft_show();
+}
+static void alarm_clock_forget(void)
+{
+    alarm_clock_layer=NULL;alarm_clock_switch=NULL;alarm_clock_hours=NULL;
+    alarm_clock_minutes=NULL;alarm_clock_status=NULL;
+    for(int i=0;i<PANEL_ALARM_DAYS;i++)alarm_clock_days[i]=NULL;
+}
+/* Done, a tap beside the box and the home key all close the layer, and
+ * each sets what it shows. A layer that changed nothing leaves a snooze
+ * that runs alone. */
+static void alarm_clock_close(void)
+{
+    if(!alarm_clock_layer)return;
+    if(panel_alarm_pack(alarm_clock_draft)!=panel_alarm_pack(alarm_clock.set)){
+        panel_alarm_change(&alarm_clock,alarm_clock_draft,&alarm_clock_now);
+        alarm_clock_store();alarm_clock_mark();
+    }
+    lv_obj_delete(alarm_clock_layer);alarm_clock_forget();
+}
+static void alarm_clock_outside(lv_event_t *e){(void)e;alarm_clock_close();}
+static void alarm_clock_done(lv_event_t *e){(void)e;feedback();alarm_clock_close();}
+static void alarm_clock_end_snooze(lv_event_t *e)
+{
+    (void)e;
+    feedback();
+    bool edited=panel_alarm_pack(alarm_clock_draft)!=panel_alarm_pack(alarm_clock.set);
+    if(panel_alarm_off(&alarm_clock)){alarm_clock_store();alarm_clock_mark();}
+    /* An alarm with no day switched itself off just now. A layer that
+     * changed nothing follows it, or the close switches it on again. */
+    if(!edited)alarm_clock_draft=alarm_clock.set;
+    alarm_clock_close();
+}
+/* A wheel of two digit numbers, from nought to count less one, that turns
+ * round from the last to the first. */
+static lv_obj_t *alarm_clock_roller(lv_obj_t *box,int x,int count,int selected)
+{
+    char options[60*3+1];
+    size_t at=0;
+    for(int i=0;i<count&&at<sizeof options;i++)
+        at+=(size_t)snprintf(options+at,sizeof options-at,i?"\n%02d":"%02d",i);
+    lv_obj_t *r=lv_roller_create(box);
+    lv_obj_set_style_text_font(r,&panel_font_32,0);
+    lv_obj_set_style_text_font(r,&panel_font_32,LV_PART_SELECTED);
+    lv_obj_set_style_text_line_space(r,ALARM_ROLLER_SPACE,0);
+    lv_obj_set_style_text_align(r,LV_TEXT_ALIGN_CENTER,0);
+    lv_obj_set_style_text_color(r,lv_color_hex(MUTED),0);
+    lv_obj_set_style_bg_color(r,lv_color_hex(BUTTON),0);
+    lv_obj_set_style_border_width(r,1,0);lv_obj_set_style_border_color(r,lv_color_hex(EDGE),0);
+    lv_obj_set_style_radius(r,6,0);
+    lv_obj_set_style_bg_color(r,lv_color_hex(ACCENT),LV_PART_SELECTED);
+    lv_obj_set_style_bg_opa(r,LV_OPA_COVER,LV_PART_SELECTED);
+    lv_obj_set_style_text_color(r,lv_color_hex(ON_ACCENT),LV_PART_SELECTED);
+    lv_roller_set_options(r,options,LV_ROLLER_MODE_INFINITE);
+    lv_roller_set_visible_row_count(r,3);
+    lv_obj_set_pos(r,x,ALARM_ROLLER_TOP);lv_obj_set_width(r,ALARM_ROLLER_WIDTH);
+    lv_roller_set_selected(r,(uint32_t)selected,LV_ANIM_OFF);
+    lv_obj_add_event_cb(r,alarm_clock_rolled,LV_EVENT_VALUE_CHANGED,NULL);
+    return r;
+}
+/* The layer that sets the alarm: on or off, the time on two wheels, and
+ * the days. No day is one ring, and the alarm then switches itself off.
+ * The line under the days says when it rings. Nothing is set until the
+ * layer closes. */
+static void alarm_clock_open(lv_event_t *e)
+{
+    (void)e;
+    if(alarm_clock_layer||alarm_clock_ring_layer||alarm_layer||look_layer||sensor_layer||profile_layer||overlay
+       ||settings_screen||pads_screen||pc_screen||self_screen||update_layer||setup_screen)return;
+    feedback();
+    alarm_clock_draft=alarm_clock.set;
+    alarm_clock_layer=panel(lv_screen_active(),0,0,480,480,BG,false);
+    lv_obj_set_style_bg_opa(alarm_clock_layer,LV_OPA_90,0);
+    lv_obj_add_event_cb(alarm_clock_layer,alarm_clock_outside,LV_EVENT_CLICKED,NULL);
+    /* The box takes a tap of its own, so a tap beside a wheel does not
+     * close the layer. */
+    lv_obj_t *box=panel(alarm_clock_layer,20,(480-ALARM_BOX_HIGH)/2,440,ALARM_BOX_HIGH,CARD,true);
+    text_at(box,panel_text(TXT_ALARM_TITLE),20,18,300,&panel_font_20,TEXT);
+    alarm_clock_switch=switch_at(box,362,14,alarm_clock_draft.on,alarm_clock_switched);
+    line(box,20,56,398,1);
+    alarm_clock_hours=alarm_clock_roller(box,ALARM_ROLLER_X,24,alarm_clock_draft.hour);
+    alarm_clock_minutes=alarm_clock_roller(box,ALARM_ROLLER_X+ALARM_ROLLER_WIDTH+ALARM_COLON_WIDTH,
+                                           60,alarm_clock_draft.minute);
+    lv_obj_update_layout(box);
+    int32_t middle=ALARM_ROLLER_TOP+lv_obj_get_height(alarm_clock_hours)/2;
+    center_text(text_at(box,":",ALARM_ROLLER_X+ALARM_ROLLER_WIDTH,
+                        middle-lv_font_get_line_height(&panel_font_32)/2,ALARM_COLON_WIDTH,
+                        &panel_font_32,TEXT));
+    /* Monday first, as a calendar of this country has it. */
+    static const panel_text_id_t names[PANEL_ALARM_DAYS]={TXT_MONDAY_SHORT,TXT_TUESDAY_SHORT,
+        TXT_WEDNESDAY_SHORT,TXT_THURSDAY_SHORT,TXT_FRIDAY_SHORT,TXT_SATURDAY_SHORT,TXT_SUNDAY_SHORT};
+    for(int i=0;i<PANEL_ALARM_DAYS;i++){
+        lv_obj_t *b=button(box,panel_text(names[i]),ALARM_DAY_X+i*(ALARM_DAY_WIDTH+ALARM_DAY_GAP),
+                           ALARM_DAYS_TOP,ALARM_DAY_WIDTH,44,alarm_clock_day_clicked,i);
+        lv_obj_set_style_bg_color(b,lv_color_hex(ACCENT),LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(b,lv_color_hex(ON_ACCENT),LV_STATE_CHECKED);
+        alarm_clock_days[i]=b;
+    }
+    alarm_clock_status=text_at(box,"",20,ALARM_STATUS_TOP,400,&panel_font_16,MUTED);
+    center_text(alarm_clock_status);
+    lv_obj_t *done;
+    if(alarm_clock.phase==PANEL_ALARM_SNOOZING){
+        button(box,panel_text(TXT_SNOOZE_END),20,ALARM_BUTTONS_TOP,196,52,alarm_clock_end_snooze,0);
+        done=button(box,panel_text(TXT_ALARM_DONE),224,ALARM_BUTTONS_TOP,196,52,alarm_clock_done,0);
+    }else done=button(box,panel_text(TXT_ALARM_DONE),20,ALARM_BUTTONS_TOP,400,52,alarm_clock_done,0);
+    lv_obj_set_style_bg_color(done,lv_color_hex(ACCENT),0);
+    lv_obj_set_style_text_color(done,lv_color_hex(ON_ACCENT),0);
+    alarm_clock_draft_show();
+}
 /* How a drive row sits in its card.
  *
  * The card is 460 across. The icon and the line above it stand 14 in from
@@ -2319,6 +2962,14 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
 {
     last_state_valid=false;
     send_action=callback;save_setting=setting_cb;play_sound=sound_cb;local=*settings;
+    /* The alarm clock from what NVS holds, one time only: a new screen
+     * keeps an alarm that rings or snoozes. */
+    if(!alarm_clock_ready){
+        panel_alarm_init(&alarm_clock,panel_alarm_unpack(local.alarm));
+        alarm_clock_stored=panel_alarm_pack(alarm_clock.set);
+        alarm_clock_ready=true;
+    }
+    local.alarm=alarm_clock_stored;
     panel_text_set(local.language);
     /* A theme or an accent outside the lists is the dark theme or blue, as
      * panel_palette draws it, and so the card of the appearance shows it. */
@@ -2329,9 +2980,11 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     // Everything on the screen goes, because this runs a second time when
     // the language changes. Without it the new words are drawn over the old
     // ones. The pointers below are the ones that outlive a clean.
-    lv_obj_clean(s);overlay=NULL;setup_screen=NULL;setup_text=NULL;sensor_layer=NULL;
+    lv_obj_clean(s);overlay=NULL;setup_screen=NULL;setup_text=NULL;sensor_layer=NULL;pair_screen=NULL;
     look_layer=NULL;look_slider=NULL;look_value=NULL;
     for(int i=0;i<PANEL_LED_COLOURS;i++)look_swatches[i]=NULL;
+    profile_layer=NULL;
+    for(int i=0;i<PANEL_LED_PROFILES;i++)profile_names[i]=NULL;
     /* The settings page is a child of this screen too, so the clean
      * above took it. Kept, its pointer is the reason that
      * panel_ui_settings_open returns at once and the page never opens
@@ -2351,19 +3004,24 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
      * that the old screen made goes with it. */
     for(int m=0;m<PANEL_LED_MODES;m++)led_cards[m]=(led_card_t){.wanted=-1};
     look_colour=look_level=(led_pick_t){.wanted=-1};
+    for(int m=0;m<PANEL_LED_MODES;m++)profile_picks[m]=(led_pick_t){.wanted=-1};
     look_button=NULL;look_dot=NULL;look_words=NULL;
+    for(int m=0;m<PANEL_LED_MODES;m++){profile_buttons[m]=NULL;profile_words[m]=NULL;profile_beside[m]=false;}
+    profile_card=PANEL_LED_GAME;
     if(led_timer)lv_timer_pause(led_timer);
     for(int p=0;p<PANEL_CPU_PROFILES;p++){cpu_buttons[p]=NULL;cpu_lit[p]=-1;}
     cpu_running=NULL;cpu_driver_line=NULL;cpu_note=NULL;cpu_wanted=-1;cpu_refused=false;
     playing_name=NULL;achievement_count=NULL;no_drives=NULL;esp_power=NULL;wifi_mark=NULL;
     clock_digits=NULL;clock_date=NULL;timer_value=NULL;timer_minus=NULL;timer_plus=NULL;
     timer_go=NULL;timer_go_label=NULL;timer_reset=NULL;alarm_layer=NULL;
+    alarm_clock_button=NULL;alarm_clock_icon=NULL;alarm_clock_ring_layer=NULL;alarm_clock_forget();
     gpu_load_value=NULL;gpu_load_track=NULL;gpu_load_bar=NULL;
-    vram_value=NULL;vram_track=NULL;vram_bar=NULL;gpu_clock_value=NULL;
-    boost_field=NULL;boost_track=NULL;boost_knob=NULL;boost_shown=-1;
-    history_chart=NULL;history_empty=NULL;history_ago=NULL;
+    vram_value=NULL;vram_track=NULL;vram_bar=NULL;
+    gpu_clock_value=NULL;gpu_clock_track=NULL;gpu_clock_bar=NULL;
+    for(int i=0;i<FAN_BUTTONS;i++){fan_buttons[i]=NULL;fan_faces[i]=NULL;}
+    fan_lit=-1;
+    history_chart=NULL;history_empty=NULL;
     for(int i=0;i<4;i++)history_axis[i]=NULL;
-    for(int i=0;i<HISTORY_WINDOWS;i++)history_buttons[i]=NULL;
     for(int i=0;i<PANEL_HISTORY_SERIES;i++)history_series[i]=NULL;
     for(int i=0;i<PANEL_DRIVES;i++){
         drive_rows[i]=NULL;drive_names[i]=NULL;
@@ -2537,6 +3195,13 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     center_text(clock_digits);
     clock_date=text_at(clock_card,panel_text(TXT_CLOCK_UNSET),20,96,420,&panel_font_18,MUTED);
     center_text(clock_date);
+    /* The alarm clock, in the top right corner of the card: right of the
+     * digits even at their widest. See alarm_clock_open. */
+    alarm_clock_button=button(clock_card,"",460-10-ALARM_BUTTON_SIZE,10,ALARM_BUTTON_SIZE,
+                              ALARM_BUTTON_SIZE,alarm_clock_open,0);
+    alarm_clock_icon=icon(alarm_clock_button,&icon_alarm_clock,(ALARM_BUTTON_SIZE-26)/2,
+                          (ALARM_BUTTON_SIZE-26)/2,MUTED);
+    alarm_clock_mark();
     lv_obj_t *timer_card=panel(page[3],10,146,460,154,CARD,true);
     timer_minus=button(timer_card,LV_SYMBOL_MINUS,14,14,84,72,timer_step,-1);
     timer_plus=button(timer_card,LV_SYMBOL_PLUS,362,14,84,72,timer_step,1);
@@ -2554,28 +3219,29 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     timer_go_label=lv_obj_get_child(timer_go,0);
     timer_reset=button(timer_card,panel_text(TXT_RESET),234,96,212,44,timer_reset_clicked,0);
     timer_show();
-    /* A new screen for a new language, while the timer rings. */
+    /* A new screen for a new language, while the timer or the alarm
+     * rings. */
     if(timer.phase==PANEL_TIMER_RINGING)alarm_show();
+    if(alarm_clock.phase==PANEL_ALARM_RINGING)alarm_clock_ring_show();
     /* The fifth page: the card, and the history under it.
      *
-     * Three columns over the card: its load and its memory, each with a
-     * bar, and its clock. Under them the history of the two temperatures
-     * and the power, with the degrees on the left and the watts on the
-     * right, and the choice of the window over it. */
+     * Three columns over the card: its load, its memory and its clock,
+     * each with a bar. Under them the history of the two temperatures and
+     * the power, with the degrees on the left and the watts on the right,
+     * and Cooling Boost and the fan of the card over it. */
     lv_obj_t *gpu_card=panel(page[4],10,0,460,96,CARD,true);
     const panel_text_id_t gpu_names[3]={TXT_GPU_LOAD,TXT_GPU_VRAM,TXT_GPU_CLOCK};
-    const int gpu_x[3]={GPU_COLUMN_X0,GPU_COLUMN_X1,GPU_COLUMN_X2};
-    const int gpu_room[3]={GPU_COLUMN_X1-GPU_COLUMN_X0-12,GPU_COLUMN_X2-GPU_COLUMN_X1-10,460-8-GPU_COLUMN_X2};
     lv_obj_t *gpu_values[3];
+    lv_obj_t **tracks[3]={&gpu_load_track,&vram_track,&gpu_clock_track};
+    lv_obj_t **bars[3]={&gpu_load_bar,&vram_bar,&gpu_clock_bar};
     for(int i=0;i<3;i++){
-        text_at(gpu_card,panel_text(gpu_names[i]),gpu_x[i],12,gpu_room[i],&panel_font_14,MUTED);
-        gpu_values[i]=text_at(gpu_card,"--",gpu_x[i],34,gpu_room[i],&panel_font_24,TEXT);
+        int bar_x=GPU_BAR_X+i*GPU_PITCH,room=i==1?GPU_ROOM_MIDDLE:GPU_ROOM_SIDE;
+        int text_x=bar_x+GPU_BAR_WIDTH/2-room/2;
+        center_text(text_at(gpu_card,panel_text(gpu_names[i]),text_x,12,room,&panel_font_14,MUTED));
+        gpu_values[i]=text_at(gpu_card,"--",text_x,34,room,&panel_font_24,TEXT);
         lv_obj_set_height(gpu_values[i],lv_font_get_line_height(&panel_font_24));
-    }
-    gpu_load_value=gpu_values[0];vram_value=gpu_values[1];gpu_clock_value=gpu_values[2];
-    lv_obj_t **tracks[2]={&gpu_load_track,&vram_track},**bars[2]={&gpu_load_bar,&vram_bar};
-    for(int i=0;i<2;i++){
-        *tracks[i]=panel(gpu_card,gpu_x[i],72,GPU_BAR_WIDTH,8,EDGE,false);
+        center_text(gpu_values[i]);
+        *tracks[i]=panel(gpu_card,bar_x,72,GPU_BAR_WIDTH,8,EDGE,false);
         lv_obj_set_style_radius(*tracks[i],LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(*tracks[i],LV_OBJ_FLAG_CLICKABLE);
         *bars[i]=panel(*tracks[i],0,0,0,8,ACCENT,false);
@@ -2583,44 +3249,40 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
         lv_obj_remove_flag(*bars[i],LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(*tracks[i],LV_OBJ_FLAG_HIDDEN);
     }
-    /* Cooling Boost, under the clock, where the other two columns have
-     * their bars: its name and a switch, and the whole row one place to
-     * tap. See boost_show. */
-    boost_field=lv_obj_create(gpu_card);lv_obj_remove_style_all(boost_field);
-    lv_obj_set_pos(boost_field,GPU_COLUMN_X2-6,BOOST_Y);lv_obj_set_size(boost_field,gpu_room[2]+6,BOOST_HEIGHT);
-    lv_obj_remove_flag(boost_field,LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_radius(boost_field,5,0);
-    lv_obj_set_style_bg_color(boost_field,lv_color_hex(BUTTON),LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(boost_field,LV_OPA_COVER,LV_STATE_PRESSED);
-    lv_obj_set_style_opa(boost_field,LV_OPA_40,LV_STATE_DISABLED);
-    lv_obj_add_event_cb(boost_field,boost_clicked,LV_EVENT_CLICKED,NULL);
-    lv_obj_t *boost_name=text_at(boost_field,panel_text(TXT_GPU_BOOST),6,
-                                 (BOOST_HEIGHT-lv_font_get_line_height(&panel_font_12))/2,
-                                 gpu_room[2]-BOOST_TRACK_WIDTH-4,&panel_font_12,MUTED);
-    lv_obj_set_height(boost_name,lv_font_get_line_height(&panel_font_12));
-    lv_obj_remove_flag(boost_name,LV_OBJ_FLAG_CLICKABLE);
-    boost_track=panel(boost_field,gpu_room[2]+6-BOOST_TRACK_WIDTH,(BOOST_HEIGHT-BOOST_TRACK_HEIGHT)/2,
-                      BOOST_TRACK_WIDTH,BOOST_TRACK_HEIGHT,EDGE,false);
-    lv_obj_set_style_radius(boost_track,LV_RADIUS_CIRCLE,0);
-    lv_obj_remove_flag(boost_track,LV_OBJ_FLAG_CLICKABLE);
-    boost_knob=knob_in(boost_track,BOOST_KNOB_OFF,2,BOOST_TRACK_HEIGHT-4);
-    lv_obj_add_flag(boost_field,LV_OBJ_FLAG_HIDDEN);
+    gpu_load_value=gpu_values[0];vram_value=gpu_values[1];gpu_clock_value=gpu_values[2];
     lv_obj_t *history_card=panel(page[4],10,106,460,194,CARD,true);
-    text_at(history_card,panel_text(TXT_HISTORY),16,14,120,&panel_font_14,MUTED);
-    for(int i=0;i<HISTORY_WINDOWS;i++){
-        char caption[16];
-        snprintf(caption,sizeof caption,"%d %s",history_windows[i],panel_text(TXT_MINUTES));
-        history_buttons[i]=button(history_card,caption,252+i*66,8,62,32,history_window_clicked,history_windows[i]);
-        lv_obj_set_style_text_font(history_buttons[i],&panel_font_14,0);
+    /* The column of the fan, with no names on the icons: see fan_show.
+     * Hidden until the PC says that it has LACT. */
+    for(int i=0;i<FAN_BUTTONS;i++){
+        fan_buttons[i]=button(history_card,i==FAN_AUTO?panel_text(TXT_FAN_AUTO):"",FAN_X,
+                              FAN_Y+i*(FAN_SIZE+FAN_GAP),FAN_SIZE,FAN_SIZE,fan_clicked,i);
+        if(i==FAN_AUTO){
+            fan_faces[i]=lv_obj_get_child(fan_buttons[i],0);
+            lv_obj_set_style_text_color(fan_faces[i],lv_color_hex(MUTED),0);
+        }else{
+            fan_faces[i]=icon(fan_buttons[i],i==FAN_ZERO_RPM?&icon_fan_off:&icon_snowflake,
+                              (FAN_SIZE-26)/2,(FAN_SIZE-26)/2,MUTED);
+        }
+        lv_obj_add_flag(fan_buttons[i],LV_OBJ_FLAG_HIDDEN);
     }
-    /* The legend, one dot and one name for each curve. */
+    /* The legend, one dot and one name for each curve. The rest of the
+     * width of the chart goes in the two gaps, the odd pixel in the last. */
     const char *legend[PANEL_HISTORY_SERIES]={"CPU °C","GPU °C","GPU W"};
     const uint32_t curves[PANEL_HISTORY_SERIES]=CURVE_COLOURS;
+    int32_t legend_width[PANEL_HISTORY_SERIES],rest=CHART_WIDTH;
     for(int i=0;i<PANEL_HISTORY_SERIES;i++){
-        lv_obj_t *mark=panel(history_card,16+i*92,49,10,10,curves[i],false);
+        lv_point_t size;
+        lv_text_get_size(&size,legend[i],&panel_font_12,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+        legend_width[i]=size.x;
+        rest-=16+size.x;
+    }
+    int32_t legend_x=CHART_X;
+    for(int i=0;i<PANEL_HISTORY_SERIES;i++){
+        lv_obj_t *mark=panel(history_card,legend_x,LEGEND_Y+4,10,10,curves[i],false);
         lv_obj_set_style_radius(mark,LV_RADIUS_CIRCLE,0);
         lv_obj_remove_flag(mark,LV_OBJ_FLAG_CLICKABLE);
-        text_at(history_card,legend[i],32+i*92,45,72,&panel_font_12,MUTED);
+        text_at(history_card,legend[i],legend_x+16,LEGEND_Y,legend_width[i]+1,&panel_font_12,MUTED);
+        legend_x+=16+legend_width[i]+rest/(PANEL_HISTORY_SERIES-1)+(i==PANEL_HISTORY_SERIES-2?rest%(PANEL_HISTORY_SERIES-1):0);
     }
     history_chart=lv_chart_create(history_card);
     lv_obj_set_pos(history_chart,CHART_X,CHART_Y);lv_obj_set_size(history_chart,CHART_WIDTH,CHART_HEIGHT);
@@ -2654,7 +3316,8 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
                                 low?CHART_Y+CHART_HEIGHT-16:CHART_Y-2,right?44:CHART_X-6,&panel_font_12,MUTED);
         lv_obj_set_style_text_align(history_axis[i],right?LV_TEXT_ALIGN_LEFT:LV_TEXT_ALIGN_RIGHT,0);
     }
-    history_ago=text_at(history_card,"",CHART_X,CHART_Y+CHART_HEIGHT+6,120,&panel_font_12,MUTED);
+    lv_obj_t *ago=text_at(history_card,"",CHART_X,CHART_Y+CHART_HEIGHT+6,120,&panel_font_12,MUTED);
+    set_textf(ago,"-%d %s",PANEL_HISTORY_MINUTES,panel_text(TXT_MINUTES));
     lv_obj_t *now=text_at(history_card,panel_text(TXT_HISTORY_NOW),CHART_X+CHART_WIDTH-120,
                           CHART_Y+CHART_HEIGHT+6,120,&panel_font_12,MUTED);
     lv_obj_set_style_text_align(now,LV_TEXT_ALIGN_RIGHT,0);
@@ -2723,6 +3386,7 @@ void panel_ui_create(panel_action_cb_t callback,panel_setting_cb_t setting_cb,pa
     lv_obj_set_style_bg_opa(status,LV_OPA_40,LV_STATE_PRESSED);
     lv_obj_set_style_radius(status,6,0);
     lv_obj_add_event_cb(status,self_clicked,LV_EVENT_CLICKED,NULL);
+    lv_obj_set_ext_click_area(status,BUTTON_REACH);
     lv_obj_set_flex_flow(status,LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(status,LV_FLEX_ALIGN_END,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(status,10,0);
@@ -2771,7 +3435,7 @@ static void name_show(const char *text)
     int32_t lines=size.y>line?2:1;
     lv_obj_set_height(playing_name,lines*line);
     lv_obj_set_y(playing_name,NAME_TOP+(NAME_ROOM-lines*line)/2);
-    lv_label_set_text(playing_name,text);
+    set_text(playing_name,text);
 }
 /* The battery of this panel, in the corner of the main screen.
  *
@@ -2787,12 +3451,12 @@ static void esp_power_show(const panel_state_t *s)
 {
     if(!esp_power)return;
     if(s->esp_supply==PANEL_SUPPLY_UNKNOWN){
-        lv_obj_add_flag(esp_power,LV_OBJ_FLAG_HIDDEN);
+        set_shown(esp_power,false);
         return;
     }
-    lv_obj_remove_flag(esp_power,LV_OBJ_FLAG_HIDDEN);
+    set_shown(esp_power,true);
     if(s->esp_supply==PANEL_SUPPLY_CABLE){
-        lv_label_set_text(esp_power,LV_SYMBOL_USB);
+        set_text(esp_power,LV_SYMBOL_USB);
         return;
     }
     int level=s->esp_battery<0?0:s->esp_battery>100?100:s->esp_battery;
@@ -2801,8 +3465,72 @@ static void esp_power_show(const panel_state_t *s)
                      :level>=40?LV_SYMBOL_BATTERY_2
                      :level>=15?LV_SYMBOL_BATTERY_1
                      :LV_SYMBOL_BATTERY_EMPTY;
-    lv_label_set_text_fmt(esp_power,"%s%s %d %%",
+    set_textf(esp_power,"%s%s %d %%",
                           s->esp_charging?LV_SYMBOL_CHARGE " ":"",shape,level);
+}
+/* The screen of the pairing with the PC, over everything else while the
+ * panel pairs. The left button opens the setup, for an address by hand.
+ * The right one tries again after an end with no secret, or goes back for
+ * a panel that keeps the secret it has. */
+static bool pair_ended(panel_pairing_t phase)
+{
+    return phase==PANEL_PAIRING_REFUSED||phase==PANEL_PAIRING_EXPIRED
+        ||phase==PANEL_PAIRING_NOT_FOUND;
+}
+static void pair_right_clicked(lv_event_t *e)
+{
+    (void)e;
+    feedback();
+    if(send_action)send_action(pair_ended(last_state.pairing)?PANEL_PAIR:PANEL_PAIR_CANCEL);
+}
+static void pair_show(const panel_state_t *s)
+{
+    if(!pair_screen){
+        if(overlay){lv_obj_delete(overlay);overlay=NULL;}
+        pair_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
+        text_at(pair_screen,panel_text(TXT_PAIR_TITLE),24,28,432,&panel_font_24,ACCENT_TEXT);
+        pair_text=text_at(pair_screen,"",24,84,432,&panel_font_18,TEXT);
+        lv_label_set_long_mode(pair_text,LV_LABEL_LONG_WRAP);
+        pair_code=text_at(pair_screen,"",24,214,432,&panel_font_32,TEXT);
+        center_text(pair_code);
+        lv_obj_set_style_text_letter_space(pair_code,6,0);
+        pair_pc=text_at(pair_screen,"",24,276,432,&panel_font_16,MUTED);
+        center_text(pair_pc);
+        pair_left=button(pair_screen,panel_text(TXT_SETUP),24,396,208,60,clicked,PANEL_SETUP);
+        pair_right=button(pair_screen,panel_text(TXT_CANCEL),248,396,208,60,pair_right_clicked,0);
+        pair_right_label=lv_obj_get_child(pair_right,0);
+    }
+    static const panel_text_id_t says[]={
+        [PANEL_PAIRING_SEARCH]=TXT_PAIR_SEARCH,[PANEL_PAIRING_ASK]=TXT_PAIR_ASK,
+        [PANEL_PAIRING_WAIT]=TXT_PAIR_WAIT,[PANEL_PAIRING_DONE]=TXT_PAIR_DONE,
+        [PANEL_PAIRING_BUSY]=TXT_PAIR_BUSY,[PANEL_PAIRING_NO_ANSWER]=TXT_PAIR_NO_ANSWER,
+        [PANEL_PAIRING_REFUSED]=TXT_PAIR_REFUSED,[PANEL_PAIRING_EXPIRED]=TXT_PAIR_EXPIRED,
+        [PANEL_PAIRING_NOT_FOUND]=TXT_PAIR_NOT_FOUND};
+    set_text(pair_text,panel_text(says[s->pairing]));
+    /* "482913" as "482 913", which is easier to compare. */
+    char code[12]="";
+    if(s->pair_code[0])snprintf(code,sizeof code,"%.3s %.3s",s->pair_code,s->pair_code+3);
+    set_text(pair_code,code);
+    char pc[96]="";
+    if(s->pair_pc[0]&&s->pair_address[0]){
+        char both[80];
+        snprintf(both,sizeof both,"%s (%s)",s->pair_pc,s->pair_address);
+        snprintf(pc,sizeof pc,panel_text(TXT_PAIR_PC),both);
+    }else if(s->pair_pc[0]||s->pair_address[0])
+        snprintf(pc,sizeof pc,panel_text(TXT_PAIR_PC),s->pair_pc[0]?s->pair_pc:s->pair_address);
+    set_text(pair_pc,pc);
+    bool ended=pair_ended(s->pairing),done=s->pairing==PANEL_PAIRING_DONE;
+    bool right=!done&&(ended||s->pair_can_cancel);
+    if(right==lv_obj_has_flag(pair_right,LV_OBJ_FLAG_HIDDEN)){
+        if(right)lv_obj_remove_flag(pair_right,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(pair_right,LV_OBJ_FLAG_HIDDEN);
+    }
+    set_text(pair_right_label,panel_text(ended?TXT_PAIR_AGAIN:TXT_CANCEL));
+    /* The accent for the way forward, and not for the way back. */
+    lv_obj_set_style_bg_color(pair_right,lv_color_hex(ended?ACCENT:BUTTON),0);
+    lv_obj_set_style_text_color(pair_right,lv_color_hex(ended?ON_ACCENT:TEXT),0);
+    if(done==!lv_obj_has_flag(pair_left,LV_OBJ_FLAG_HIDDEN)){
+        if(done)lv_obj_add_flag(pair_left,LV_OBJ_FLAG_HIDDEN);else lv_obj_remove_flag(pair_left,LV_OBJ_FLAG_HIDDEN);
+    }
 }
 void panel_ui_update(const panel_state_t *s)
 {
@@ -2814,9 +3542,9 @@ void panel_ui_update(const panel_state_t *s)
      * A padding-only difference can merely cause an extra update, never hide one. */
     if(last_state_valid && memcmp(&last_state,s,sizeof(*s))==0)return;
     memcpy(&last_state,s,sizeof(*s));last_state_valid=true;
-    if(sound_status)lv_label_set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
+    set_text(sound_status,s->sound_error?panel_text(TXT_NO_AUDIO):panel_text(TXT_SPEAKER));
     if(s->setup){
-        settings_forget();pads_forget();pc_forget();sensor_close();look_close();self_forget();
+        settings_forget();pads_forget();pc_forget();sensor_close();look_close();profile_close();self_forget();
         if(!setup_screen){
             if(overlay){lv_obj_delete(overlay);overlay=NULL;}
             setup_screen=panel(lv_screen_active(),0,0,480,480,BG,false);
@@ -2826,8 +3554,13 @@ void panel_ui_update(const panel_state_t *s)
         }
         lv_label_set_text_fmt(setup_text,panel_text(TXT_SETUP_STEPS),s->setup_ssid,s->setup_password);return;
     }
-    lv_label_set_text(connection,!s->wifi?panel_text(TXT_WIFI_OFFLINE):s->online?panel_text(TXT_PC_ONLINE):panel_text(TXT_PC_OFFLINE));
-    lv_obj_set_style_bg_color(dot,lv_color_hex(s->online?palette.online:palette.offline),0);
+    if(s->pairing!=PANEL_PAIRING_NONE){
+        settings_forget();pads_forget();pc_forget();sensor_close();look_close();profile_close();self_forget();
+        pair_show(s);return;
+    }
+    if(pair_screen){lv_obj_delete(pair_screen);pair_screen=NULL;}
+    set_text(connection,!s->wifi?panel_text(TXT_WIFI_OFFLINE):s->online?panel_text(TXT_PC_ONLINE):panel_text(TXT_PC_OFFLINE));
+    set_bg(dot,s->online?palette.online:palette.offline);
     pads_head(s);
     pads_show(s);
     led_show(s);
@@ -2837,9 +3570,9 @@ void panel_ui_update(const panel_state_t *s)
     update_layer_show(s);
     esp_power_show(s);
     bool audio=s->online&&s->volume>=0;
-    lv_label_set_text(audio_status,!audio?"--":s->muted?panel_text(TXT_MUTED):panel_text(TXT_ACTIVE));
-    lv_obj_t *track=lv_obj_get_user_data(audio_toggle);lv_obj_set_style_bg_color(track,lv_color_hex(audio&&!s->muted?ACCENT:EDGE),0);lv_obj_set_x(audio_knob,audio&&!s->muted?27:3);
-    if(audio)lv_label_set_text_fmt(volume,"%d %%",s->volume);else lv_label_set_text(volume,"-- %");
+    set_text(audio_status,!audio?"--":s->muted?panel_text(TXT_MUTED):panel_text(TXT_ACTIVE));
+    lv_obj_t *track=lv_obj_get_user_data(audio_toggle);set_bg(track,audio&&!s->muted?ACCENT:EDGE);lv_obj_set_x(audio_knob,audio&&!s->muted?27:3);
+    if(audio)set_textf(volume,"%d %%",s->volume);else set_text(volume,"-- %");
     for(int i=0;i<6;i++){bool enabled=s->online&&(i>=3||audio);if(enabled)lv_obj_remove_state(controls[i],LV_STATE_DISABLED);else lv_obj_add_state(controls[i],LV_STATE_DISABLED);}
     /* One card, two faces. Offline with an address to wake at shows the
      * wake button; anything else shows the three, greyed where they cannot
@@ -2848,28 +3581,27 @@ void panel_ui_update(const panel_state_t *s)
      * worse than none. */
     bool offer_wake=!s->online&&s->can_wake;
     for(int i=PANEL_SUSPEND;i<=PANEL_POWEROFF;i++){
-        if(offer_wake)lv_obj_add_flag(controls[i],LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_remove_flag(controls[i],LV_OBJ_FLAG_HIDDEN);
+        if(offer_wake)set_shown(controls[i],false);
+        else set_shown(controls[i],true);
     }
-    if(offer_wake){lv_obj_remove_flag(wake_button,LV_OBJ_FLAG_HIDDEN);lv_obj_remove_flag(wake_what,LV_OBJ_FLAG_HIDDEN);}
-    else{lv_obj_add_flag(wake_button,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(wake_what,LV_OBJ_FLAG_HIDDEN);}
+    if(offer_wake){set_shown(wake_button,true);set_shown(wake_what,true);}
+    else{set_shown(wake_button,false);set_shown(wake_what,false);}
     temperatures_show(s);
-    if(s->online&&s->gpu_watts>=0)lv_label_set_text_fmt(power_value,"%d W",s->gpu_watts);else lv_label_set_text(power_value,"-- W");
+    if(s->online&&s->gpu_watts>=0)set_textf(power_value,"%d W",s->gpu_watts);else set_text(power_value,"-- W");
     card_show(s);
-    lv_label_set_text(message,s->message);
-    if(s->message[0])lv_obj_remove_flag(message,LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(message,LV_OBJ_FLAG_HIDDEN);
+    set_text(message,s->message);
+    if(s->message[0])set_shown(message,true);
+    else set_shown(message,false);
     /* The mark for the network. It answers one question, whether the panel
      * is on the network, and leaves whether the PC answers to the dot at
      * the top: a mark that meant both would say nothing about either. */
-    if(wifi_mark)lv_obj_set_style_text_color(wifi_mark,
-        lv_color_hex(s->wifi?MUTED:RED),0);
+    if(wifi_mark)set_text_colour(wifi_mark,s->wifi?MUTED:RED);
     /* The second page. Offline leaves every one of these at a dash rather
      * than at the last thing the PC said, which would read as current. */
     if(mode_now){
-        lv_label_set_text(mode_now,!s->online?"--":
+        set_text(mode_now,!s->online?"--":
                           s->game_mode?panel_text(TXT_MODE_GAME):panel_text(TXT_MODE_DESKTOP));
-        lv_label_set_text(mode_caption,s->game_mode?panel_text(TXT_TO_DESKTOP):panel_text(TXT_TO_GAME));
+        set_text(mode_caption,s->game_mode?panel_text(TXT_TO_DESKTOP):panel_text(TXT_TO_GAME));
         /* The button carries where it goes, so the press is the target and
          * never "the other one". See PANEL_DESKTOP_MODE in ui.h. */
         lv_obj_remove_event_cb(mode_button,clicked);
@@ -2882,13 +3614,13 @@ void panel_ui_update(const panel_state_t *s)
     if(shown>PANEL_DRIVES)shown=PANEL_DRIVES;
     for(int i=0;i<PANEL_DRIVES;i++){
         if(!drive_rows[i])break;
-        if(i>=shown){lv_obj_add_flag(drive_rows[i],LV_OBJ_FLAG_HIDDEN);continue;}
-        lv_obj_remove_flag(drive_rows[i],LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(drive_names[i],s->drives[i].name);
+        if(i>=shown){set_shown(drive_rows[i],false);continue;}
+        set_shown(drive_rows[i],true);
+        set_text(drive_names[i],s->drives[i].name);
         char left[24],whole[24];
         say_size(left,sizeof(left),s->drives[i].free);
         say_size(whole,sizeof(whole),s->drives[i].total);
-        lv_label_set_text_fmt(drive_free[i],"%s %s / %s",left,panel_text(TXT_FREE),whole);
+        set_textf(drive_free[i],"%s %s / %s",left,panel_text(TXT_FREE),whole);
         /* The bar fills with what is used, because a bar that fills as a
          * drive empties reads backwards. A total of nought would divide by
          * nought, and drives() never sends one. */
@@ -2900,12 +3632,12 @@ void panel_ui_update(const panel_state_t *s)
          * drive somebody wants to see without reading. What is left says it
          * in red too: in the red accent every bar is red. */
         bool full=total&&used*10>=total*9;
-        lv_obj_set_style_bg_color(drive_bars[i],lv_color_hex(full?RED:ACCENT),0);
-        lv_obj_set_style_text_color(drive_free[i],lv_color_hex(full?RED:MUTED),0);
+        set_bg(drive_bars[i],full?RED:ACCENT);
+        set_text_colour(drive_free[i],full?RED:MUTED);
     }
     if(no_drives){
-        if(shown==0)lv_obj_remove_flag(no_drives,LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(no_drives,LV_OBJ_FLAG_HIDDEN);
+        if(shown==0)set_shown(no_drives,true);
+        else set_shown(no_drives,false);
     }
     /* The third page. */
     if(playing_name)
@@ -2915,9 +3647,9 @@ void panel_ui_update(const panel_state_t *s)
      * that answer. */
     if(achievement_count){
         if(s->online&&s->playing[0]&&s->achievements_total>0)
-            lv_label_set_text_fmt(achievement_count,"%d / %d",
+            set_textf(achievement_count,"%d / %d",
                                   s->achievements_done,s->achievements_total);
-        else lv_label_set_text(achievement_count,"--");
+        else set_text(achievement_count,"--");
     }
     /* The fourth page: the time, and the date under it, or dashes and a
      * word until the network has set the clock. */

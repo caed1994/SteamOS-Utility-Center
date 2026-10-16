@@ -231,6 +231,61 @@ class PairDialog(Dialog):
         Dialog._deny(self)
 
 
+class CompanionPairDialog(Dialog):
+    """Asks a person to accept a panel that asks to pair.
+
+    The code on the panel and the code here come from the same key exchange.
+    A device between the two gets a different code on each screen. So the
+    person compares the two codes, and accepts only when they are the same.
+
+    The request expires on the PC. A tick each second asks for the request
+    that waits, and the window closes when that is no longer this one. Then
+    `gone` is true, and the caller sends no answer.
+    """
+
+    def __init__(self, parent, request, look):
+        self.request = request
+        self.look = look
+        self.gone = False
+        self.job = None
+        Dialog.__init__(
+            self, parent, "Pair a Steam Companion",
+            "%s at %s asks to pair with this PC. Accept it only when the "
+            "panel shows the same code." % (request["name"] or "A panel",
+                                           request["address"] or "?"),
+            confirm="Accept", deny="Refuse")
+
+    def build(self, body):
+        code = self.request["code"]
+        ttk.Label(body, text="%s %s" % (code[:3], code[3:]),
+                  style="Heading.TLabel").pack(anchor="w", pady=(ROW_GAP, 0))
+        # On a timer and not in the build, and not at idle either: the base
+        # still adds the buttons, and its centring runs the idle tasks. A
+        # request that is gone already closes the window.
+        self.job = self.window.after(100, self._tick)
+
+    def _tick(self):
+        found = self.look()
+        if not found or found["id"] != self.request["id"]:
+            self.gone = True
+            self._deny()
+            return
+        self.job = self.window.after(1000, self._tick)
+
+    def _stop(self):
+        if self.job is not None:
+            self.window.after_cancel(self.job)
+            self.job = None
+
+    def _confirm(self):
+        self._stop()
+        Dialog._confirm(self)
+
+    def _deny(self):
+        self._stop()
+        Dialog._deny(self)
+
+
 class ColourDialog(Dialog):
     """Asks for a colour to flash, from a grid or from typed text.
 

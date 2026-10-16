@@ -163,6 +163,10 @@ EFFECTS = [
         # first effect that asked for it.
         ("RAINBOW_SHOWS", "The Rainbow entry shows", "named",
          ledpanel.rainbow_choices(config_module.RAINBOW_CHOICES), None, None),
+        # How the mirror makes the colours of the bar in Game Mode. The
+        # desktop has its own, beside its scene. See screen.PROFILES.
+        ("MIRROR_PROFILE", "Mirror profile", "named",
+         ledpanel.mirror_profiles(), None, None),
         # The bar takes one colour, and these two marks give the position on
         # the scale: green below the first, red above the second, yellow
         # between. The sliders keep them apart, so no pair breaks
@@ -201,6 +205,8 @@ DESKTOP = [
     (None, [
         ("DESKTOP_SCENE", "In Desktop Mode show", "named",
          ledpanel.desktop_choices(config_module.DESKTOP_SCENES), None, None),
+        ("DESKTOP_MIRROR_PROFILE", "Mirror profile", "named",
+         ledpanel.mirror_profiles(), None, None),
         ("DESKTOP_COLOR", "Colour", "named",
          ledpanel.NOTIFICATION_COLOURS, None, None),
         ("DESKTOP_BRIGHTNESS", "Brightness", "int", 0, 255, 1),
@@ -487,8 +493,9 @@ SECTIONS = (
     ("cec", "HDMI CEC Mods", "screen"),
     # The panel on the wall. It is a device of this machine like the two
     # above, and it is not a page of settings: everything on it is a state
-    # of the machine or a step a person takes one time.
-    ("companion", "Wall Panel", "screen"),
+    # of the machine or a step a person takes one time. Its name is Steam
+    # Companion, and its symbol is the front of a Companion Cube.
+    ("companion", "Steam Companion", "cube"),
     # It was "Keyboard Layout". The drives are here too now, and both are
     # settings of the machine rather than of the bar. The key stays "keyboard",
     # because the code refers to a section by that key and a rename of it is a
@@ -574,6 +581,8 @@ SOON = {}
 # would both have to be true, which is the opposite meaning.
 TEMPERATURE_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "temperature")
 LOAD_SHOWN = (("RAINBOW_SHOWS", "DESKTOP_SCENE"), "load")
+MIRROR_SHOWN = (("RAINBOW_SHOWS",), "mirror")
+DESKTOP_MIRROR_SHOWN = (("DESKTOP_SCENE",), "mirror")
 SCENE_HAS_COLOUR = ("DESKTOP_SCENE", ("color", "breath", "patrol"))
 
 # The effects of the Nanoleaf board that draw in one colour.
@@ -583,7 +592,8 @@ SCENE_HAS_COLOUR = ("DESKTOP_SCENE", ("color", "breath", "patrol"))
 # rates were pinned before they came off the page.
 PEGBOARD_TAKES_COLOUR = ("PEGBOARD_EFFECT", ("patrol",))
 SCENE_IS_LIT = ("DESKTOP_SCENE", ("color", "breath", "patrol", "rainbow",
-                                  "fire", "aurora", "ooze", "temperature"))
+                                  "fire", "aurora", "ooze", "temperature",
+                                  "mirror"))
 # This does not include the temperature gauge, which is one colour with no
 # movement. It draws again when the sensor value changes, and there is no
 # cycle for the slider to scale. It does not include the load gauge either.
@@ -611,6 +621,8 @@ DEPENDS_ON = {
     "DESKTOP_BRIGHTNESS": (SCENE_IS_LIT,),
     "DESKTOP_SPEED": (SCENE_MOVES,),
     "PEGBOARD_COLOR": (PEGBOARD_TAKES_COLOUR,),
+    "MIRROR_PROFILE": (MIRROR_SHOWN,),
+    "DESKTOP_MIRROR_PROFILE": (DESKTOP_MIRROR_SHOWN,),
     "LOAD_CPU_COLOR": (LOAD_SHOWN,),
     "LOAD_GPU_COLOR": (LOAD_SHOWN,),
     "LOAD_SWAP": (LOAD_SHOWN,),
@@ -690,6 +702,12 @@ SIDEBAR_TEXT_X = 56
 # path makes each start slower on a machine with the toolkit. This time is
 # long enough for the window to draw itself first.
 CEC_FIRST_LOOK = 200
+
+# The time after a change of the settings, before the panel reads the status
+# of the mirror again. The change starts the LED service again, which makes
+# the pipe of the mirror. The capture service looks for that pipe each
+# screen.LOOK_SECONDS. A read at once still finds no pipe.
+MIRROR_LOOK = 4000
 
 # The text at the foot of the window after a command fails. One fixed sentence
 # and not the last line of the command: the bar shares its width with two
@@ -1519,10 +1537,10 @@ class SidebarEntry:
     def _draw_icon(self, name):
         """Draws a small symbol from simple shapes.
 
-        There are four shapes and one letter, and none of them is a font
-        glyph. The symbols for these subjects are a lightning bolt and a
-        television, and they are in emoji fonts. A machine can have no such
-        font. An absent glyph gives an empty box beside each entry.
+        None of them is a font glyph. The symbols for these subjects are a
+        lightning bolt and a television, and they are in emoji fonts. A
+        machine can have no such font. An absent glyph gives an empty box
+        beside each entry.
         """
         left, middle = SIDEBAR_ICON_X, SIDEBAR_ENTRY_HEIGHT // 2
         colour = self.roles["on_surface_variant"]
@@ -1558,6 +1576,27 @@ class SidebarEntry:
                                           middle + 8, fill=colour, width=1.6))
             solid(self.canvas.create_line(left + 9, middle + 4, left + 9,
                                           middle + 8, fill=colour, width=1.6))
+        elif name == "cube":                    # a Companion Cube
+            # Its front: a pad at each corner, the cross between the pads,
+            # and a heart in the middle.
+            drawn(self.canvas.create_rectangle(left, middle - 9, left + 18,
+                                               middle + 9, outline=colour,
+                                               width=1.6))
+            for across in (left, left + 13):
+                for down in (middle - 9, middle + 4):
+                    solid(self.canvas.create_rectangle(
+                        across, down, across + 5, down + 5, outline="",
+                        fill=colour))
+            # A spline through these points. A point that is there two
+            # times is a corner: the tip and the dip of the heart.
+            heart = ((0, 2.6), (0, 2.6), (-2.8, -0.3), (-2.6, -2.4),
+                     (-1.2, -2.8), (0, -1.4), (0, -1.4), (1.2, -2.8),
+                     (2.6, -2.4), (2.8, -0.3))
+            points = []
+            for across, down in heart:
+                points += [left + 9 + across * 1.45, middle + 0.3 + down * 1.45]
+            solid(self.canvas.create_polygon(*points, smooth=True, outline="",
+                                             fill=colour))
         elif name == "keys":                    # a keyboard
             drawn(self.canvas.create_rectangle(left, middle - 6, left + 18,
                                                middle + 6, outline=colour,
@@ -1901,6 +1940,9 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
         if lact.available():
             self._gpu_first = self.root.after(CEC_FIRST_LOOK,
                                               self._first_look_gpu)
+        # A new panel that asks to pair gets its question at once, on any
+        # page. See CompanionPage._watch_pairing.
+        self._watch_pairing()
         # Open at the height the content needs, so the first thing anyone does
         # is not what resizes the window.
         self._fit_window()
@@ -3679,12 +3721,26 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
             # Without this call, a changed flash setting waits for the end of
             # the next game, and the switch for the phone flashes has no result.
             self.runner.start(ledpanel.restart_watchers_command(),
-                              lambda _code: self.refresh_status())
+                              lambda _code: self._after_change())
 
         self._run_privileged(
             ledpanel.apply_config_command(SOURCE_DIR, staged_path),
             ledpanel.apply_config_command(SOURCE_DIR, staged_path, ask=True),
             finished)
+
+    def _after_change(self):
+        """Reads the status after a change, and the mirror again later."""
+        self.refresh_status()
+        if render.SHOWS_MIRROR not in (self.config.get("RAINBOW_SHOWS"),
+                                       self.config.get("DESKTOP_SCENE")):
+            return
+        if getattr(self, "_mirror_look", None) is not None:
+            self.root.after_cancel(self._mirror_look)
+        self._mirror_look = self.root.after(MIRROR_LOOK, self._look_again)
+
+    def _look_again(self):
+        self._mirror_look = None
+        self.refresh_status()
 
     def _show_values(self, values):
         """Put these settings into the controls. Keys we do not show are
@@ -3915,11 +3971,12 @@ class Panel(page_status.StatusPage, page_system.SystemPage,
             return                              # a child of ours, not the window
         for job in (self._preview_job, self._refit_job, self._catching_up,
                     getattr(self, "_cec_first", None),
-                    getattr(self, "_gpu_first", None)):
+                    getattr(self, "_gpu_first", None),
+                    getattr(self, "_mirror_look", None)):
             if job is not None:
                 self.root.after_cancel(job)
         self._preview_job = self._refit_job = self._catching_up = None
-        self._cec_first = self._gpu_first = None
+        self._cec_first = self._gpu_first = self._mirror_look = None
 
     def _preview_chosen(self):
         """Restart the clock, so a shape is seen from its beginning."""

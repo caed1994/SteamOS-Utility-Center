@@ -1,0 +1,20 @@
+[Unit]
+# A *user* unit. The screen of Game Mode is a PipeWire stream of the user, and
+# the sandbox of the LED service hides the runtime directory of the user. So
+# this unit reads the screen, and it gives 17 colours to the LED service
+# through the pipe of that service.
+# It reads the screen only while the bar shows the mirror. At all other times
+# it looks at the pipe every two seconds and does nothing more.
+# Log: journalctl --user -u steamos-utility-center-mirror -f
+Description=Read the screen for the mirror effect of the LED bar
+# Ordering only, and not PartOf=, for the reason in the achievement watcher.
+After=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=@INSTALL_DIR@/steamos-utility-center --mirror
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

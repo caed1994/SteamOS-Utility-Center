@@ -99,13 +99,22 @@ int main(int argc,char **argv)
     }
     /* "pages-hidden" is that screen with the session hidden. */
     if(argc>2&&strcmp(argv[2],"pages-hidden")==0)settings.page_hidden=1u<<PANEL_PAGE_SESSION;
+    /* "alarm-clock" is the clock page with an alarm at 6:30 from Monday to
+     * Friday. "alarm-clock-set" has the layer that sets it open, and
+     * "alarm-clock-ring" has it ringing. "standby-alarm" is the cover with
+     * its next ring. */
+    bool alarm_clock=argc>2&&(strncmp(argv[2],"alarm-clock",11)==0||
+                              strcmp(argv[2],"standby-alarm")==0);
+    if(alarm_clock)settings.alarm=panel_alarm_pack((panel_alarm_set_t){.on=true,.hour=6,.minute=30,
+                                                                       .days=0x1F});
     /* The history of the page of the card, which main.c keeps in PSRAM. */
     static panel_history_t history;
     panel_history_reset(&history);
     panel_ui_history_use(&history);
     panel_ui_create(NULL,NULL,NULL,&settings);
     panel_state_t s={.wifi=true,.online=true,.volume=42,.cpu_temp=49,.gpu_temp=56,.gpu_watts=78,
-                     .gpu_load=87,.gpu_mhz=2450,.vram_used=10522460160ULL,.vram_total=17163091968ULL};
+                     .gpu_load=87,.gpu_mhz=2450,.gpu_mhz_max=2970,.vram_used=10522460160ULL,
+                     .vram_total=17163091968ULL};
     strcpy(s.host,"FractalMachine");
     /* Two controllers in the head, and four on their page: one charges and
      * one has no battery that anybody reports. "pads" opens that page, and
@@ -164,6 +173,18 @@ int main(int argc,char **argv)
         s.online=false;s.can_wake=true;
     }
     if(argc>2&&strcmp(argv[2],"setup")==0){s.setup=true;strcpy(s.setup_ssid,"SteamOS-Panel-3A12");strcpy(s.setup_password,"ABCD2345EFGH");}
+    /* The pairing with the PC: "pair-search" looks for it, "pair-wait"
+     * shows the code, "pair-not-found" found none, and "pair-expired"
+     * waited for nobody. */
+    if(argc>2&&strncmp(argv[2],"pair-",5)==0){
+        s.pairing=strcmp(argv[2],"pair-search")==0?PANEL_PAIRING_SEARCH
+                 :strcmp(argv[2],"pair-not-found")==0?PANEL_PAIRING_NOT_FOUND
+                 :strcmp(argv[2],"pair-expired")==0?PANEL_PAIRING_EXPIRED:PANEL_PAIRING_WAIT;
+        if(s.pairing==PANEL_PAIRING_WAIT){
+            strcpy(s.pair_code,"482913");strcpy(s.pair_pc,"steamdeck");
+            strcpy(s.pair_address,"192.168.178.20:8765");s.pair_can_cancel=true;
+        }
+    }
     /* The third page, with a game on it and its achievements under the
      * name. */
     if(argc>2&&strcmp(argv[2],"playing")==0){
@@ -174,7 +195,8 @@ int main(int argc,char **argv)
      * minutes set. "timer" has it running for 90 seconds, "alarm" has it
      * ringing, and "noclock" is a panel the network has not set yet. */
     bool clock=argc>2&&(strcmp(argv[2],"clock")==0||strcmp(argv[2],"timer")==0||
-                        strcmp(argv[2],"alarm")==0||strcmp(argv[2],"noclock")==0);
+                        strcmp(argv[2],"alarm")==0||strcmp(argv[2],"noclock")==0||
+                        strncmp(argv[2],"alarm-clock",11)==0);
     if(clock&&strcmp(argv[2],"noclock")!=0){
         s.clock_set=true;s.hour=18;s.minute=42;s.weekday=3;s.day=1;s.month=10;
     }
@@ -206,14 +228,27 @@ int main(int argc,char **argv)
             lv_tick_inc(25*60*1000);
             panel_ui_timer_tick();
         }
+        if(alarm_clock){
+            /* The time of the page, or a Thursday at 6:30 for the ring. */
+            panel_alarm_clock_t now={.known=true,.day=1,.weekday=3,.hour=18,.minute=42};
+            if(strcmp(argv[2],"alarm-clock-ring")==0)
+                now=(panel_alarm_clock_t){.known=true,.day=2,.weekday=4,.hour=6,.minute=30};
+            panel_ui_alarm_clock_tick(&now);
+            /* The button in the corner of the clock card, pressed by its
+             * event. */
+            lv_obj_t *clock_card=lv_obj_get_child(lv_obj_get_child(band,3),0);
+            if(strcmp(argv[2],"alarm-clock-set")==0)
+                lv_obj_send_event(lv_obj_get_child(clock_card,2),LV_EVENT_CLICKED,NULL);
+        }
     }
     /* The fifth page. "card" is 35 minutes of the board's machine: ten
      * idle, then a game, with a minute in it in which the PC did not
      * answer. "card-60" shows the hour, "card-empty" is a panel that just
-     * started, and "card-boost" has Cooling Boost on. */
+     * started, and "card-boost" has Cooling Boost on. Zero RPM is on in each. */
     if(argc>2&&strncmp(argv[2],"card",4)==0){
         s.boost_here=true;
         s.boost_on=strcmp(argv[2],"card-boost")==0;
+        s.zero_rpm_here=s.zero_rpm_on=true;
         if(strcmp(argv[2],"card-empty")!=0){
             uint32_t seed=7;
             panel_state_t t=s;
@@ -252,8 +287,11 @@ int main(int argc,char **argv)
      * a service that sends no colour, "led-look" the layer of the colour and
      * the brightness, "led-look-fire" that layer for a scene with colours of
      * its own, "led-none" a PC with no LED module, "led-applying" a tap that
-     * waits to go, and "led-refused" a change the PC refused for want of the
-     * sudo rule. */
+     * waits to go, "led-refused" a change the PC refused for want of the
+     * sudo rule, "led-mirror" the mirror in Game Mode with the line of its
+     * status and the button of its profile, "led-profiles" the menu of
+     * that button, and "led-mirror-desktop" the mirror of the desktop that
+     * waits for the share of the screen. */
     if(argc>2&&strncmp(argv[2],"led",3)==0){
         bool fire=strcmp(argv[2],"led-look-fire")==0;
         bool coloured=strcmp(argv[2],"led-colour")==0||strcmp(argv[2],"led-old")==0
@@ -266,6 +304,18 @@ int main(int argc,char **argv)
         snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"%s",
                  coloured?"breath":fire?"fire":"aurora");
         snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"fire");
+        bool profiles=strcmp(argv[2],"led-profiles")==0;
+        if(profiles||strcmp(argv[2],"led-mirror")==0){
+            snprintf(s.led_effect[PANEL_LED_GAME],PANEL_LED_KEY,"mirror");
+            s.led_mirror=(panel_led_mirror_t){.state="running",.fps=15,.cpu=12,.source="2560x1440"};
+            for(int m=0;m<PANEL_LED_MODES;m++)snprintf(s.led_profile[m],sizeof s.led_profile[m],"pop");
+        }
+        if(strcmp(argv[2],"led-mirror-desktop")==0){
+            snprintf(s.led_effect[PANEL_LED_DESKTOP],PANEL_LED_KEY,"mirror");
+            s.led_mirror=(panel_led_mirror_t){.state="asking"};
+            for(int m=0;m<PANEL_LED_MODES;m++)snprintf(s.led_profile[m],sizeof s.led_profile[m],"pop");
+            s.game_mode=false;
+        }
         panel_ui_update(&s);
         lv_obj_t *band=band_in(lv_screen_active());
         if(band){
@@ -277,6 +327,10 @@ int main(int argc,char **argv)
             if(fire)snprintf(said,sizeof said,"%s %d %%",panel_text(TXT_LED_BRIGHTNESS),50);
             else snprintf(said,sizeof said,"%s • %d %%",panel_text(TXT_COLOUR_ORANGE),50);
             lv_obj_t *words=find_label(lv_screen_active(),said);
+            if(words)lv_obj_send_event(lv_obj_get_parent(words),LV_EVENT_CLICKED,NULL);
+        }
+        if(profiles){
+            lv_obj_t *words=find_label(lv_screen_active(),panel_text(TXT_PROFILE_POP));
             if(words)lv_obj_send_event(lv_obj_get_parent(words),LV_EVENT_CLICKED,NULL);
         }
         bool applying=strcmp(argv[2],"led-applying")==0,refused=strcmp(argv[2],"led-refused")==0;
@@ -362,14 +416,20 @@ int main(int argc,char **argv)
         }
     }
     /* "standby" is the black cover of a sleeping panel with its clock, as
-     * main.c writes it: the time, and the day and the date under it. */
-    if(argc>2&&strcmp(argv[2],"standby")==0){
+     * main.c writes it: the time, and the day and the date under it.
+     * "standby-alarm" has the next ring of the alarm clock under them. */
+    if(argc>2&&(strcmp(argv[2],"standby")==0||strcmp(argv[2],"standby-alarm")==0)){
         lv_indev_t *input=lv_indev_create();
         lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);
         lv_indev_set_display(input,d);
-        char date[64];
+        char date[64],alarm[24]="";
         panel_text_date(date,sizeof date,4,8,10);
-        panel_ui_sleep_clock(d,"21:47",date);
+        if(alarm_clock){
+            panel_alarm_clock_t now={.known=true,.day=1,.weekday=4,.hour=21,.minute=47};
+            panel_ui_alarm_clock_tick(&now);
+            panel_ui_alarm_clock_next(alarm,sizeof alarm);
+        }
+        panel_ui_sleep_clock(d,"21:47",date,alarm);
         panel_ui_sleep(d,input,true);
     }
     lv_refr_now(d);

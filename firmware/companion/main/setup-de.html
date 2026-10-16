@@ -9,8 +9,8 @@ body{background:#101827;color:#f2f5fa;font:16px system-ui;margin:0;padding:24px;
 <main><h1>SteamOS-Panel einrichten</h1><p>Verbinde das Panel mit deinem Heimnetz und deinem SteamOS-PC.</p>
 <form id="setup"><label for="ssid">WLAN-Name (2,4 GHz)</label><input id="ssid" name="ssid" required maxlength="32" autocomplete="off">
 <label for="password">WLAN-Passwort</label><input id="password" name="password" required type="password" minlength="8" maxlength="64" autocomplete="new-password">
-<label for="server">PC-Adresse</label><input id="server" name="server" required value="http://192.168.178.50:8765" inputmode="url"><small>IP-Adresse deines PCs im Heimnetz.</small>
-<label for="token">Verbindungstoken</label><input id="token" name="token" required type="password" minlength="32" maxlength="127" autocomplete="off"><small>Aus ~/.config/steamos-utility-center/companion-token auf dem PC.</small>
+<details><summary>PC-Adresse und Token von Hand</summary><label for="server">PC-Adresse</label><input id="server" name="server" placeholder="http://192.168.178.50:8765" inputmode="url"><small>Leer lassen: Das Panel sucht deinen PC selbst.</small>
+<label for="token">Verbindungstoken</label><input id="token" name="token" type="password" minlength="32" maxlength="127" autocomplete="off"><small>Leer lassen: Das Panel zeigt einen Code, den du am PC annimmst. Von Hand: aus ~/.config/steamos-utility-center/companion-token auf dem PC.</small></details>
 <button id="save" type="submit">Speichern und verbinden</button></form><p id="result" role="status" aria-live="polite"></p></main>
 <script>
 const form=document.getElementById('setup'), output=document.getElementById('result'), button=document.getElementById('save');

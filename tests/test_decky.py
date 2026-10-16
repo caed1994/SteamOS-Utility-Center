@@ -315,6 +315,19 @@ class PageTest(unittest.TestCase):
             one = part[:part.index("/>")]
             self.assertNotIn("pegboard", one, one[:200])
 
+    def test_the_profile_of_the_mirror_is_there_with_the_mirror(self):
+        """Its names come from the command, as the effects of the board do."""
+        self.assertIn("labelled(held.strip?.offers?.MIRROR_PROFILE)",
+                      self.text)
+        self.assertIn('rainbow === "mirror" && (', self.text)
+        # The desktop has a profile of its own, beside its scene.
+        self.assertIn('scene === "mirror" && (', self.text)
+        self.assertIn('pick("strip", "DESKTOP_MIRROR_PROFILE", value)',
+                      self.text)
+        self.assertIn('pick("strip", "MIRROR_PROFILE", value)', self.text)
+        for name in ("Color Pop", "Cinematic"):
+            self.assertNotIn(name, self.text)
+
     def test_the_board_names_its_effects_from_the_command(self):
         """And not from a table in this file.
 
@@ -533,14 +546,29 @@ class PageTest(unittest.TestCase):
         one = one[:one.index("}, []);")]
         self.assertIn("!held.busy", one)
 
-    def test_there_is_no_timer(self):
+    def test_there_is_no_timer_but_the_one_for_a_pairing(self):
         """A page in a menu is opened, used and closed.
 
         A timer costs a fork for each answer while a game runs, and it was
         the reason the switches lost their state. The page reads when it
         opens and after each change, which is when an answer can differ.
+
+        One timer is there: the question for a panel that asks to pair. It
+        must reach a person while the page is closed. It reads one small
+        file in the backend, runs no command, and touches only the request.
         """
-        self.assertNotIn("setInterval", self.text)
+        self.assertEqual(self.text.count("setInterval"), 1)
+        self.assertIn("setInterval(() => void lookForPairing(), "
+                      "PAIRING_LOOK_MS)", self.text)
+        body = self.text[self.text.index("async function lookForPairing"):
+                         self.text.index("export default definePlugin")]
+        for call in ("getFullStatus", "getStatus", "getArea", "refresh",
+                     "held.status", "held.chosen"):
+            self.assertNotIn(call, body, call)
+        main = read("main.py")
+        backend = main[main.index("async def get_pairing"):
+                       main.index("async def answer_pairing")]
+        self.assertNotIn("_ctl", backend)
 
     def test_the_card_offers_what_lact_reports_and_no_list_of_its_own(self):
         """A control with no range is a control that this card does not have.
@@ -694,7 +722,7 @@ class BuiltTest(unittest.TestCase):
     def test_it_was_built_from_this_source(self):
         built = read("dist", "index.js")
         for sign in ("SteamOS Utility Center", "Rainbow slot", "RAINBOW_SHOWS",
-                     "get_full_status"):
+                     "get_full_status", "Mirror profile", "MIRROR_PROFILE"):
             self.assertIn(sign, built, sign)
 
 

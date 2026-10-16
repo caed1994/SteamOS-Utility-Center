@@ -307,7 +307,7 @@ class StandbyClockTest(unittest.TestCase):
     def test_the_same_text_draws_nothing(self):
         body = self.function(self.source("panel_ui_sleep.c"),
                              "void panel_ui_sleep_clock(")
-        same = body.index("strcmp(lv_label_get_text(cover_date), date) == 0) return;")
+        same = body.index("strcmp(lv_label_get_text(cover_alarm_text), alarm) == 0)) return;")
         self.assertLess(same, body.index("lv_display_enable_invalidation"))
 
     def test_a_sleeping_display_gets_its_invalidation_back(self):
@@ -579,6 +579,175 @@ class LogFloodTest(unittest.TestCase):
         # repeats is zeroed on a line that differs, and the write below
         # runs for every line that reaches it.
         self.assertRegex(body, r"repeats=0;")
+
+
+class SliderDragTest(unittest.TestCase):
+    """A slider that somebody drags, and the work that runs under it.
+
+    Reported from the board: the sliders of brightness and volume stopped
+    for a moment now and then, with the PC on and with it off. Two things
+    ran in the task that draws while a finger was down:
+
+    - the board support writes a line at each new brightness, and a drag
+      sets one at each read of the touch
+    - panel_ui_update wrote every label again at each new state, and with
+      no PC the state is new every 5 s: the power chip and the uptime
+
+    Measured on the host with the screen of this firmware and no PC, each
+    of those updates drew 14 areas again, 14 % of the screen. After the
+    change it draws none. check_idle holds that number.
+    """
+
+    UPDATE_PARTS = ("temperatures_show", "esp_power_show", "pads_head",
+                    "pads_show", "card_show", "name_show", "history_show",
+                    "pc_show", "self_show", "update_layer_show")
+    RAW = re.compile(r"lv_label_set_text(?:_fmt)?\(|"
+                     r"lv_obj_remove_flag\([^;]*LV_OBJ_FLAG_HIDDEN|"
+                     r"lv_obj_add_flag\([^;]*LV_OBJ_FLAG_HIDDEN|"
+                     r"lv_obj_set_style_(?:bg|text)_color\(")
+
+    def source(self, name):
+        with open(os.path.join(FIRMWARE, name), encoding="utf-8") as handle:
+            return without_comments(handle.read())
+
+    def function(self, code, name):
+        found = re.search(r"^(?:static )?void %s\([^;{]*\)\s*\{.*?\n\}" % name,
+                          code, re.S | re.M)
+        self.assertIsNotNone(found, name)
+        return found.group(0)
+
+    def test_the_board_support_writes_no_line_per_brightness(self):
+        code = self.source("main.c")
+        start = code.index("if (!panel_display_start())")
+        quiet = code.index('esp_log_level_set("ESP32-S3-Touch-LCD-4B",ESP_LOG_WARN);')
+        self.assertLess(start, quiet)
+
+    def test_the_update_writes_through_the_helpers(self):
+        code = self.source("ui.c")
+        update = self.function(code, "panel_ui_update")
+        # The setup page writes its long text itself and returns.
+        update = update[update.index("set_text(connection,"):]
+        self.assertEqual(self.RAW.findall(update), [])
+        for name in self.UPDATE_PARTS:
+            self.assertEqual(self.RAW.findall(self.function(code, name)), [], name)
+
+    def test_the_helpers_write_a_change_only(self):
+        code = self.source("ui.c")
+        text = self.function(code, "set_text")
+        self.assertLess(text.index("strcmp(lv_label_get_text(label),text)!=0"),
+                        text.index("lv_label_set_text(label,text)"))
+        self.assertIn("set_text(label,text);", self.function(code, "set_textf"))
+        self.assertIn("lv_color_eq(", self.function(code, "set_bg"))
+        self.assertIn("lv_color_eq(", self.function(code, "set_text_colour"))
+        self.assertIn("lv_obj_has_flag(o,LV_OBJ_FLAG_HIDDEN)!=shown)return;",
+                      self.function(code, "set_shown"))
+
+    def test_a_check_counts_what_an_update_with_no_pc_draws(self):
+        with open(os.path.join(REPO, "firmware", "companion", "preview",
+                               "check_idle.c"), encoding="utf-8") as handle:
+            check = without_comments(handle.read())
+        loop = check[check.index("off.self.uptime_s+=5;"):]
+        self.assertIn("assert(invalidations==0);", loop)
+
+
+class TouchZoneTest(unittest.TestCase):
+    """The place that takes each tap, 48 px each way.
+
+    Reported from the board: taps that did not land on some places. The hit
+    test of LVGL over every screen found zones of 28 to 46 px, most of them
+    the 44 of a button with no room past its edge. check_touch walks every
+    screen with that hit test and holds the size. These hold that the check
+    runs, and the rule that most of the buttons take their room from.
+    """
+
+    def read(self, *parts):
+        with open(os.path.join(REPO, *parts), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_every_button_takes_a_press_past_its_edge(self):
+        code = without_comments(self.read("firmware", "companion", "main", "ui.c"))
+        reach = re.search(r"#define BUTTON_REACH (\d+)", code)
+        self.assertIsNotNone(reach)
+        # 44 high, the height of most of them, and 48 with the room.
+        self.assertGreaterEqual(44 + 2 * int(reach.group(1)), 48)
+        button = re.search(r"static lv_obj_t \*button\(.*?\n\}", code, re.S).group(0)
+        self.assertIn("lv_obj_set_ext_click_area(b,BUTTON_REACH);", button)
+
+    def test_the_check_holds_48_and_runs_in_the_build(self):
+        check = self.read("firmware", "companion", "preview", "check_touch.c")
+        self.assertIn("#define ZONE 48", check)
+        self.assertIn("#define EDGE_ZONE 44", check)
+        self.assertIn("lv_indev_search_obj(", check)
+        cmake = self.read("firmware", "companion", "preview", "CMakeLists.txt")
+        self.assertIn("add_executable(check_touch check_touch.c ${PANEL_UI_SOURCES})", cmake)
+        with open(WORKFLOW, encoding="utf-8") as handle:
+            workflow = handle.read()
+        self.assertIn("./preview-build/check_touch", workflow)
+
+
+class PageSlideTest(unittest.TestCase):
+    """The pages over the band slide in from the right and out again.
+
+    Asked for: an animation for the pages of the settings, the controllers,
+    the PC and the panel, when they open and when they close. Only the
+    picture slides: for the rest of the screen each page opens and closes
+    at once. check_navigation drives the slides and draws their frames;
+    these hold that every page has one and that the panel switches them on.
+
+    Each page is built hidden and off the screen, and its slide starts at
+    the end of the build. A slide that starts before the build loses the
+    time of the build, and the page then opens nearly at once.
+    """
+
+    PAGES = ("settings_screen", "arrange_screen", "pads_screen", "pc_screen",
+             "self_screen")
+
+    def code(self, name):
+        with open(os.path.join(FIRMWARE, name), encoding="utf-8") as handle:
+            return without_comments(handle.read())
+
+    @staticmethod
+    def build(code, page):
+        """The part of the open function from the page to its end."""
+        start = code.index("%s=panel(lv_screen_active(),0,0,480,480,BG,false);" % page)
+        return code[start:code.index("\n}\n", start)]
+
+    def test_each_page_is_built_before_it_slides_in(self):
+        code = self.code("ui.c")
+        for page in self.PAGES:
+            build = self.build(code, page)
+            self.assertTrue(build.startswith(
+                "%s=panel(lv_screen_active(),0,0,480,480,BG,false);\n"
+                "    slide_ready(%s);" % (page, page)), page)
+            self.assertTrue(build.rstrip().endswith("slide_in(%s);" % page), page)
+            self.assertEqual(build.count("slide_in("), 1, page)
+
+    def test_each_page_slides_out_where_it_is_forgotten(self):
+        code = self.code("ui.c")
+        for page in self.PAGES:
+            self.assertIn("slide_out(%s);" % page, code)
+            self.assertNotIn("lv_obj_delete(%s)" % page, code)
+
+    def test_the_slides_are_short_and_the_page_deletes_itself(self):
+        code = self.code("ui.c")
+        for name in ("SLIDE_IN_MS", "SLIDE_OUT_MS"):
+            slide_ms = re.search(r"#define %s (\d+)" % name, code)
+            self.assertIsNotNone(slide_ms, name)
+            self.assertLessEqual(int(slide_ms.group(1)), 300, name)
+        self.assertIn("lv_obj_delete_anim_completed_cb", code)
+
+    def test_the_panel_switches_the_slides_on(self):
+        code = self.code("main.c")
+        self.assertLess(code.index("panel_ui_slides(true);"),
+                        code.index("panel_ui_create(action_send,"))
+
+    def test_the_check_drives_them(self):
+        with open(os.path.join(REPO, "firmware", "companion", "preview",
+                               "check_navigation.c"), encoding="utf-8") as handle:
+            check = without_comments(handle.read())
+        self.assertIn("panel_ui_slides(true);", check)
+        self.assertRegex(check, r"(?<![a-z_])slides\(\);")
+        self.assertIn("drawn_slides();", check)
 
 
 class DrawingStackTest(unittest.TestCase):

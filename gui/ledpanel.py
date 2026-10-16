@@ -27,6 +27,8 @@ from steamos_utility_center import phone
 from steamos_utility_center import nanoleaf as nanoleaf_module
 from steamos_utility_center import pegboard as pegboard_module
 from steamos_utility_center import power as power_module
+from steamos_utility_center import render as render_module
+from steamos_utility_center import screen as screen_module
 from steamos_utility_center import temperature
 from steamos_utility_center import wake as wake_module
 from steamos_utility_center import serialport
@@ -50,6 +52,7 @@ SERVICE = "steamos-utility-center.service"
 WATCHER = "steamos-utility-center-achievements.service"
 PHONE_BRIDGE = "steamos-utility-center-phone.service"
 COMPANION_SERVICE = "steamos-utility-center-companion.service"
+MIRROR_SERVICE = "steamos-utility-center-mirror.service"
 
 # The time to wait for an answer from KDE Connect. After this time, the panel
 # reports no answer. This time is shorter than the wait of the service,
@@ -325,6 +328,7 @@ class Part:
 REPAIR_LABELS = {
     "reinstall": "Rebuild and reinstall",
     "install-cec": "Reinstall HDMI CEC",
+    "ask-screen": "Ask again for the screen",
 }
 
 
@@ -352,6 +356,73 @@ def led_part(checks, installed=True):
         verdict = "%d of %d checks failed." % (len(problems), len(checks))
     return Part("led", "LED bar", not problems, verdict, checks,
                 repair="reinstall")
+
+
+# What the status page says for each state of the mirror: (ok, sentence). A
+# detail in the status takes the place of "%s".
+MIRROR_SAYS = {
+    screen_module.RUNNING: (True, "Runs."),
+    screen_module.STARTING: (True, "Starts."),
+    screen_module.WAITING: (True, "Waits for a picture. One comes when the "
+                                  "screen changes."),
+    screen_module.IDLE: (True, "Ready. It runs when the LED menu of Steam is "
+                               "on Rainbow."),
+    screen_module.NO_SCREEN: (True, "Ready. It runs in Game Mode, and on the "
+                                    "desktop with the scene Mirror."),
+    screen_module.ASKING: (True, "Waits for the share of the screen. Allow "
+                                 "it in the dialog of KDE."),
+    screen_module.REFUSED: (False, "The share of the screen is off. Ask "
+                                   "again to start it."),
+    screen_module.NO_PORTAL: (False, "The desktop has no screen cast portal: "
+                                     "%s."),
+    screen_module.BUSY: (True, "Paused, because %s reads the screen."),
+    screen_module.NO_GSTREAMER: (False, "GStreamer is not on this machine."),
+    screen_module.NO_PLUGIN: (False, "The GStreamer element %s is not on "
+                                     "this machine."),
+    screen_module.FAILED: (False, "The capture stopped: %s."),
+    screen_module.OFF: (False, "The LED service has no pipe for the mirror. "
+                               "It does not run, or it is older."),
+    screen_module.GONE: (False, "The capture service does not run."),
+}
+MIRROR_LOG = "journalctl --user -u steamos-utility-center-mirror -f"
+
+
+def mirror_part(rainbow_shows, status, profile=None, desktop_scene=None,
+                desktop_profile=None):
+    """Returns the mirror, or None while neither mode shows it.
+
+    The capture runs as a service of the user, and it writes what it does
+    into a file. `status` is that file, as screen.read_status gives it.
+    `profile` is MIRROR_PROFILE of the settings, for Game Mode, and
+    `desktop_scene` and `desktop_profile` are DESKTOP_SCENE and
+    DESKTOP_MIRROR_PROFILE. A refused share of the desktop screen gets a
+    button that asks again.
+    """
+    if render_module.SHOWS_MIRROR not in (rainbow_shows, desktop_scene):
+        return None
+    state = status.get("state", screen_module.GONE)
+    ok, said = MIRROR_SAYS.get(state, MIRROR_SAYS[screen_module.GONE])
+    if "%s" in said:
+        said = said % (status.get("detail") or "unknown")
+    detail = []
+    if state == screen_module.RUNNING:
+        if "fps" in status:
+            detail.append("Pictures each second: %g" % status["fps"])
+        if "cpu" in status:
+            detail.append("Processor: %g %% of one core" % status["cpu"])
+        if "source" in status:
+            detail.append("Screen: %s" % status["source"])
+    # The profile of each mode that shows the mirror.
+    for shows, name, where in ((rainbow_shows, profile, "in Game Mode"),
+                               (desktop_scene, desktop_profile,
+                                "on the desktop")):
+        if (shows == render_module.SHOWS_MIRROR
+                and name in screen_module.PROFILE_NAMES):
+            detail.append("Profile %s: %s"
+                          % (where, screen_module.PROFILE_NAMES[name]))
+    detail.append("Log: " + MIRROR_LOG)
+    return Part("mirror", "Mirror", ok, said, detail,
+                repair="ask-screen" if state == screen_module.REFUSED else "")
 
 
 def power_part(current, available):
@@ -1330,6 +1401,12 @@ def palette():
 # Not a list of its own: the service registers them, and a shape the panel
 # does not offer would be one nobody ever finds.
 
+def mirror_profiles():
+    """Menu entries for the profiles of the mirror, in the order of screen."""
+    return tuple((screen_module.PROFILE_NAMES[name], name)
+                 for name in screen_module.PROFILES)
+
+
 def rainbow_choices(names):
     """Menu entries for what the rainbow slot shows, in the service's order.
 
@@ -1344,6 +1421,7 @@ def rainbow_choices(names):
         "fire": "Fire",
         "aurora": "Aurora",
         "ooze": "Ooze",
+        "mirror": "Mirror the screen",
     }
     return tuple((labels.get(name, name.capitalize()), name) for name in names)
 
@@ -1861,6 +1939,15 @@ def panel_log_command(source_dir, port, seconds=COMPANION_LOG_SECONDS):
 def companion_running():
     """Whether the panel's service answers in this session."""
     return Probe().unit_active(COMPANION_SERVICE, user=True)
+
+
+def restart_mirror_command():
+    """Returns the command that starts the capture of the mirror again.
+
+    A new start forgets a refused share of the desktop screen, so the portal
+    asks again. A kept approval then starts with no dialog.
+    """
+    return ["systemctl", "--user", "restart", MIRROR_SERVICE]
 
 
 def restart_companion_command():

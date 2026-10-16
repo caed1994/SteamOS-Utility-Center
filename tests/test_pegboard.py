@@ -236,16 +236,18 @@ class ConfigTest(unittest.TestCase):
     def test_the_effects_are_the_renderer_s_without_the_load_gauge(self):
         """Derived and not written down, so a new effect reaches the board.
 
-        Three exceptions. The gauge draws two bars of a fixed colour on a
+        Four exceptions. The gauge draws two bars of a fixed colour on a
         strip, which reads as a meter behind a case and as two coloured stubs
-        on a board. The wave is the board's own, because the fold it needs is
-        the geometry of this board and not an effect. The patrol is an effect
-        of Steam's own and not one of the slot, so the list it comes from
-        does not hold it.
+        on a board. The mirror needs the pictures of the screen, and only
+        the service of the bar gets them. The wave is the board's own,
+        because the fold it needs is the geometry of this board and not an
+        effect. The patrol is an effect of Steam's own and not one of the
+        slot, so the list it comes from does not hold it.
         """
         self.assertEqual(
             set(pegboard.EFFECTS),
-            (set(render.RAINBOW_CHOICES) - {render.SHOWS_LOAD})
+            (set(render.RAINBOW_CHOICES)
+             - {render.SHOWS_LOAD, render.SHOWS_MIRROR})
             | {pegboard.SHOWS_RAINBOW_WAVE, pegboard.SHOWS_PATROL})
         for name in pegboard.EFFECTS:
             values = dict(pegboard.DEFAULTS, EFFECT=name)

@@ -32,7 +32,7 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "server"))
 
-from steamos_utility_center import notify, render, service, shim  # noqa: E402
+from steamos_utility_center import notify, render, screen, service, shim  # noqa: E402
 
 FPS = 14                    # smooth enough for these, and every frame is bytes
 LEDS = shim.LOGICAL_LEDS
@@ -160,12 +160,16 @@ class Scripted:
     def __init__(self):
         self.temperature = 0.0
         self.load = (0.0, 0.0)
+        self.picture = screen.demo(0.0)
 
     def celsius(self, now=None):
         return self.temperature
 
     def fractions(self, now=None):
         return self.load
+
+    def colours(self, now=None):
+        return self.picture
 
 
 def renderer(**kwargs):
@@ -245,6 +249,13 @@ def scripted():
     return sensor, warm, busy
 
 
+def watch(sensor):
+    """Returns the walk of the made-up screen of the mirror."""
+    def look(fraction):
+        sensor.picture = screen.demo(fraction)
+    return look
+
+
 def build_previews(out):
     """Returns the animations of the README: some short and small clips."""
     sensor, warm, busy = scripted()
@@ -265,6 +276,10 @@ def build_previews(out):
         "temperature": lambda: sweep(8.0, sensor,
                                      renderer(temperature=sensor), warm),
         "load": lambda: sweep(8.0, sensor, renderer(load=sensor), busy),
+        "mirror": lambda: sweep(8.0, sensor, renderer(screen=sensor,
+                                                      rainbow_shows=render
+                                                      .SHOWS_MIRROR),
+                                watch(sensor)),
         "startup": lambda: firmware_breath(service.STARTUP_COLOR,
                                            service.STARTUP_PERIOD_MS),
         "standby": lambda: firmware_breath(service.STANDBY_COLOR,
@@ -373,6 +388,8 @@ def build_catalogue(path):
         "temperature": page_pixels(16.0, gauge(renderer(temperature=sensor),
                                                warm)),
         "load": page_pixels(14.0, gauge(renderer(load=sensor), busy)),
+        "mirror": page_pixels(16.0, gauge(renderer(
+            screen=sensor, rainbow_shows=render.SHOWS_MIRROR), watch(sensor))),
         "startup": page_pixels(0, breath(service.STARTUP_COLOR,
                                          service.STARTUP_PERIOD_MS)),
         "standby": page_pixels(0, breath(service.STANDBY_COLOR,

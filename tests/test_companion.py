@@ -20,9 +20,11 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
@@ -32,7 +34,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "server"))
 sys.path.insert(0, os.path.join(REPO, "gui"))
 
-from steamos_utility_center import companion, temperature      # noqa: E402
+from steamos_utility_center import companion, screen, temperature  # noqa: E402
 import ledpanel                                                 # noqa: E402
 
 TOKEN = "x" * 32
@@ -342,9 +344,20 @@ class AnswerSizeTest(unittest.TestCase):
                                   return_value={"desktop": longest,
                                                 "game": longest,
                                                 "desktop_color": "#ffffff",
-                                                "desktop_brightness": 255}), \
-                mock.patch.object(companion._boost, "read",
-                                  return_value=False), \
+                                                "desktop_brightness": 255,
+                                                "mirror": {
+                                                    "state": max(
+                                                        screen.STATES,
+                                                        key=len),
+                                                    "detail": "D" * screen
+                                                    .DETAIL_CHARS,
+                                                    "fps": 999.9,
+                                                    "cpu": 9999.9,
+                                                    "source":
+                                                    "65535x65535"}}), \
+                mock.patch.object(companion, "_boost", mock.Mock(
+                    read=mock.Mock(return_value=False),
+                    zero_rpm=mock.Mock(return_value=False))), \
                 mock.patch.object(companion, "cpu",
                                   return_value={
                                       "profile": "performance",
@@ -465,6 +478,7 @@ class TelemetryTest(unittest.TestCase):
                          {"cpu_c": None, "gpu_c": None, "gpu_w": None,
                           "gpu_load": None, "vram_used": None,
                           "vram_total": None, "gpu_mhz": None,
+                          "gpu_mhz_max": None,
                           "cpu_sensors": [], "gpu_sensors": []})
 
     # The board: an RX 9070 XT at work, with 9.8 of 16 GB in use and the
@@ -474,14 +488,33 @@ class TelemetryTest(unittest.TestCase):
             "freq2_input": 1258000000, "freq2_label": "mclk",
             "device/gpu_busy_percent": 87,
             "device/mem_info_vram_used": 10522460160,
-            "device/mem_info_vram_total": 17163091968}
+            "device/mem_info_vram_total": 17163091968,
+            "device/pp_dpm_sclk": "0: 500Mhz\n1: 2450Mhz *\n2: 2970Mhz"}
 
     def test_the_load_the_memory_and_the_clock_of_the_card(self):
         said = companion.telemetry(self.machine([("amdgpu", self.CARD)]))
         self.assertEqual({key: said[key] for key in
-                          ("gpu_load", "vram_used", "vram_total", "gpu_mhz")},
+                          ("gpu_load", "vram_used", "vram_total", "gpu_mhz",
+                           "gpu_mhz_max")},
                          {"gpu_load": 87, "vram_used": 10522460160,
-                          "vram_total": 17163091968, "gpu_mhz": 2450})
+                          "vram_total": 17163091968, "gpu_mhz": 2450,
+                          "gpu_mhz_max": 2970})
+
+    def test_the_top_of_the_clock_is_its_highest_level(self):
+        """The level in use has a star, and a card in deep sleep reports a
+        level "S" under the numbered ones. Neither changes the top."""
+        levels = "S: 19Mhz\n0: 500Mhz *\n1: 3100Mhz\n2: 2615Mhz"
+        card = dict(self.CARD, **{"device/pp_dpm_sclk": levels})
+        said = companion.telemetry(self.machine([("amdgpu", card)]))
+        self.assertEqual(said["gpu_mhz_max"], 3100)
+        for levels in ("", "S: 19Mhz *", "0: fast"):
+            card = dict(self.CARD, **{"device/pp_dpm_sclk": levels})
+            said = companion.telemetry(self.machine([("amdgpu", card)]))
+            self.assertIsNone(said["gpu_mhz_max"], levels)
+        card = {key: value for key, value in self.CARD.items()
+                if key != "device/pp_dpm_sclk"}
+        said = companion.telemetry(self.machine([("amdgpu", card)]))
+        self.assertIsNone(said["gpu_mhz_max"])
 
     def test_they_come_from_the_card_and_not_the_graphics_part(self):
         """The Ryzen has its own amdgpu chip, busy with nothing. The values
@@ -509,11 +542,13 @@ class TelemetryTest(unittest.TestCase):
     def test_what_cannot_be_is_no_reading(self):
         card = dict(self.CARD, **{"device/gpu_busy_percent": 140,
                                   "device/mem_info_vram_used": 17163091969,
-                                  "freq1_input": 20000000000})
+                                  "freq1_input": 20000000000,
+                                  "device/pp_dpm_sclk": "0: 20000Mhz"})
         said = companion.telemetry(self.machine([("amdgpu", card)]))
         self.assertEqual((said["gpu_load"], said["vram_used"],
-                          said["vram_total"], said["gpu_mhz"]),
-                         (None, None, None, None))
+                          said["vram_total"], said["gpu_mhz"],
+                          said["gpu_mhz_max"]),
+                         (None, None, None, None, None))
 
     def test_a_reading_outside_the_possible_is_no_reading(self):
         root = self.machine([("k10temp", {"temp1_input": 4000000})])
@@ -787,14 +822,20 @@ class ServiceTest(unittest.TestCase):
 
 
 class BoostTest(unittest.TestCase):
-    """Cooling Boost: its state in the status, and its two presses."""
+    """Cooling Boost and zero RPM: their state in the status, and their
+    presses."""
 
     BOOSTED = {"fan_control_enabled": True,
                "fan_control_settings": {"mode": "static",
                                         "static_speed": 1.0}}
     CARD = {"fan_control_enabled": False}
 
-    def daemon(self, config=None, devices=None, refuse=None):
+    @staticmethod
+    def stats(zero_rpm):
+        """What the card reports of its firmware fan settings."""
+        return {"fan": {"pmfw_info": {"zero_rpm_enable": zero_rpm}}}
+
+    def daemon(self, config=None, devices=None, refuse=None, stats=None):
         """A LACT daemon that answers each question, and the questions it
         got."""
         asked = []
@@ -805,6 +846,8 @@ class BoostTest(unittest.TestCase):
                 raise companion.lact.LactError(refuse)
             if name == "list_devices":
                 return [{"id": "1002:744C"}] if devices is None else devices
+            if name == "device_stats":
+                return {} if stats is None else stats
             return self.BOOSTED if config is None else config
 
         for patcher in (mock.patch.object(companion.lact, "available",
@@ -845,42 +888,87 @@ class BoostTest(unittest.TestCase):
         asked = self.daemon()
         companion.BoostState().read()
         self.assertEqual([wait for _, wait in asked],
-                         [companion.BOOST_WAIT] * 2)
-        self.assertLess(2 * companion.BOOST_WAIT, 4)
+                         [companion.BOOST_WAIT] * 3)
+        self.assertLess(3 * companion.BOOST_WAIT, 4)
 
-    def test_one_pair_of_questions_in_its_time_at_the_most(self):
+    def test_one_set_of_questions_in_its_time_at_the_most(self):
+        """For both answers: zero RPM comes from the same questions."""
         asked = self.daemon()
         now = [100.0]
         state = companion.BoostState(clock=lambda: now[0])
         state.read()
         now[0] += companion.BOOST_EVERY - 0.1
         state.read()
-        self.assertEqual(len(asked), 2)
+        state.zero_rpm()
+        self.assertEqual(len(asked), 3)
         now[0] += 0.1
+        state.zero_rpm()
         state.read()
-        self.assertEqual(len(asked), 4)
+        self.assertEqual(len(asked), 6)
 
     def test_a_press_makes_the_next_status_ask_again(self):
         asked = self.daemon()
         state = companion.BoostState(clock=lambda: 100.0)
         state.read()
         with mock.patch.object(companion, "_boost", state):
-            self.assertEqual(companion.boost_press("gpu-boost-on",
+            self.assertEqual(companion.boost_press("gpu-zero-rpm-on",
                                                    run=lambda: None)[0], 200)
         state.read()
-        self.assertEqual(len(asked), 4)
+        self.assertEqual(len(asked), 6)
+
+    def test_zero_rpm_is_the_setting_of_lact_or_the_card(self):
+        """LACT holds zero RPM off on the card for a static speed and puts
+        its setting back after it. So the setting is the answer, and the
+        card answers where LACT has none."""
+        self.daemon(config=self.CARD, stats=self.stats(True))
+        self.assertIs(companion.BoostState().zero_rpm(), True)
+        held = dict(self.BOOSTED, pmfw_options={"zero_rpm": True})
+        self.daemon(config=held, stats=self.stats(False))
+        self.assertIs(companion.BoostState().zero_rpm(), True)
+        self.daemon(config=dict(self.CARD, pmfw_options={"zero_rpm": False}),
+                    stats=self.stats(True))
+        self.assertIs(companion.BoostState().zero_rpm(), False)
+
+    def test_a_card_without_zero_rpm_has_no_button(self):
+        """The card reports the setting where its file exists. A setting in
+        the config of LACT does not make a card that has none."""
+        self.daemon(config=dict(self.CARD, pmfw_options={"zero_rpm": True}))
+        self.assertIsNone(companion.BoostState().zero_rpm())
+
+    def test_no_stats_take_zero_rpm_away_and_not_the_boost(self):
+        asked = []
+
+        def talk(name, path=None, args=None, timeout=None):
+            asked.append(name)
+            if name == "list_devices":
+                return [{"id": "1002:744C"}]
+            if name == "device_stats":
+                raise companion.lact.LactError("no stats")
+            return self.BOOSTED
+
+        with mock.patch.object(companion.lact, "available", return_value=True), \
+                mock.patch.object(companion.lact, "talk", side_effect=talk):
+            state = companion.BoostState()
+            self.assertIs(state.read(), True)
+            self.assertIsNone(state.zero_rpm())
+        self.assertEqual(asked, ["list_devices", "get_gpu_config", "device_stats"])
 
     def test_each_press_names_where_to_go(self):
         """Not a toggle: the status the panel has is up to three seconds
         old."""
         ran = []
         actions = {name: (lambda name=name: ran.append(name))
-                   for name in ("gpu-boost-on", "gpu-boost-off")}
+                   for name in ("gpu-boost-on", "gpu-boost-off",
+                                "gpu-zero-rpm-on", "gpu-zero-rpm-off")}
         with mock.patch.dict(companion.ctl.ACTION, actions):
             self.assertEqual(companion.press("gpu_boost_on"), (200, {"ok": True}))
             self.assertEqual(companion.press("gpu_boost_off")[0], 200)
-        self.assertEqual(ran, ["gpu-boost-on", "gpu-boost-off"])
+            self.assertEqual(companion.press("gpu_zero_rpm_on")[0], 200)
+            self.assertEqual(companion.press("gpu_zero_rpm_off")[0], 200)
+        self.assertEqual(ran, ["gpu-boost-on", "gpu-boost-off",
+                               "gpu-zero-rpm-on", "gpu-zero-rpm-off"])
         self.assertEqual(companion.press("gpu_boost"), (400, {"error": "unsupported action"}))
+        self.assertEqual(companion.press("gpu_zero_rpm"), (400, {"error": "unsupported action"}))
 
     def test_a_refusal_comes_back_as_its_own_code(self):
         def refuse(error):
@@ -896,8 +984,17 @@ class BoostTest(unittest.TestCase):
                     code, error)
 
     def test_the_status_carries_it(self):
-        with mock.patch.object(companion._boost, "read", return_value=True):
-            self.assertIs(companion.status("127.0.0.1", TOKEN)["boost"], True)
+        with mock.patch.object(companion._boost, "read", return_value=True), \
+                mock.patch.object(companion._boost, "zero_rpm", return_value=False):
+            said = companion.status("127.0.0.1", TOKEN)
+        self.assertIs(said["boost"], True)
+        self.assertIs(said["zero_rpm"], False)
+
+    def test_a_refusal_of_zero_rpm_says_why(self):
+        def run():
+            raise companion.ctl.CtlError("the card has no zero RPM")
+        self.assertEqual(companion.boost_press("gpu-zero-rpm-on", run=run),
+                         (501, {"error": "the card has no zero RPM"}))
 
     def test_every_press_the_panel_sends_is_one_the_service_knows(self):
         """Two ends of one wire. A press with a name only the panel knows
@@ -910,6 +1007,8 @@ class BoostTest(unittest.TestCase):
         names = re.findall(r'"([a-z_]+)"', table.group(1))
         self.assertIn("gpu_boost_on", names)
         self.assertIn("gpu_boost_off", names)
+        self.assertIn("gpu_zero_rpm_on", names)
+        self.assertIn("gpu_zero_rpm_off", names)
         for name in names:
             self.assertTrue(name in companion.ACTIONS
                             or name in companion.BOOST_PRESSES, name)
@@ -1090,7 +1189,44 @@ class LedTest(unittest.TestCase):
         self.assertEqual(companion.led(reader, present=lambda path: True),
                          {"desktop": "fire", "game": "ooze",
                           "desktop_color": "#ff8000",
-                          "desktop_brightness": 200})
+                          "desktop_brightness": 200,
+                          "mirror_profile": "pop",
+                          "desktop_mirror_profile": "pop"})
+
+    def test_the_profile_of_the_mirror_comes_from_the_file(self):
+        reader = companion.LedSettings(self.settings(
+            "RAINBOW_SHOWS=mirror\nMIRROR_PROFILE=cinematic\n"
+            "DESKTOP_MIRROR_PROFILE=solid\n"))
+        found = companion.led(reader, present=lambda path: True,
+                              mirror=lambda: {"state": "idle"})
+        # Each mode has its own.
+        self.assertEqual(found["mirror_profile"], "cinematic")
+        self.assertEqual(found["desktop_mirror_profile"], "solid")
+
+    def test_the_mirror_says_what_it_does(self):
+        """Only with the mirror in Game Mode: the panel shows it below that
+        effect, and the status of each other effect stays small."""
+        said = {"state": "running", "fps": 15.0, "cpu": 1.2}
+        reader = companion.LedSettings(self.settings("RAINBOW_SHOWS=mirror\n"))
+        found = companion.led(reader, present=lambda path: True,
+                              mirror=lambda: said)
+        self.assertEqual(found["game"], "mirror")
+        self.assertEqual(found["mirror"], said)
+        reader = companion.LedSettings(self.settings("RAINBOW_SHOWS=fire\n"))
+        found = companion.led(reader, present=lambda path: True,
+                              mirror=lambda: said)
+        self.assertNotIn("mirror", found)
+
+    def test_the_mirror_status_comes_from_the_runtime_directory(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        with open(os.path.join(root, screen.STATUS_NAME), "w") as handle:
+            json.dump({"state": "busy", "detail": "steam",
+                       "at": time.time()}, handle)
+        reader = companion.LedSettings(self.settings("RAINBOW_SHOWS=mirror\n"))
+        with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": root}):
+            found = companion.led(reader, present=lambda path: True)
+        self.assertEqual(found["mirror"], {"state": "busy", "detail": "steam"})
 
     def test_what_the_file_leaves_out_is_the_default(self):
         for text in ("LED_COUNT=17\n", None):
@@ -1098,7 +1234,11 @@ class LedTest(unittest.TestCase):
             self.assertEqual(reader.read(),
                              {"desktop": "steam", "game": "rainbow",
                               "desktop_color": "#ffffff",
-                              "desktop_brightness": 128}, text)
+                              "desktop_brightness": 128,
+                              "mirror_profile": screen.DEFAULT_PROFILE,
+                              "desktop_mirror_profile":
+                                  screen.DEFAULT_PROFILE},
+                             text)
 
     def test_each_form_of_a_colour_comes_in_the_form_of_the_panel(self):
         """The file takes "#RRGGBB", "r,g,b" and the name of a kind of
@@ -1166,6 +1306,17 @@ class LedChangeTest(unittest.TestCase):
         (code, _), wrote = self.change({"desktop": "off", "game": "load"})
         self.assertEqual(wrote, [{"DESKTOP_SCENE": "off",
                                   "RAINBOW_SHOWS": "load"}])
+
+    def test_each_profile_of_the_mirror_can_be_chosen(self):
+        for key, name in (("mirror_profile", "MIRROR_PROFILE"),
+                          ("desktop_mirror_profile", "DESKTOP_MIRROR_PROFILE")):
+            for profile in screen.PROFILES:
+                (code, _), wrote = self.change({key: profile})
+                self.assertEqual((code, wrote), (200, [{name: profile}]),
+                                 profile)
+            (code, _), wrote = self.change({key: "disco"})
+            self.assertEqual((code, wrote), (400, []))
+            self.assertEqual(companion.LED_MIRROR[key], (name, screen.PROFILES))
 
     def test_every_effect_of_the_service_can_be_chosen(self):
         for key, (name, allowed) in companion.LED_CHOICES.items():
@@ -1421,11 +1572,110 @@ class NonceTest(unittest.TestCase):
         self.assertEqual(len(values), 400)
 
 
+class PairServiceTest(unittest.TestCase):
+    """A new panel pairs over HTTP, and its new secret then signs."""
+
+    PANEL = bytes(range(1, 33))
+    PC = bytes(range(101, 133))
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.path = os.path.join(self.folder, "config", "companion-token")
+        self.secret = companion.Secret(TOKEN, self.path)
+        self.nonces = companion.Nonces()
+        self.pair = companion.pairing.Pairing(
+            folder=self.folder, random=lambda size: self.PC, name="deck")
+        httpd = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            companion.make_handler(self.secret, self.nonces, pair=self.pair))
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        self.conn = HTTPConnection("127.0.0.1", httpd.server_port)
+        self.addCleanup(self.conn.close)
+
+    def send(self, method, path, body=b"", headers=None):
+        self.conn.request(method, path, body, headers or {})
+        answer = self.conn.getresponse()
+        return answer.status, json.loads(answer.read() or b"null")
+
+    def signed(self, token, path="/v1/status"):
+        nonce = self.nonces.issue()
+        return self.send("GET", path, headers={
+            companion.NONCE_HEADER: nonce,
+            companion.AUTH_HEADER: companion.signature(token, "GET", path,
+                                                       nonce, b"")})[0]
+
+    def ask(self):
+        key = companion.pairing.public_key(self.PANEL).hex()
+        return self.send("POST", companion.PAIR_PATH, json.dumps(
+            {"name": "SteamOS-Panel-A1B2", "key": key}).encode(),
+            {"Content-Type": "application/json"})
+
+    def expected(self):
+        panel_key = companion.pairing.public_key(self.PANEL)
+        pc_key = companion.pairing.public_key(self.PC)
+        shared = companion.pairing.shared_secret(self.PANEL, pc_key)
+        return companion.pairing.derive(shared, panel_key, pc_key)
+
+    def test_a_panel_pairs_and_its_new_secret_signs(self):
+        code, said = self.ask()
+        self.assertEqual(code, 200)
+        self.assertEqual(said["key"],
+                         companion.pairing.public_key(self.PC).hex())
+        path = "%s/%s" % (companion.PAIR_PATH, said["id"])
+        self.assertEqual(self.send("GET", path), (200, {"state": "waiting"}))
+        companion.pairing.answer(said["id"], True, folder=self.folder)
+        self.assertEqual(self.send("GET", path), (200, {"state": "accepted"}))
+        new, _code = self.expected()
+        with open(self.path) as handle:
+            self.assertEqual(handle.read().strip(), new)
+        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
+        self.assertEqual(self.signed(new), 200)
+        self.assertEqual(self.signed(TOKEN), 401)
+
+    def test_a_refusal_keeps_the_old_secret(self):
+        _, said = self.ask()
+        companion.pairing.answer(said["id"], False, folder=self.folder)
+        self.assertEqual(
+            self.send("GET", "%s/%s" % (companion.PAIR_PATH, said["id"])),
+            (200, {"state": "refused"}))
+        self.assertFalse(os.path.exists(self.path))
+        self.assertEqual(self.signed(TOKEN), 200)
+
+    def test_only_the_paths_of_the_pairing_need_no_signature(self):
+        self.assertEqual(self.send("GET", "/v1/status")[0], 401)
+        self.assertEqual(self.send("GET", companion.PAIR_PATH + "/x")[0], 401)
+        self.assertEqual(
+            self.send("GET", companion.PAIR_PATH + "/" + "0" * 16)[0], 404)
+
+    def test_a_bad_request_to_pair_is_refused(self):
+        for body in (b"{", b"[]", json.dumps({"key": "00"}).encode()):
+            self.assertEqual(self.send("POST", companion.PAIR_PATH, body)[0],
+                             400, body)
+        self.assertEqual(self.send("POST", companion.PAIR_PATH,
+                                   b"x" * (companion.BODY_LIMIT + 1))[0], 400)
+
+    def test_a_service_with_no_token_refuses_each_signature(self):
+        """An HMAC with an empty key is still an HMAC. A panel that knows
+        that the PC has no secret yet must not get in with one."""
+        empty = companion.make_handler("", self.nonces, pair=self.pair)
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), empty)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        self.conn = HTTPConnection("127.0.0.1", httpd.server_port)
+        self.assertEqual(self.signed(""), 401)
+
+
 class TokenTest(unittest.TestCase):
     def test_a_missing_file_gives_a_sentence_and_not_a_traceback(self):
-        with self.assertRaises(SystemExit) as caught:
-            companion.read_token("/does/not/exist")
-        self.assertIn("companion module", str(caught.exception))
+        """And the service runs: a pairing writes the file."""
+        with mock.patch.object(companion.sys, "stderr") as said:
+            self.assertEqual(companion.read_token("/does/not/exist"), "")
+        self.assertIn("Pair a panel", "".join(
+            str(call.args[0]) for call in said.write.call_args_list))
 
     def test_a_short_token_is_refused(self):
         with tempfile.NamedTemporaryFile("w", suffix=".token",
