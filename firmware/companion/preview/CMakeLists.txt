@@ -75,6 +75,13 @@ add_executable(check_touch check_touch.c ${PANEL_UI_SOURCES})
 target_include_directories(check_touch PRIVATE ../main)
 target_link_libraries(check_touch PRIVATE lvgl m)
 target_compile_options(check_touch PRIVATE -UNDEBUG)
+# check_walk takes ways over every screen at random. See check_walk.c. The
+# job walks a few seeds, and tools/panel-walk.sh walks many of them with
+# AddressSanitizer.
+add_executable(check_walk check_walk.c ${PANEL_UI_SOURCES})
+target_include_directories(check_walk PRIVATE ../main)
+target_link_libraries(check_walk PRIVATE lvgl m)
+target_compile_options(check_walk PRIVATE -UNDEBUG)
 add_executable(check_boot check_boot.c ../main/panel_boot.c)
 target_include_directories(check_boot PRIVATE ../main)
 target_link_libraries(check_boot PRIVATE lvgl m)

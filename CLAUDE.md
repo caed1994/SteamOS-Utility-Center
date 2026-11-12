@@ -128,6 +128,8 @@ Facts about LVGL that cost time:
 - `LV_DISPLAY_RENDER_MODE_FULL` sends no `LV_EVENT_INVALIDATE_AREA`. A refresh also sends that event as a probe from `get_max_row`.
 - `lv_obj_get_width` returns 0 before the layout runs. Call `lv_obj_update_layout` first.
 - A label draws a margin of a quarter of its line height past its box.
+- LVGL counts the bytes of a character by its first byte (`lv_text_utf8_get_byte_id`). A label with an ellipsis thus reads past a text that ends in the middle of a character. `main.c` cuts a long name of the PC at a byte, so each text of a label goes through `panel_text_whole` (`text_at`, `set_text`).
+- A page that slides out stays on the screen for 220 ms, and a press that began on it goes on. `inert` takes the handlers of each object on it. A slider under a finger otherwise writes into a label that the page forgot.
 
 ## 6. Hard limits
 
@@ -143,7 +145,8 @@ Facts about LVGL that cost time:
 | One module | `python3.12 -m pytest -q tests/test_<name>.py` |
 | Full suite (about 3650 tests, 9 min) | `xvfb-run -a python3.12 -m pytest -q -p no:cacheprovider` |
 | Prose check, must report 0 | `python3 tools/ste-check.py --quiet` |
-| Screen checks | `cmake -S firmware/companion/preview -B <dir>`, then build and run `check_power check_idle check_navigation check_boot check_wol check_pages check_touch` |
+| Screen checks | `cmake -S firmware/companion/preview -B <dir>`, then build and run `check_power check_idle check_navigation check_boot check_wol check_pages check_touch`, and `check_walk <seed> 1500` for the seeds 1 to 6 |
+| Random walk with AddressSanitizer | `tools/panel-walk.sh [first seed] [seeds] [operations]`: builds LVGL and `check_walk` with ASan and UBSan and walks each seed (20 seeds of 3000 operations take about 10 min). A seed that fails keeps its log |
 | Draw a screen to a file | `<dir>/panel_preview out.ppm <mode> [de]` (modes in `preview.c`) |
 | LED client parser | `./tests/firmware/run.sh` (needs g++) |
 
@@ -152,6 +155,8 @@ Notes for the checks:
 - `python3` in the cloud container has no tkinter. Use `python3.12`, and `xvfb-run` for `tests/test_panel_live.py`.
 - The C harnesses build with `-Wall -Wextra -Werror`. A build error is a failed test.
 - The screen checks need LVGL v9.5.0 in `firmware/companion/managed_components/lvgl__lvgl` (clone it from GitHub).
+- `check_walk` takes random ways over the screens: answers of the PC, taps, swipes, the keys and time. The same seed takes the same way. It found the two faults in the list of LVGL facts above, which no written check took.
+- A new cloud container can be without pytest, tkinter and the mbedtls headers. Then make a venv with `--system-site-packages`, install pytest in it, and `apt-get install python3-tk libmbedtls-dev`. Without the headers, the tests of the pairing, the signature and the update skip.
 
 ## 8. Build, CI and the board
 

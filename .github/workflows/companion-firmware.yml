@@ -154,7 +154,7 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Debug
           cmake --build preview-build --target check_power check_idle \
                 check_navigation check_boot check_wol check_pages check_touch \
-                panel_preview -j"$(nproc)"
+                check_walk panel_preview -j"$(nproc)"
           ./preview-build/check_power
           # check_wol needs no LVGL. It is here because this is where the
           # checks of the firmware run.
@@ -168,6 +168,13 @@ jobs:
           # check_touch walks every screen with the hit test of LVGL and
           # holds the size of the place that takes each tap.
           ./preview-build/check_touch
+          # check_walk takes ways over the screens at random, the same ways
+          # for the same seed. A walk that stops ends at the time limit, and
+          # that fails this step. tools/panel-walk.sh walks more seeds with
+          # AddressSanitizer on your own machine.
+          for seed in 1 2 3 4 5 6; do
+            timeout 120 ./preview-build/check_walk "$seed" 1500
+          done
           # panel_preview draws the screen into a file. It answers nothing,
           # and building and running it is the point: it went stale twice
           # while nothing built it. tests/test_preview_checks.py holds that
