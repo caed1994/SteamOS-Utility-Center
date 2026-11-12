@@ -260,6 +260,9 @@
                            "on your own network.", \
                            "Gespeichert. Das Panel startet neu. Verbinde " \
                            "dein Handy wieder mit deinem Heim-WLAN.") \
+    X(TXT_FORM_LONG,       "The data is too long.", "Daten zu lang.") \
+    X(TXT_FORM_NOT_SAVED,  "The panel could not save it.", \
+                           "Speichern fehlgeschlagen.") \
     X(TXT_MODE,            "Session", "Sitzung") \
     X(TXT_MODE_GAME,       "Game Mode", "Spielmodus") \
     X(TXT_MODE_DESKTOP,    "Desktop", "Desktop") \

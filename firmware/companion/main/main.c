@@ -218,7 +218,7 @@ static void setting_set(panel_setting_t key,int value,bool save)
     }
     if(result!=ESP_OK){
         xSemaphoreTake(lock,portMAX_DELAY);
-        snprintf(state.message,sizeof(state.message),panel_text(TXT_NOT_CONFIRMED));
+        snprintf(state.message,sizeof(state.message),"%s",panel_text(TXT_NOT_CONFIRMED));
         xSemaphoreGive(lock);
     }
 }
@@ -624,7 +624,7 @@ static void action_send(panel_action_t action)
 {
     if (xQueueSend(actions,&action,0)!=pdTRUE) {
         xSemaphoreTake(lock,portMAX_DELAY);
-        snprintf(state.message,sizeof(state.message),panel_text(TXT_WAIT));
+        snprintf(state.message,sizeof(state.message),"%s",panel_text(TXT_WAIT));
         xSemaphoreGive(lock);
     }
 }

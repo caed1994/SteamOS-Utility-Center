@@ -396,7 +396,7 @@ class NoGermanInTheCodeTest(unittest.TestCase):
              "Verbinde", "Tastentoene", "Helligkeit", "Ausschalten",
              "Neustart", "Stumm", "gespeichert", "Lautsprecher",
              "Änderungen", "Lautstärke", "Zurück", "Bestätigen",
-             "Tastentöne", "Berührung")
+             "Tastentöne", "Berührung", "Daten zu lang", "fehlgeschlagen")
 
     def source(self, name):
         with open(os.path.join(FIRMWARE, name)) as handle:
@@ -413,6 +413,14 @@ class NoGermanInTheCodeTest(unittest.TestCase):
             found = [word for word in self.WORDS if word in text]
             self.assertEqual(found, [], "%s: these belong in panel_text.h"
                              % name)
+
+    def test_a_text_of_the_table_alone_is_no_format(self):
+        """A text with a per cent sign, as the format of snprintf with no
+        argument after it, reads an argument that is not there."""
+        alone = re.compile(
+            r"snprintf\(\s*[^,;]+,\s*[^,;]+,\s*panel_text\(\w+\)\s*\)\s*;")
+        for name in ("main.c", "config.c", "ui.c"):
+            self.assertEqual(alone.findall(self.source(name)), [], name)
 
     def test_english_leads(self):
         """A board with nothing stored answers in English."""

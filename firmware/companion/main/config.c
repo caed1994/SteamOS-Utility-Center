@@ -139,7 +139,7 @@ static esp_err_t save_post(httpd_req_t *req)
     char type[64];
     if (httpd_req_get_hdr_value_str(req,"Content-Type",type,sizeof(type))!=ESP_OK || strcmp(type,"application/json")!=0)
         return error_reply(req,panel_text(TXT_FORM_PLEASE));
-    if (req->content_len<=0 || req->content_len>1024) return error_reply(req,"Daten zu lang.");
+    if (req->content_len<=0 || req->content_len>1024) return error_reply(req,panel_text(TXT_FORM_LONG));
     char body[1025];
     int received=0;
     while (received<req->content_len) {
@@ -176,7 +176,7 @@ static esp_err_t save_post(httpd_req_t *req)
     memset(body,0,sizeof(body));
     if (err!=ESP_OK) {
         httpd_resp_set_status(req,"500 Internal Server Error");
-        return httpd_resp_sendstr(req,"Speichern fehlgeschlagen.");
+        return httpd_resp_sendstr(req,panel_text(TXT_FORM_NOT_SAVED));
     }
     httpd_resp_set_type(req,"text/plain; charset=utf-8");
     httpd_resp_set_hdr(req,"Cache-Control","no-store");
