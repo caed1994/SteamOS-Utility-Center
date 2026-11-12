@@ -190,6 +190,199 @@ class PanelTextTest(unittest.TestCase):
                         "most of the German is the English text")
 
 
+def lvgl_bytes(first):
+    """The bytes of a character by its first byte, as LVGL counts them.
+
+    lv_text_encoded_size in LVGL 9.5. Nought for a byte that starts no
+    character, which LVGL then steps over as one byte.
+    """
+    if first < 0x80:
+        return 1
+    if first & 0xE0 == 0xC0:
+        return 2
+    if first & 0xF0 == 0xE0:
+        return 3
+    if first & 0xF8 == 0xF0:
+        return 4
+    return 0
+
+
+def lvgl_walk_stays_inside(text):
+    """Whether LVGL stays inside the text when it steps from character to
+    character (lv_text_utf8_get_byte_id). It steps by the first byte alone."""
+    at = 0
+    while at < len(text):
+        at += lvgl_bytes(text[at]) or 1
+    return at == len(text)
+
+
+def whole_reference(text, size):
+    """What panel_text_whole must give: (same, bytes)."""
+    def whole_at(at):
+        count = lvgl_bytes(text[at])
+        if not count or at + count > len(text):
+            return 0
+        if any(byte & 0xC0 != 0x80 for byte in text[at + 1:at + count]):
+            return 0
+        return count
+
+    at, clean = 0, True
+    while at < len(text):
+        step = whole_at(at)
+        if not step:
+            clean = False
+            break
+        at += step
+    if clean:
+        return True, text
+    if size == 0:
+        return False, b""
+    out, at = bytearray(), 0
+    while at < len(text):
+        step = whole_at(at)
+        if step:
+            if len(out) + step >= size:
+                break
+            out += text[at:at + step]
+            at += step
+            continue
+        rest = 1
+        while at + rest < len(text) and text[at + rest] & 0xC0 == 0x80:
+            rest += 1
+        if at + rest == len(text) and rest < lvgl_bytes(text[at]):
+            break
+        if len(out) + 1 >= size:
+            break
+        out.append(ord("?"))
+        at += 1
+    return False, bytes(out)
+
+
+@unittest.skipUnless(compiler(), "no C compiler here")
+class WholeTextTest(unittest.TestCase):
+    """A text for a label has whole characters only.
+
+    The PC sends a name in UTF-8, and a field of the state cuts a long name
+    at a byte. LVGL counts the bytes of a character by its first byte. So a
+    cut character at the end of a label took LVGL past the end of the text:
+    a read past the memory of the label, found with a random walk over the
+    screen and AddressSanitizer.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.where = tempfile.mkdtemp()
+        cls.program = os.path.join(cls.where, "panel-text")
+        done = subprocess.run(
+            [compiler(), "-Wall", "-Wextra", "-Werror", "-I", FIRMWARE,
+             "-o", cls.program, HARNESS,
+             os.path.join(FIRMWARE, "panel_text.c")],
+            capture_output=True, text=True)
+        if done.returncode != 0:
+            shutil.rmtree(cls.where, ignore_errors=True)
+            raise unittest.SkipTest("panel_text.c did not build here:\n"
+                                    + done.stderr.strip()[:500])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.where, ignore_errors=True)
+
+    def ask(self, cases):
+        """[(same, whole, bytes)] for each (text, size)."""
+        lines = "".join("%d %s\n" % (size, text.hex())
+                        for text, size in cases)
+        said = subprocess.run([self.program, "whole"], input=lines,
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(said.returncode, 0, said.stderr)
+        out = []
+        for line in said.stdout.splitlines():
+            same, whole, got = line.split("\t")
+            out.append((same == "same", whole == "1", bytes.fromhex(got)))
+        self.assertEqual(len(out), len(cases))
+        return out
+
+    def test_a_whole_text_stays_as_it_is(self):
+        for text in ("", "Steam", "Grüße aus Köln", "日本語 → €", "😀 4 bytes"):
+            with self.subTest(text=text):
+                raw = text.encode("utf-8")
+                # With no room at all: a whole text needs none.
+                self.assertEqual(self.ask([(raw, 0)]), [(True, True, raw)])
+
+    def test_a_character_that_the_end_cuts_goes(self):
+        """What snprintf leaves of a long name, for each length of a
+        character."""
+        for text, wanted in ((b"Gr\xc3", b"Gr"), (b"a\xe2\x82", b"a"),
+                             (b"a\xe2", b"a"), (b"a\xf0\x9f\x98", b"a"),
+                             (b"a\xf0\x9f", b"a"), (b"a\xf0", b"a"),
+                             (b"\xc3", b""),
+                             ("Köln ".encode() + b"\xe6\x97", "Köln ".encode())):
+            with self.subTest(text=text):
+                self.assertEqual(self.ask([(text, 64)]),
+                                 [(False, False, wanted)])
+
+    def test_a_byte_that_starts_no_character_shows_as_a_question_mark(self):
+        for text, wanted in ((b"Pok\xe9mon", b"Pok?mon"), (b"a\x80b", b"a?b"),
+                             (b"a\xffb", b"a?b"), (b"a\xc3b", b"a?b"),
+                             (b"\xe2\x82X", b"??X"), (b"\xf8\x88", b"??")):
+            with self.subTest(text=text):
+                self.assertEqual(self.ask([(text, 64)]),
+                                 [(False, False, wanted)])
+
+    def test_the_copy_ends_inside_its_room_and_on_a_whole_character(self):
+        text = b"\xff" + "ää€".encode()            # 1 + 2 + 2 + 3 bytes
+        wanted = {1: b"", 2: b"?", 3: b"?", 4: "?ä".encode(),
+                  5: "?ä".encode(), 6: "?ää".encode(), 8: "?ää".encode(),
+                  9: "?ää€".encode(), 64: "?ää€".encode()}
+        for size, out in wanted.items():
+            with self.subTest(size=size):
+                self.assertEqual(self.ask([(text, size)]),
+                                 [(False, False, out)])
+        self.assertEqual(self.ask([(text, 0)]), [(False, False, b"")])
+
+    def test_each_text_of_random_bytes_is_safe_for_lvgl(self):
+        """3000 texts of random bytes and of cut UTF-8, against the rules in
+        Python: the same answer, inside the room, and LVGL stays inside."""
+        import random
+        chance = random.Random(4)
+        letters = ["a", "Z", " ", "ä", "ß", "€", "日", "😀", "→"]
+        cases = []
+        for number in range(3000):
+            if number % 3 == 0:
+                raw = bytes(chance.randrange(1, 256)
+                            for _ in range(chance.randrange(0, 40)))
+            else:
+                raw = "".join(chance.choice(letters) for _ in range(
+                    chance.randrange(0, 30))).encode("utf-8")
+                raw = raw[:chance.randrange(0, len(raw) + 1)]
+                if number % 3 == 2 and raw:
+                    at = chance.randrange(len(raw))
+                    raw = raw[:at] + bytes([chance.randrange(128, 256)]) \
+                        + raw[at:]
+            cases.append((raw, chance.choice((1, 2, 3, 5, 8, 16, 48, 128))))
+        cut = 0
+        for (raw, size), (same, whole, got) in zip(cases, self.ask(cases)):
+            wanted_same, wanted = whole_reference(raw, size)
+            self.assertEqual((same, got), (wanted_same, wanted), (raw, size))
+            self.assertEqual(whole, wanted_same, raw)
+            self.assertTrue(lvgl_walk_stays_inside(got), (raw, got))
+            self.assertLessEqual(len(got), max(len(raw), 0))
+            if not same:
+                self.assertLess(len(got), size)
+                cut += 1
+        # The cases are no walk in the park: many are not whole.
+        self.assertGreater(cut, 1000)
+
+    def test_the_screen_sends_each_text_through_it(self):
+        """The two doors of ui.c for the text of a label. check_pages holds
+        the labels themselves, on each page."""
+        with open(os.path.join(FIRMWARE, "ui.c"), encoding="utf-8") as handle:
+            source = handle.read()
+        for door in ("static lv_obj_t *text_at(", "static void set_text("):
+            body = source[source.index(door):]
+            body = body[:body.index("\n}\n")]
+            self.assertIn("panel_text_whole(text,whole,sizeof whole)", body, door)
+
+
 class NoGermanInTheCodeTest(unittest.TestCase):
     """The words live in one table, and nowhere else.
 

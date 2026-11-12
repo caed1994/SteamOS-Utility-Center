@@ -440,3 +440,16 @@ const char *panel_language_name(panel_language_t language);
 // Sunday at 0, as struct tm does, and the month from January at 1. Empty
 // for a weekday, a day or a month out of range. Always ends inside room.
 void panel_text_date(char *out, size_t room, int weekday, int day, int month);
+
+// A text for a label. The PC sends names in UTF-8, and a field of the state
+// cuts a long name at a byte, which can be the middle of a character. LVGL
+// reads the bytes of a character by its first byte, so a cut character at
+// the end takes it past the end of the text.
+//
+// Whether each character of the text is whole.
+bool panel_text_is_whole(const char *text);
+// The text itself when each character is whole. Otherwise a copy in "room"
+// with '?' for each byte that is no part of a whole character, and with no
+// part of a character at its end. The copy never ends in the middle of a
+// character, also when "size" cuts it.
+const char *panel_text_whole(const char *text, char *room, size_t size);

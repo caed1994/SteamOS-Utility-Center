@@ -259,13 +259,18 @@ static panel_action_t pending;
 static panel_state_t last_state;
 static bool last_state_valid;
 
+/* The room for a text with a character that is not whole. See
+ * panel_text_whole: a name of the PC can end in the middle of a character,
+ * and a label with an ellipsis then reads past the end of its text. */
+#define WHOLE_ROOM 128
 static lv_obj_t *text_at(lv_obj_t *parent,const char *text,int x,int y,int width,const lv_font_t *font,uint32_t color)
 {
+    char whole[WHOLE_ROOM];
     lv_obj_t *label=lv_label_create(parent);
     lv_obj_set_pos(label,x,y);lv_obj_set_width(label,width);
     lv_label_set_long_mode(label,LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(label,font,0);lv_obj_set_style_text_color(label,lv_color_hex(color),0);
-    lv_label_set_text(label,text);return label;
+    lv_label_set_text(label,panel_text_whole(text,whole,sizeof whole));return label;
 }
 static void center_text(lv_obj_t *label){lv_obj_set_style_text_align(label,LV_TEXT_ALIGN_CENTER,0);}
 /* Writes that change nothing draw nothing.
@@ -281,6 +286,8 @@ static void center_text(lv_obj_t *label){lv_obj_set_style_text_align(label,LV_TE
  * are asked five times a second. */
 static void set_text(lv_obj_t *label,const char *text)
 {
+    char whole[WHOLE_ROOM];
+    text=panel_text_whole(text,whole,sizeof whole);
     if(label&&strcmp(lv_label_get_text(label),text)!=0)lv_label_set_text(label,text);
 }
 static void set_textf(lv_obj_t *label,const char *format,...)
@@ -386,11 +393,19 @@ static void slide_in(lv_obj_t *page)
     lv_obj_remove_flag(page,LV_OBJ_FLAG_HIDDEN);
     slide(page,480,0,SLIDE_IN_MS,lv_anim_path_ease_out,false);
 }
-/* A page on its way out takes no press: everything on it is forgotten
- * already, and a button on it would act on nothing. */
+/* A page on its way out takes no press and answers none: everything on it
+ * is forgotten already, and a handler on it would act on nothing.
+ *
+ * A press that began before the page went does not end with it. A slider
+ * under a finger says its value at each move and at the release, to a
+ * handler that writes into a label the page forgot. So each handler goes
+ * as well. They are all handlers of presses: this file adds no other. From
+ * the last one down, because LVGL keeps a handler that runs now in its
+ * list until that event is over. */
 static void inert(lv_obj_t *o)
 {
     lv_obj_remove_flag(o,LV_OBJ_FLAG_CLICKABLE);
+    for(uint32_t i=lv_obj_get_event_count(o);i>0;i--)lv_obj_remove_event(o,i-1);
     for(uint32_t i=0;i<lv_obj_get_child_count(o);i++)inert(lv_obj_get_child(o,i));
 }
 /* The page goes, and deletes itself at the end of its slide. A page that
@@ -987,7 +1002,9 @@ static void pad_level(char *out,size_t room,const panel_pad_t *pad)
 /* Whether a text is as narrow as a room, in one line of that font. */
 static bool fits(const char *text,const lv_font_t *font,int32_t width)
 {
+    char whole[WHOLE_ROOM];
     lv_point_t size;
+    text=panel_text_whole(text,whole,sizeof whole);
     lv_text_get_size(&size,text,font,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
     return size.x<=width;
 }
@@ -1164,7 +1181,7 @@ static void pc_forget(void)
 }
 static void pc_say(int row,const char *text)
 {
-    if(pc_values[row])lv_label_set_text(pc_values[row],text&&text[0]?text:"--");
+    set_text(pc_values[row],text&&text[0]?text:"--");
 }
 /* The uptime in days, hours and minutes, and with no days below one. */
 static void pc_uptime(char *out,size_t room,int32_t seconds)
@@ -1525,7 +1542,9 @@ static void cpu_tile_clicked(lv_event_t *e){(void)e;feedback();sensor_menu(false
 /* How wide a text is in a font. */
 static int32_t text_width(const char *text,const lv_font_t *font)
 {
+    char whole[WHOLE_ROOM];
     lv_point_t size;
+    text=panel_text_whole(text,whole,sizeof whole);
     lv_text_get_size(&size,text,font,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
     return size.x;
 }
@@ -1593,7 +1612,7 @@ static void self_forget(void)
 }
 static void self_say(int row,const char *text)
 {
-    if(self_values[row])lv_label_set_text(self_values[row],text&&text[0]?text:"--");
+    set_text(self_values[row],text&&text[0]?text:"--");
 }
 /* Millivolts as volts with two places, "3.98 V", and nothing for none. */
 static void say_volts(char *out,size_t room,int mv)
@@ -3429,6 +3448,8 @@ static void say_size(char *out,size_t room,uint64_t bytes)
 static void name_show(const char *text)
 {
     if(!playing_name)return;
+    char whole[WHOLE_ROOM];
+    text=panel_text_whole(text,whole,sizeof whole);
     int32_t line=lv_font_get_line_height(NAME_FONT);
     lv_point_t size;
     lv_text_get_size(&size,text,NAME_FONT,0,0,420,LV_TEXT_FLAG_NONE);

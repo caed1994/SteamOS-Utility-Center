@@ -60,6 +60,27 @@ static lv_obj_t *label(lv_obj_t *root,const char *text)
     for(unsigned i=0;i<lv_obj_get_child_count(root);i++){lv_obj_t *f=label(lv_obj_get_child(root,i),text);if(f)return f;}
     return NULL;
 }
+// Whether each label under root, hidden or not, holds whole characters
+// only. See panel_text_whole.
+static bool whole_labels(lv_obj_t *root,const char *where)
+{
+    bool whole=true;
+    if(lv_obj_check_type(root,&lv_label_class)&&!panel_text_is_whole(lv_label_get_text(root))){
+        fprintf(stderr,"%s: the label \"%s\" ends or breaks inside a character\n",where,lv_label_get_text(root));
+        whole=false;
+    }
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++)
+        if(!whole_labels(lv_obj_get_child(root,i),where))whole=false;
+    return whole;
+}
+// A label on the screen whose text starts with these bytes.
+static lv_obj_t *label_from(lv_obj_t *root,const char *start)
+{
+    if(lv_obj_has_flag(root,LV_OBJ_FLAG_HIDDEN))return NULL;
+    if(lv_obj_check_type(root,&lv_label_class)&&strncmp(lv_label_get_text(root),start,strlen(start))==0)return root;
+    for(unsigned i=0;i<lv_obj_get_child_count(root);i++){lv_obj_t *f=label_from(lv_obj_get_child(root,i),start);if(f)return f;}
+    return NULL;
+}
 static void click_in(lv_obj_t *root,const char *text)
 {
     lv_obj_t *l=label(root,text);assert(l);
@@ -3770,6 +3791,97 @@ int main(void)
         lv_obj_send_event(pair_button,LV_EVENT_CLICKED,NULL);
         assert(actions==1&&last_action==PANEL_PAIR);
         assert(panel_ui_home());
+    }
+
+    // A name that the PC sends in more bytes than its field holds ends at a
+    // byte, and that byte can be the middle of a character. LVGL counts the
+    // bytes of a character by its first byte. So no label holds a part of
+    // a character: the ellipsis of a label then read past the end of its
+    // text, which a random walk over the screen found.
+    {
+        panel_settings_t english={.brightness=70,.sound_volume=30,.language=PANEL_ENGLISH};
+        panel_ui_create(action,setting,sound,&english);
+        lv_obj_t *screen_now=lv_screen_active();
+        panel_state_t t=base();
+        // Each text of the state full to its last byte, and in that byte
+        // the first byte of "ü", as snprintf of main.c leaves a long name.
+#define CUT(field) do{memset(field,'a',sizeof(field)-2);(field)[sizeof(field)-2]=(char)0xC3;\
+                      (field)[sizeof(field)-1]=0;}while(0)
+        CUT(t.playing);CUT(t.host);CUT(t.message);CUT(t.update.offered);
+        t.pad_count=PANEL_PADS;
+        for(int i=0;i<PANEL_PADS;i++){CUT(t.pads[i].name);t.pads[i].battery=50;}
+        CUT(t.pc.os);CUT(t.pc.build);CUT(t.pc.channel);CUT(t.pc.kernel);CUT(t.pc.cpu);CUT(t.pc.gpu);
+        CUT(t.pc.ip);CUT(t.pc.mac);
+        t.pc.uptime_s=100;t.pc.cpu_load=10;t.pc.fan_rpm=900;t.pc.gpu_fan_rpm=900;t.pc.link=PANEL_LINK_WIRED;
+        t.pc.link_mbit=1000;t.pc.memory_used=1;t.pc.memory_total=2;
+        t.cpu_temp=49;t.gpu_temp=56;t.gpu_watts=78;
+        t.cpu_sensor_count=t.gpu_sensor_count=PANEL_SENSORS;
+        for(int i=0;i<PANEL_SENSORS;i++){
+            snprintf(t.cpu_sensors[i].id,sizeof t.cpu_sensors[i].id,"cpu/%d",i);
+            snprintf(t.gpu_sensors[i].id,sizeof t.gpu_sensors[i].id,"gpu/%d",i);
+            CUT(t.cpu_sensors[i].name);CUT(t.gpu_sensors[i].name);
+            t.cpu_sensors[i].celsius=40+i;t.gpu_sensors[i].celsius=50+i;
+        }
+        t.drive_count=PANEL_DRIVES;
+        for(int i=0;i<PANEL_DRIVES;i++){CUT(t.drives[i].name);t.drives[i].total=100;t.drives[i].free=40;}
+        CUT(t.self.version);CUT(t.self.ssid);CUT(t.self.ip);CUT(t.self.mac);CUT(t.self.server);
+        t.led_known=t.led_here=true;
+        for(int m=0;m<PANEL_LED_MODES;m++){
+            snprintf(t.led_effect[m],sizeof t.led_effect[m],"mirror");
+            CUT(t.led_profile[m]);
+        }
+        t.game_mode=true;
+        snprintf(t.led_mirror.state,sizeof t.led_mirror.state,"failed");
+        CUT(t.led_mirror.detail);CUT(t.led_mirror.source);
+        t.cpu_known=t.cpu_here=true;
+        CUT(t.cpu_profile);CUT(t.cpu_governor);CUT(t.cpu_epp);CUT(t.cpu_driver);
+#undef CUT
+        t.answers++;
+        panel_ui_update(&t);
+        assert(whole_labels(screen_now,"the band"));
+        // The name of the game shows its whole characters, and the part of
+        // the "ü" is gone.
+        assert(label_from(screen_now,"aaaaaaaaaaaaaaaa"));
+        // The pages over the band, each with the same state.
+        panel_ui_pads_open();panel_ui_update(&t);
+        assert(whole_labels(screen_now,"the controllers"));
+        assert(panel_ui_home());
+        panel_ui_pc_open();panel_ui_update(&t);
+        assert(whole_labels(screen_now,"the PC"));
+        assert(panel_ui_home());
+        panel_ui_self_open();panel_ui_update(&t);
+        assert(whole_labels(screen_now,"the panel"));
+        assert(panel_ui_home());
+        // The choice of the sensor of each tile.
+        lv_obj_t *tiles[2]={lv_obj_get_parent(label(screen_now,"49 °C")),
+                            lv_obj_get_parent(label(screen_now,"56 °C"))};
+        for(int i=0;i<2;i++){
+            lv_obj_send_event(tiles[i],LV_EVENT_CLICKED,NULL);
+            assert(strcmp(panel_ui_where(),"a choice of sensor")==0);
+            assert(whole_labels(screen_now,"a choice of sensor"));
+            assert(panel_ui_home());
+        }
+        // The line of the mirror with a state that carries the detail.
+        static const char *const states[]={"failed","busy","no-plugin","running"};
+        for(unsigned i=0;i<sizeof states/sizeof states[0];i++){
+            snprintf(t.led_mirror.state,sizeof t.led_mirror.state,"%s",states[i]);
+            t.led_mirror.fps=15;t.led_mirror.cpu=21;
+            t.answers++;
+            panel_ui_update(&t);
+            assert(whole_labels(screen_now,states[i]));
+        }
+        // A byte that starts no character shows as a question mark, in the
+        // middle of a name too: Latin-1 where UTF-8 belongs.
+        snprintf(t.playing,sizeof t.playing,"Pok\xe9mon");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(screen_now,"Pok?mon"));
+        // A whole name stays as it is.
+        snprintf(t.playing,sizeof t.playing,"Pokémon Grüße 日本");
+        t.answers++;
+        panel_ui_update(&t);
+        assert(label(screen_now,"Pokémon Grüße 日本"));
+        lv_refr_now(NULL);
     }
 
     puts("OK: seven pages that snap, in an order somebody can change, any of them "

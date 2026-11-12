@@ -275,6 +275,13 @@ static void tables_differ(void)
 // screen it opens and closes at once: the panel says where it is before
 // the slide is over, and a page on its way out takes no press.
 static lv_obj_t *top(void){return lv_obj_get_child(lv_screen_active(),-1);}
+// How many handlers the objects under root have, root with them.
+static unsigned handlers(lv_obj_t *root)
+{
+    unsigned count=lv_obj_get_event_count(root);
+    for(uint32_t i=0;i<lv_obj_get_child_count(root);i++)count+=handlers(lv_obj_get_child(root,i));
+    return count;
+}
 // Where a page stands: the place the slide set, before any layout runs.
 static int32_t x_of(lv_obj_t *page){return lv_obj_get_style_x(page,LV_PART_MAIN);}
 static void steps(int ms){for(int i=0;i<ms;i+=10){lv_tick_inc(10);lv_anim_refr_now();}}
@@ -407,6 +414,8 @@ static void slides(void)
         assert(!at(names[i]));
         assert(lv_obj_get_child_count(lv_screen_active())==base+1);
         assert(!lv_obj_has_flag(back,LV_OBJ_FLAG_CLICKABLE));
+        // And answering none: see the slider below.
+        assert(handlers(page)==0);
         steps(100);
         assert(x_of(page)>0&&x_of(page)<480);
         settle();
@@ -427,6 +436,25 @@ static void slides(void)
     panel_ui_arrange_open();settle();
     assert(panel_ui_home());
     assert(lv_obj_get_child_count(lv_screen_active())==base+2);
+    settle();
+    assert(lv_obj_get_child_count(lv_screen_active())==base);
+    // A press that began on a page goes on while the page slides out: a
+    // slider under a finger says each new value, and its release. The page
+    // forgot its labels at once, so its handlers go with them. A handler
+    // that stayed wrote into a label that was not there, and the panel
+    // stopped: a random walk over the screen found that.
+    panel_ui_settings_open();settle();
+    lv_obj_t *going=top();
+    int which=0;
+    lv_obj_t *held=kind(going,&lv_slider_class,&which);
+    assert(held&&lv_obj_get_event_count(held)>0);
+    assert(panel_ui_home());
+    assert(top()==going&&handlers(going)==0);
+    unsigned said=settings;
+    lv_slider_set_value(held,30,LV_ANIM_OFF);
+    lv_obj_send_event(held,LV_EVENT_VALUE_CHANGED,NULL);
+    lv_obj_send_event(held,LV_EVENT_RELEASED,NULL);
+    assert(settings==said);
     settle();
     assert(lv_obj_get_child_count(lv_screen_active())==base);
     // Open again while the last one slides out: two on the screen for the

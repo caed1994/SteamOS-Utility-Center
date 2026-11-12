@@ -10,8 +10,16 @@
 //
 // Then the day and the date of panel_text_date: "date", language, weekday,
 // day, month, room, and what it wrote. One line for each case below.
+//
+// With the argument "whole" it reads cases from its input, one a line: the
+// size of the room and the bytes of a text in hex. For each it writes
+// "same" or "copy", whether panel_text_is_whole holds, and the bytes of the
+// text that panel_text_whole gave, in hex. A room of size nought is no room
+// at all.
 
+#include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "panel_text.h"
@@ -25,8 +33,41 @@ static void print_escaped(const char *text)
     }
 }
 
-int main(void)
+// The cases of panel_text_whole. The text and the room are memory of their
+// exact size, so a tool that watches the memory sees a byte past either.
+static int whole_cases(void)
 {
+    char line[1024];
+    while (fgets(line, sizeof line, stdin)) {
+        unsigned size = 0;
+        int at = 0;
+        if (sscanf(line, "%u %n", &size, &at) < 1) return 1;
+        size_t length = 0;
+        while (isxdigit((unsigned char)line[at + 2 * length]) &&
+               isxdigit((unsigned char)line[at + 2 * length + 1])) length++;
+        char *text = malloc(length + 1);
+        char *room = size ? malloc(size) : NULL;
+        if (!text || (size && !room)) return 1;
+        for (size_t i = 0; i < length; i++) {
+            unsigned byte = 0;
+            sscanf(line + at + 2 * i, "%2x", &byte);
+            text[i] = (char)byte;
+        }
+        text[length] = 0;
+        if (room) memset(room, 'x', size);
+        const char *got = panel_text_whole(text, room, size);
+        printf("%s\t%d\t", got == text ? "same" : "copy", panel_text_is_whole(text));
+        for (const char *c = got; *c; c++) printf("%02x", (unsigned char)*c);
+        putchar('\n');
+        free(text);
+        free(room);
+    }
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc > 1 && strcmp(argv[1], "whole") == 0) return whole_cases();
     for (int language = 0; language < PANEL_LANGUAGE_COUNT; language++) {
         panel_text_set((panel_language_t)language);
         printf("name\t%d\t", language);
